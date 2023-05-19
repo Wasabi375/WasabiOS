@@ -1,5 +1,18 @@
-[workspace]
 
+
+[package]
+name = "WasabiOs"
+version = "0.1.0"
+
+[build-dependencies]
+bootloader = "0.11"
+wasabi-kernel = { path = "wasabi-kernel", artifact = "bin", target = "x86_64-unknown-none" }
+
+[dependencies]
+# used for UEFI booting in QEMU
+ovmf-prebuilt = "0.1.0-alpha.1"
+
+[workspace]
 members = [
-    "wasabi-os"
+    "wasabi-kernel"
 ]

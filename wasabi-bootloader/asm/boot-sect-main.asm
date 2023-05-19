@@ -3,17 +3,11 @@
     mov bp, 0x8000
     mov sp, bp
 
+    mov [BOOT_DRIVE], dl        ; store boot drive in case we override it later
+
     mov bx, MSG_REAL_MODE
     call print
     call print_nl
-
-
-    mov bx, MSG_READ_FROM_DISK
-    call print
-    call print_hex              ; print disk to read from, set by bios. It's already in dl which
-                                ; is the low part of dx
-    call print_nl
-
 
 
     mov bx, 0x9000              ; es: 0x0 bx:0x9000 for loading from disk
@@ -63,10 +57,8 @@ BEGIN_PM:
 %include "asm/boot-sect-print-32bit.asm" ; provides print_string_pm expecting string addr at ebx
 
 
-
-
-MSG_READ_FROM_DISK:
-    db 'Reading 2 sectors from disk: ', 0
+BOOT_DRIVE:
+    db 0
 MSG_PROT_MODE:
     db 'Entered protected mode (32bit)', 0
 MSG_REAL_MODE:
