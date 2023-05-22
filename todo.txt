@@ -1,0 +1,3 @@
+# TODO
+
+* rust-analizer needs to use proper target architecture

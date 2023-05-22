@@ -1,0 +1,15 @@
+[package]
+name = "logger"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["color"]
+color = ["colored"]
+
+
+[dependencies]
+log = "0.4.17"
+shared = { path = "../shared" }
+staticvec = { path = "../staticvec" }
+colored = { path = "../colored", optional = true }
