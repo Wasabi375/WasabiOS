@@ -45,7 +45,7 @@ interrupt_fn!(breakpoint_handler, stack_frame, {
     warn!("breakpoint hit at\n{stack_frame:#?}");
 });
 
-pub const DOUBLE_FAULT_STACK_SIZE: usize = PAGE_SIZE_4K(5);
+pub const DOUBLE_FAULT_STACK_SIZE: usize = PAGE_SIZE_4K(1);
 interrupt_with_error_fn!(double_fault_handler, stack_frame, err, {
     panic!("DOUBLE_FAULT({err})\n {stack_frame:#?}")
 });

@@ -1,5 +1,5 @@
 use lazy_static::lazy_static;
-use log::{debug, info};
+use log::{debug, info, trace};
 use x86_64::{
     registers::segmentation::SS,
     structures::{
@@ -20,7 +20,7 @@ pub fn init() {
     info!("Load GDT");
     GDT.0.load();
 
-    debug!("Load TSS and set CS and SS");
+    debug!("Load TSS and set CS");
     unsafe {
         CS::set_reg(GDT.1.code);
         load_tss(GDT.1.tss);
@@ -31,6 +31,7 @@ pub fn init() {
         //
         // Therefor we should not need to set this, because CPU should treat it as 0
         // but QEMU does not appear to care.
+        trace!("Load SS");
         SS::set_reg(SegmentSelector::NULL);
     }
 }
