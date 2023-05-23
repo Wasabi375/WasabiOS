@@ -1,7 +1,6 @@
 use std::{
     ffi::{OsStr, OsString},
-    os::unix::prelude::{OsStrExt, OsStringExt},
-    path::PathBuf,
+    os::unix::prelude::OsStrExt,
     process::Command,
 };
 
@@ -37,6 +36,7 @@ fn main() {
     } else {
         cmd.arg("-drive").arg(concat("format=raw,file=", bios_path));
     }
+    cmd.arg("-serial").arg("stdio");
     let mut child = cmd.spawn().unwrap();
     child.wait().unwrap();
 }

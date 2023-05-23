@@ -1,3 +1,4 @@
+use log::{info, warn};
 use shared::sizes::PAGE_SIZE_4K;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
@@ -18,6 +19,7 @@ lazy_static! {
 }
 
 pub fn init() {
+    info!("Load IDT");
     IDT.load();
 }
 
@@ -39,14 +41,11 @@ macro_rules! interrupt_page_fault_fn {
     };
 }
 
-interrupt_fn!(breakpoint_handler, _stack_frame, {
-    debug::fill_screen(Color::RED);
-    for _i in 0..10_000 {
-        x86_64::instructions::nop();
-    }
+interrupt_fn!(breakpoint_handler, stack_frame, {
+    warn!("breakpoint hit at\n{stack_frame:#?}");
 });
 
-pub const DOUBLE_FAULT_STACK_SIZE: usize = PAGE_SIZE_4K(1);
+pub const DOUBLE_FAULT_STACK_SIZE: usize = PAGE_SIZE_4K(5);
 interrupt_with_error_fn!(double_fault_handler, stack_frame, err, {
     panic!("DOUBLE_FAULT({err})\n {stack_frame:#?}")
 });

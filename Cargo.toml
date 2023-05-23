@@ -1,7 +1,7 @@
 
 
 [package]
-name = "WasabiOs"
+name = "wasabi_os"
 version = "0.1.0"
 
 [build-dependencies]
@@ -14,5 +14,10 @@ ovmf-prebuilt = "0.1.0-alpha.1"
 
 [workspace]
 members = [
-    "wasabi-kernel"
+    "wasabi-kernel",
+    "shared-derive",
+    "shared",
+    "logger",
+    "staticvec",
+    "colored"
 ]

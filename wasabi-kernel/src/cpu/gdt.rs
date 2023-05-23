@@ -1,5 +1,7 @@
 use lazy_static::lazy_static;
+use log::{debug, info};
 use x86_64::{
+    registers::segmentation::SS,
     structures::{
         gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector},
         tss::TaskStateSegment,
@@ -15,11 +17,21 @@ pub fn init() {
     use x86_64::instructions::segmentation::{Segment, CS};
     use x86_64::instructions::tables::load_tss;
 
+    info!("Load GDT");
     GDT.0.load();
 
+    debug!("Load TSS and set CS and SS");
     unsafe {
         CS::set_reg(GDT.1.code);
         load_tss(GDT.1.tss);
+
+        // Intel X86 Spec: 3.7.4.1
+        // The processor treats the segment base of CS, DS, ES, SS as zero,
+        // creating a linear address that is equal to the effective address.
+        //
+        // Therefor we should not need to set this, because CPU should treat it as 0
+        // but QEMU does not appear to care.
+        SS::set_reg(SegmentSelector::NULL);
     }
 }
 

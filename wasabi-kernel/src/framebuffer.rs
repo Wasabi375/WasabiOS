@@ -1,6 +1,31 @@
 use bootloader_api::info::FrameBuffer;
 
-pub fn clear_frame_buffer(fb: &mut FrameBuffer, r: u8, g: u8, b: u8) {
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub struct Color {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+impl Color {
+    pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
+    pub const RED: Color = Color { r: 255, g: 0, b: 0 };
+    pub const GREEN: Color = Color { r: 0, g: 255, b: 0 };
+    pub const BLUE: Color = Color { r: 0, g: 0, b: 255 };
+    pub const PINK: Color = Color {
+        r: 255,
+        g: 0,
+        b: 255,
+    };
+
+    pub const PANIC: Color = Color::PINK;
+}
+
+pub fn clear_frame_buffer(fb: &mut FrameBuffer, c: Color) {
+    clear_frame_buffer_rgb(fb, c.r, c.g, c.b)
+}
+
+pub fn clear_frame_buffer_rgb(fb: &mut FrameBuffer, r: u8, g: u8, b: u8) {
     let info = fb.info().clone();
     let buffer = fb.buffer_mut();
 

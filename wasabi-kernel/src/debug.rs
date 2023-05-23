@@ -12,7 +12,7 @@ use crate::{
 pub static mut LOGGER: Option<StaticLogger<'static, SerialPort>> = None;
 
 pub fn init() {
-    let logger = StaticLogger::new(&SERIAL1).with_level(LevelFilter::Info);
+    let logger = StaticLogger::new(&SERIAL1).with_level(LevelFilter::Debug);
     if unsafe {
         LOGGER = Some(logger);
 
