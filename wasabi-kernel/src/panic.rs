@@ -1,7 +1,7 @@
 use core::panic::PanicInfo;
 use log::error;
 
-use crate::debug::LOGGER;
+use crate::debug_logger::LOGGER;
 use crate::framebuffer::{clear_frame_buffer, Color};
 use crate::{boot_info, cpu, serial_println};
 

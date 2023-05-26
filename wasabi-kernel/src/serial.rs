@@ -2,8 +2,6 @@ use lazy_static::lazy_static;
 use shared::lockcell::SpinLock;
 use uart_16550::SerialPort;
 
-use crate::framebuffer::Color;
-
 const COM1_IO_PORT: u16 = 0x3F8;
 
 lazy_static! {
@@ -22,9 +20,7 @@ pub fn _print(args: ::core::fmt::Arguments) {
 
     let mut serial = SERIAL1.lock();
 
-    crate::debug::fill_screen(Color::GREEN);
     serial.write_fmt(args).expect("Printing to serial failed");
-    crate::debug::debug_clear_screen();
 }
 
 /// Prints to the host through the serial interface.

@@ -1,11 +1,13 @@
-
-
 [package]
 name = "wasabi_os"
 version = "0.1.0"
 
+[features]
+no-color = [ "wasabi-kernel/no-color" ]
+
+
 [build-dependencies]
-bootloader = "0.11"
+bootloader = { version = "0.11", path = "../bootloader" }
 wasabi-kernel = { path = "wasabi-kernel", artifact = "bin", target = "x86_64-unknown-none" }
 
 [dependencies]

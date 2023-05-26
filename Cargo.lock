@@ -144,8 +144,6 @@ dependencies = [
 [[package]]
 name = "bootloader"
 version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a623ba99dacbbdd212c750acdf90e54efc49fa6b01e136d7ef6600d59d411709"
 dependencies = [
  "anyhow",
  "async-process",
@@ -163,8 +161,6 @@ dependencies = [
 [[package]]
 name = "bootloader-boot-config"
 version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ae5f1e50b39501e5402f68c154c01a58047af0c9fb8df7553c4594ef64955fa"
 dependencies = [
  "serde",
 ]
@@ -172,8 +168,6 @@ dependencies = [
 [[package]]
 name = "bootloader_api"
 version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19c9d143f231f95e18d3907023e4a8e6a3cbebb7b09ce7da4774a17edf4cce6d"
 
 [[package]]
 name = "build_const"
@@ -881,14 +875,18 @@ checksum = "9d5b2c62b4012a3e1eca5a7e077d13b3bf498c4073e33ccd58626607748ceeca"
 name = "wasabi-kernel"
 version = "0.1.0"
 dependencies = [
+ "bit_field",
  "bootloader_api",
+ "colored",
  "lazy_static",
  "log",
  "logger",
  "shared",
  "shared-derive",
+ "staticvec",
  "thiserror-core",
  "uart_16550",
+ "volatile",
  "x86_64",
 ]
 

@@ -19,24 +19,34 @@ impl Arch {
 fn main() {
     // TODO resolve wsl paths
     //
-    let path_resolver = PathResolver::get();
+    let host_arch = HostArchitecture::get();
 
     // read env variables that were set in build script
-    let uefi_path = path_resolver.resolve(env!("UEFI_PATH"));
-    let bios_path = path_resolver.resolve(env!("BIOS_PATH"));
+    let uefi_path = host_arch.resolve(env!("UEFI_PATH"));
+    let bios_path = host_arch.resolve(env!("BIOS_PATH"));
 
     // choose whether to start the UEFI or BIOS image
     let uefi = true;
 
-    let mut cmd = Command::new(path_resolver.qemu(Arch::X86_64));
+    let mut cmd = Command::new(host_arch.qemu(Arch::X86_64));
     if uefi {
         cmd.arg("-bios")
-            .arg(path_resolver.resolve(ovmf_prebuilt::ovmf_pure_efi()));
+            .arg(host_arch.resolve(ovmf_prebuilt::ovmf_pure_efi()));
         cmd.arg("-drive").arg(concat("format=raw,file=", uefi_path));
     } else {
         cmd.arg("-drive").arg(concat("format=raw,file=", bios_path));
     }
     cmd.arg("-serial").arg("stdio");
+
+    // Virtualization is required, because qemu won't simulate apic
+    if host_arch.is_windows() {
+        // cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
+    } else {
+        cmd.arg("-enable-kvm");
+    }
+
+    cmd.arg("-m").arg("4G");
+
     let mut child = cmd.spawn().unwrap();
     child.wait().unwrap();
 }
@@ -80,22 +90,23 @@ fn trim_u8_slice(string: &[u8]) -> &[u8] {
     &string[start..=end]
 }
 
-enum PathResolver {
-    Identity,
+enum HostArchitecture {
+    Linux,
+    Windows,
     Wsl,
 }
 
-impl PathResolver {
+impl HostArchitecture {
     fn get() -> Self {
         if cfg!(windows) {
-            return PathResolver::Identity;
+            return HostArchitecture::Windows;
         }
 
-        if PathResolver::is_wsl() {
-            return PathResolver::Wsl;
+        if HostArchitecture::is_wsl() {
+            return HostArchitecture::Wsl;
         }
 
-        return PathResolver::Identity;
+        return HostArchitecture::Linux;
     }
 
     fn is_wsl() -> bool {
@@ -106,10 +117,17 @@ impl PathResolver {
         }
     }
 
+    fn is_windows(&self) -> bool {
+        match self {
+            HostArchitecture::Windows | HostArchitecture::Wsl => true,
+            _ => false,
+        }
+    }
+
     fn resolve<T: Into<OsString>>(&self, path: T) -> OsString {
         match self {
-            PathResolver::Identity => path.into(),
-            PathResolver::Wsl => {
+            HostArchitecture::Linux | HostArchitecture::Windows => path.into(),
+            HostArchitecture::Wsl => {
                 let mut cmd = Command::new("wslpath");
                 cmd.arg("-a").arg("-w").arg(path.into());
 
@@ -128,8 +146,8 @@ impl PathResolver {
 
     fn resolve_back<T: Into<OsString>>(&self, path: T) -> OsString {
         match self {
-            PathResolver::Identity => path.into(),
-            PathResolver::Wsl => {
+            HostArchitecture::Linux | HostArchitecture::Windows => path.into(),
+            HostArchitecture::Wsl => {
                 let mut cmd = Command::new("wslpath");
                 cmd.arg("--").arg(path.into());
 
@@ -153,8 +171,7 @@ impl PathResolver {
 
         // path prefix
         match self {
-            PathResolver::Identity => {}
-            PathResolver::Wsl => {
+            HostArchitecture::Wsl => {
                 let mut cmd = Command::new("/mnt/c/Windows/System32/reg.exe");
                 cmd.arg("query").arg("HKLM\\Software\\QEMU");
                 cmd.arg("/v").arg("Install_Dir").arg("/t").arg("REG_SZ");
@@ -191,6 +208,7 @@ impl PathResolver {
 
                 binary_suffix = ".exe";
             }
+            _ => {}
         };
         qemu.push("qemu");
 

@@ -3,19 +3,24 @@ name = "wasabi-kernel"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+no-color = [ "colored/no-color" ]
 
 [dependencies]
 shared = { path = "../shared" }
 shared-derive = { path = "../shared-derive" }
 logger = { path = "../logger" }
+staticvec = { path = "../staticvec" }
+colored = { path = "../colored" }
 
-bootloader_api = "0.11.3"
+bootloader_api = { version = "0.11.3", path = "../../bootloader/api" }
 lazy_static = { version = "1.4.0", features=["spin_no_std"] }
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
 uart_16550 = "0.2.18"
 x86_64 = "0.14.10"
 log = "0.4.17"
+bit_field = "0.10.2"
+volatile = "0.4.6"
 
 [profile.dev]
 panic = "abort"
