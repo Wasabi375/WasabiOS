@@ -5,7 +5,8 @@
     ptr_alignment_type,
     abi_x86_interrupt,
     ascii_char,
-    let_chains
+    let_chains,
+    allocator_api
 )]
 #![allow(dead_code)]
 
@@ -16,13 +17,15 @@ pub mod mem;
 pub mod panic;
 pub mod serial;
 
-use core::ptr::null_mut;
-
-use bootloader_api::{config::Mapping, BootInfo};
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
 
 use crate::cpu::{cpuid, gdt, interrupts};
+use alloc::boxed::Box;
+use bootloader_api::{config::Mapping, BootInfo};
+use core::ptr::null_mut;
+
+extern crate alloc;
 
 // FIXME: this breaks rust uniquness guarantee
 static mut BOOT_INFO: *mut BootInfo = null_mut();
@@ -41,6 +44,16 @@ fn init(boot_info: &'static mut BootInfo) {
     cpuid::check_cpuid_usable();
 
     mem::init();
+
+    {
+        let _ = Box::new(5u8);
+        let _ = Box::new(5u16);
+        let _ = Box::new(5u32);
+        let _ = Box::new(5u64);
+        let _ = Box::new(5u128);
+        let _ = Box::new([5u8; 256]);
+        let _ = Box::new([5u8; 512]);
+    }
 
     // apic::init();
 

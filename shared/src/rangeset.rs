@@ -30,7 +30,7 @@ use core::cmp;
 
 /// An inclusive range. We do not use `RangeInclusive` as it does not implement
 /// `Copy`
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct Range {
     pub start: u64,
@@ -52,9 +52,16 @@ pub struct RangeSet<const N: usize = 256> {
     in_use: u32,
 }
 
+impl<const N: usize> Default for RangeSet<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> RangeSet<N> {
     /// Create a new empty RangeSet
     pub const fn new() -> RangeSet<N> {
+        assert!(N <= u32::MAX as usize);
         RangeSet {
             ranges: [Range { start: 0, end: 0 }; N],
             in_use: 0,
@@ -64,6 +71,15 @@ impl<const N: usize> RangeSet<N> {
     /// Get all the entries in the RangeSet as a slice
     pub fn entries(&self) -> &[Range] {
         &self.ranges[..self.in_use as usize]
+    }
+
+    /// Get the number of used entries in the RangeSet
+    ///
+    /// Note that insert, delete, allocate, etc do not necessarialy
+    /// change this, because they will if possible just modify an existing
+    /// entry.
+    pub fn len(&self) -> u32 {
+        self.in_use
     }
 
     /// Delete the Range contained in the RangeSet at `idx`
@@ -135,6 +151,45 @@ impl<const N: usize> RangeSet<N> {
         // Add the new range to the end
         self.ranges[self.in_use as usize] = range;
         self.in_use += 1;
+    }
+
+    /// Remove `range` from the RangeSet if the entire range is
+    /// within the rangeset. Otherwise do nothing.
+    ///
+    /// Returns true if the range was removed
+    pub fn remove_if_exist(&mut self, range: Range) -> bool {
+        for ii in 0..self.in_use as usize {
+            let ent = &mut self.ranges[ii];
+
+            if range == *ent {
+                self.delete(ii);
+                return true;
+            }
+
+            if !contains(range, *ent) {
+                continue;
+            }
+
+            if range.start == ent.start {
+                assert!(range.end < ent.end && range.end > ent.start);
+                ent.start = range.end + 1;
+            } else if range.end == ent.end {
+                assert!(range.start > ent.start && range.start < ent.end);
+                ent.end = range.start - 1;
+            } else {
+                let prev_end = ent.end;
+                assert!(range.start > ent.start && range.start < ent.end);
+                ent.end = range.start;
+
+                assert!(range.end > ent.start && range.end < prev_end);
+                self.insert(Range {
+                    start: range.end + 1,
+                    end: prev_end,
+                })
+            }
+            return true;
+        }
+        false
     }
 
     /// Remove `range` from the RangeSet

@@ -10,10 +10,6 @@ pub mod rangeset;
 #[allow(non_snake_case)]
 pub mod sizes {
 
-    pub const fn PAGE_SIZE_4K(n: usize) -> usize {
-        4096 * n
-    }
-
     pub const fn KiB(n: usize) -> usize {
         1024 * n
     }

@@ -1,5 +1,5 @@
 use log::{info, warn};
-use shared::sizes::PAGE_SIZE_4K;
+use shared::sizes::KiB;
 use x86_64::{
     registers::control::Cr2,
     structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode},
@@ -67,7 +67,7 @@ interrupt_fn!(breakpoint_handler, stack_frame, {
     warn!("breakpoint hit at\n{stack_frame:#?}");
 });
 
-pub const DOUBLE_FAULT_STACK_SIZE: usize = PAGE_SIZE_4K(5);
+pub const DOUBLE_FAULT_STACK_SIZE: usize = KiB(4 * 5);
 interrupt_with_error_fn!(double_fault_handler, stack_frame, err, {
     panic!("DOUBLE FAULT({err})\n{stack_frame:#?}")
 });

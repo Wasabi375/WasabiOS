@@ -29,12 +29,28 @@ pub trait LockCellInternal<T> {
     /// this should only be called when the [LockCellGuard] corresponding to this
     /// LockCell is droped.
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>);
+
+    /// forces the mutex open, without needing access to the guard
+    ///
+    /// # Safety:
+    ///
+    /// the caller ensures that there is no active guard
+    unsafe fn force_unlock(&self);
 }
 
 #[derive(Debug)]
 pub struct LockCellGuard<'l, T, M: ?Sized + LockCellInternal<T>> {
     mutex: &'l M,
     _t: PhantomData<T>,
+}
+
+impl<'l, T, M: ?Sized + LockCellInternal<T>> LockCellGuard<'l, T, M> {
+    pub fn new(mutex: &'l M) -> Self {
+        LockCellGuard {
+            mutex,
+            _t: PhantomData::default(),
+        }
+    }
 }
 
 impl<T, M: ?Sized + LockCellInternal<T>> !Sync for LockCellGuard<'_, T, M> {}
@@ -95,13 +111,17 @@ impl<T> LockCellInternal<T> for SpinLock<T> {
     unsafe fn unlock<'s, 'l: 's>(&'s self, _guard: &mut LockCellGuard<'l, T, Self>) {
         self.open.store(true, Ordering::SeqCst);
     }
+
+    unsafe fn force_unlock(&self) {
+        self.open.store(true, Ordering::SeqCst);
+    }
 }
 
 impl<T> SpinLock<T> {
-    pub fn new(data: T) -> Self {
+    pub const fn new(data: T) -> Self {
         Self {
             open: AtomicBool::new(true),
-            data: UnsafeCell::from(data),
+            data: UnsafeCell::new(data),
         }
     }
 }

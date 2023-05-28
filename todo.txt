@@ -1,3 +1,4 @@
 # TODO
 
 * rust-analizer needs to use proper target architecture
+* Page table pages should be NO_EXEC
