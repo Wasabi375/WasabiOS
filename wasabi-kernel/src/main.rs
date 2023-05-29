@@ -21,7 +21,6 @@ pub mod serial;
 use log::{debug, info, trace, warn};
 
 use crate::cpu::{cpuid, gdt, interrupts};
-use alloc::boxed::Box;
 use bootloader_api::{config::Mapping, BootInfo};
 use core::ptr::null_mut;
 
@@ -44,23 +43,6 @@ fn init(boot_info: &'static mut BootInfo) {
     cpuid::check_cpuid_usable();
 
     mem::init();
-
-    {
-        let _ = Box::new(5u8);
-        let _ = Box::new(5u16);
-        let _ = Box::new(5u32);
-        let _ = Box::new(5u64);
-        let _ = Box::new(5u128);
-        let _ = Box::new([5u8; 256]);
-        let _ = Box::new([5u8; 512]);
-    }
-    {
-        for _ in 0..10000 {
-            let a = Box::new(6u128);
-            let b = Box::new(7u128);
-            let c = Box::new(2u128);
-        }
-    }
 
     // apic::init();
 
