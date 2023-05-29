@@ -16,7 +16,7 @@ pub fn init() {
         .with_level(LevelFilter::Debug)
         // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
         .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
-        .with_module_level("GlobalAlloc", LevelFilter::Trace)
+        // .with_module_level("GlobalAlloc", LevelFilter::Trace)
         // .with_level(LevelFilter::Error)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;

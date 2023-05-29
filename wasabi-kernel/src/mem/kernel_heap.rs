@@ -413,10 +413,10 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
         }
         let size = self.size;
 
-        let block = self
-            .first_block_or_push()?
-            .find_block_with_space(size)
-            .ok_or(MemError::OutOfMemory)?;
+        let block = match self.first_block_or_push()?.find_block_with_space(size) {
+            Some(block) => block,
+            None => self.push_new_block()?,
+        };
 
         block.alloc(size)
     }
@@ -449,6 +449,8 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
         let mut next_first = None;
 
         if block.is_freed(size) {
+            let slab_ptr = NonNull::new(block as *mut SlabBlock as *mut u8).unwrap();
+
             if let Some(mut prev_ptr) = block.prev {
                 let prev = unsafe { prev_ptr.as_mut() };
                 prev.next = block.next;
@@ -468,7 +470,7 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
             // only free at the end, so that we ensure a consistent
             // linked list state, even if the free fails
             let free_layout = SlabBlock::layout();
-            allocator.free(ptr, free_layout)?;
+            allocator.free(slab_ptr, free_layout)?;
         }
 
         Ok(())

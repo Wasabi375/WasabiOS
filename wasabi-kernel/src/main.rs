@@ -54,6 +54,13 @@ fn init(boot_info: &'static mut BootInfo) {
         let _ = Box::new([5u8; 256]);
         let _ = Box::new([5u8; 512]);
     }
+    {
+        for _ in 0..10000 {
+            let a = Box::new(6u128);
+            let b = Box::new(7u128);
+            let c = Box::new(2u128);
+        }
+    }
 
     // apic::init();
 
