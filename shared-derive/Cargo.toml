@@ -10,7 +10,7 @@ proc-macro2 = "1.0.58"
 quote = "1.0.27"
 syn = { version = "2.0.16", features = ["full"] }
 shared = { path = "../shared" }
-paste = "1.0.12"
+paste.workspace = true
 
 [lib]
 proc-macro = true

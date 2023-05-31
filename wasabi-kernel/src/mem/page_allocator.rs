@@ -2,12 +2,9 @@
 use log::{debug, error, info, trace, warn};
 
 use super::{MemError, Result};
-use crate::mem::page_table::RecursivePageTableExt;
+use crate::{mem::page_table::RecursivePageTableExt, prelude::SpinLock};
 use lazy_static::lazy_static;
-use shared::{
-    lockcell::SpinLock,
-    rangeset::{Range, RangeSet},
-};
+use shared::rangeset::{Range, RangeSet};
 use x86_64::{
     structures::paging::{
         page_table::FrameError::FrameNotPresent, Page, PageSize, PageTable, PageTableFlags,

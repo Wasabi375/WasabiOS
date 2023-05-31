@@ -1,3 +1,4 @@
+use bit_field::BitField;
 use core::arch::x86_64::{__cpuid, __cpuid_count};
 use log::trace;
 use x86_64::registers::rflags::{self, RFlags};
@@ -10,6 +11,17 @@ pub fn cpuid(leaf: u32, sub_leaf: Option<u32>) -> CpuidResult {
     } else {
         unsafe { __cpuid(leaf) }
     }
+}
+
+pub fn apic_id() -> u8 {
+    let cpuid_apci_info = cpuid(1, None);
+    let local_apic_id: u8 = cpuid_apci_info
+        .ebx
+        .get_bits(24..)
+        .try_into()
+        .unwrap_or_else(|_| panic!("local apic id does not fit in u8"));
+
+    local_apic_id
 }
 
 pub fn check_cpuid_usable() {

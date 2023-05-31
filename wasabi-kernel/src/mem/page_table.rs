@@ -1,19 +1,20 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
-use shared::lockcell::{LockCell, LockCellGuard, LockCellInternal, SpinLock};
 
-use core::fmt::Write;
-use core::mem;
+use crate::prelude::{LockCell, LockCellGuard, SpinLock};
+use core::{fmt::Write, mem};
 use lazy_static::lazy_static;
+use shared::lockcell::LockCellInternal;
 use staticvec::StaticString;
-use x86_64::structures::paging::mapper::{MappedFrame, TranslateResult};
-use x86_64::structures::paging::page_table::FrameError::FrameNotPresent;
-use x86_64::structures::paging::{mapper::Translate, PageTable};
-use x86_64::structures::paging::{
-    Page, PageSize, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable, Size1GiB,
-    Size2MiB, Size4KiB,
+use x86_64::{
+    structures::paging::{
+        mapper::{MappedFrame, Translate, TranslateResult},
+        page_table::FrameError,
+        Page, PageSize, PageTable, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable,
+        Size1GiB, Size2MiB, Size4KiB,
+    },
+    PhysAddr, VirtAddr,
 };
-use x86_64::{PhysAddr, VirtAddr};
 
 lazy_static! {
     static ref KERNEL_PAGE_TABLE: KernelPageTable = KernelPageTable::default();
@@ -313,7 +314,7 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
                                 entry_flags,
                             )
                         }
-                        Err(FrameNotPresent) => {}
+                        Err(FrameError::FrameNotPresent) => {}
                         Err(other) => error!("unexpected error: {other:?}"),
                     }
                 } else {

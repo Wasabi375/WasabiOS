@@ -10,17 +10,24 @@
 )]
 #![allow(dead_code)]
 
+pub mod core_local;
 pub mod cpu;
 pub mod debug_logger;
 pub mod framebuffer;
 pub mod mem;
 pub mod panic;
+pub mod prelude;
 pub mod serial;
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
+use shared::lockcell::LockCell;
 
-use crate::cpu::{cpuid, gdt, interrupts};
+use crate::{
+    core_local::core_boot,
+    cpu::{cpuid, gdt, interrupts},
+    prelude::SpinLock,
+};
 use bootloader_api::{config::Mapping, BootInfo};
 use core::ptr::null_mut;
 
@@ -28,14 +35,18 @@ extern crate alloc;
 
 // FIXME: this breaks rust uniquness guarantee
 static mut BOOT_INFO: *mut BootInfo = null_mut();
+
 pub fn boot_info() -> &'static mut BootInfo {
     unsafe { &mut *BOOT_INFO }
 }
 
 fn init(boot_info: &'static mut BootInfo) {
-    unsafe {
+    let core_id = unsafe {
         BOOT_INFO = boot_info;
-    }
+
+        core_boot()
+    };
+
     debug_logger::init();
 
     trace!("{boot_info:#?}");
@@ -44,10 +55,14 @@ fn init(boot_info: &'static mut BootInfo) {
 
     mem::init();
 
-    // apic::init();
+    unsafe {
+        core_local::init(core_id);
+    }
 
     gdt::init();
     interrupts::init();
+
+    // apic::init();
 }
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
@@ -60,7 +75,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // }
     // info!("fault done");
 
-    // x86_64::instructions::interrupts::int3();
+    x86_64::instructions::interrupts::int3();
 
     info!("OS Done! cpu::halt()");
     cpu::halt();

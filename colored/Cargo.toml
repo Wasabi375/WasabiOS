@@ -15,10 +15,8 @@ keywords = ["color", "string", "term", "ansi_term", "term-painter"]
 no-color = []
 
 [dependencies]
-lazy_static = { version = "1", features = [ "spin_no_std" ] }
+lazy_static.workspace = true
 staticvec = { path = "../staticvec" }
-
-
 
 [dev_dependencies]
 ansi_term = "0.12"

@@ -698,6 +698,10 @@ dependencies = [
 [[package]]
 name = "shared"
 version = "0.1.0"
+dependencies = [
+ "log",
+ "x86_64",
+]
 
 [[package]]
 name = "shared-derive"
@@ -888,6 +892,7 @@ dependencies = [
  "linked_list_allocator",
  "log",
  "logger",
+ "paste",
  "shared",
  "shared-derive",
  "staticvec",

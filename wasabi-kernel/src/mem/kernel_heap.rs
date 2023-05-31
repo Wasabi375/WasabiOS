@@ -1,24 +1,21 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::mem::{
-    frame_allocator::{PhysAllocator, WasabiFrameAllocator},
-    page_allocator::PageAllocator,
-    KernelPageTable,
+use crate::{
+    mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator, KernelPageTable},
+    prelude::{LockCell, SpinLock},
 };
 
 use super::{page_allocator::Pages, MemError, Result};
 use core::{
     alloc::{GlobalAlloc, Layout},
     mem::{align_of, size_of},
+    ops::DerefMut,
     ptr::{null_mut, NonNull},
 };
 use lazy_static::lazy_static;
 use linked_list_allocator::Heap as LinkedHeap;
-use shared::{
-    lockcell::{LockCell, SpinLock},
-    sizes::KiB,
-};
+use shared::sizes::KiB;
 use x86_64::{
     structures::paging::{Mapper, PageSize, PageTableFlags, Size4KiB},
     VirtAddr,
@@ -68,7 +65,7 @@ pub fn init() {
 
     let mut page_table = KernelPageTable::get().lock();
 
-    let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::new(PhysAllocator::get());
+    let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
     for page in pages.iter() {
@@ -76,7 +73,7 @@ pub fn init() {
             .alloc()
             .expect("Out of memory setting up kernel heap");
         unsafe {
-            match page_table.map_to(page, frame, flags, &mut frame_allocator) {
+            match page_table.map_to(page, frame, flags, frame_allocator.deref_mut()) {
                 Ok(flusher) => flusher.flush(),
                 Err(e) => panic!("Failed to map page {page:?} to frame {frame:?}: {e:?}"),
             }

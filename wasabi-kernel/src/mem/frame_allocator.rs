@@ -1,15 +1,15 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
+use crate::prelude::{LockCell, SpinLock};
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use core::{marker::PhantomData, ptr::null_mut};
 use lazy_static::lazy_static;
-use shared::{
-    lockcell::{LockCell, SpinLock},
-    rangeset::{Range, RangeSet},
-};
+use shared::rangeset::{Range, RangeSet};
 use x86_64::{
-    structures::paging::{FrameAllocator, FrameDeallocator, PageSize, PhysFrame},
+    structures::paging::{
+        FrameAllocator, FrameDeallocator, PageSize, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
+    },
     PhysAddr,
 };
 
@@ -23,6 +23,12 @@ pub(super) struct PhysAllocator {
 lazy_static! {
     static ref GLOBAL_PHYS_ALLOCATOR: SpinLock<RangeSet<{ PhysAllocator::N }>> =
         SpinLock::default();
+    static ref KERNEL_FRAME_ALLOCATOR_4K: SpinLock<WasabiFrameAllocator<Size4KiB>> =
+        SpinLock::new(WasabiFrameAllocator::new(PhysAllocator::get()));
+    static ref KERNEL_FRAME_ALLOCATOR_2M: SpinLock<WasabiFrameAllocator<Size2MiB>> =
+        SpinLock::new(WasabiFrameAllocator::new(PhysAllocator::get()));
+    static ref KERNEL_FRAME_ALLOCATOR_1G: SpinLock<WasabiFrameAllocator<Size1GiB>> =
+        SpinLock::new(WasabiFrameAllocator::new(PhysAllocator::get()));
 }
 
 impl PhysAllocator {
@@ -88,6 +94,24 @@ pub struct WasabiFrameAllocator<S> {
     phys_alloc: PhysAllocator,
     first_unused_frame: *mut UnusedFrame,
     size: PhantomData<S>,
+}
+
+impl WasabiFrameAllocator<Size4KiB> {
+    pub fn get_for_kernel() -> &'static SpinLock<Self> {
+        &KERNEL_FRAME_ALLOCATOR_4K
+    }
+}
+
+impl WasabiFrameAllocator<Size2MiB> {
+    pub fn get_for_kernel() -> &'static SpinLock<Self> {
+        &KERNEL_FRAME_ALLOCATOR_2M
+    }
+}
+
+impl WasabiFrameAllocator<Size1GiB> {
+    pub fn get_for_kernel() -> &'static SpinLock<Self> {
+        &KERNEL_FRAME_ALLOCATOR_1G
+    }
 }
 
 impl<S: PageSize> WasabiFrameAllocator<S> {

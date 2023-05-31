@@ -9,7 +9,7 @@ color = ["colored"]
 
 
 [dependencies]
-log = "0.4.17"
+log.workspace = true
 shared = { path = "../shared" }
 staticvec = { path = "../staticvec" }
 colored = { path = "../colored", optional = true }

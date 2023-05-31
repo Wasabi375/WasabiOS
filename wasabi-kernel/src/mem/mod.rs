@@ -1,7 +1,7 @@
-mod frame_allocator;
-mod kernel_heap;
-mod page_allocator;
-mod page_table;
+pub mod frame_allocator;
+pub mod kernel_heap;
+pub mod page_allocator;
+pub mod page_table;
 
 use core::ptr::NonNull;
 

@@ -4,20 +4,21 @@ use uart_16550::SerialPort;
 
 use crate::{
     boot_info,
+    core_local::CoreInterruptState,
     framebuffer::{clear_frame_buffer, Color},
     serial::SERIAL1,
     serial_println,
 };
 
-pub static mut LOGGER: Option<StaticLogger<'static, SerialPort>> = None;
+pub static mut LOGGER: Option<StaticLogger<'static, SerialPort, CoreInterruptState>> = None;
 
 pub fn init() {
     let logger = StaticLogger::new(&SERIAL1)
         .with_level(LevelFilter::Debug)
-        // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
-        .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
+        // .with_level(LevelFilter::Trace)
+        .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
+        // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
-        // .with_level(LevelFilter::Error)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
     if unsafe {
