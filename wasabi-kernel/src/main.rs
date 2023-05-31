@@ -21,15 +21,14 @@ pub mod serial;
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
-use shared::lockcell::LockCell;
 
 use crate::{
     core_local::core_boot,
-    cpu::{cpuid, gdt, interrupts},
-    prelude::SpinLock,
+    cpu::{apic, cpuid, gdt, interrupts},
 };
 use bootloader_api::{config::Mapping, BootInfo};
 use core::ptr::null_mut;
+use mem::MemError;
 
 extern crate alloc;
 
@@ -40,7 +39,7 @@ pub fn boot_info() -> &'static mut BootInfo {
     unsafe { &mut *BOOT_INFO }
 }
 
-fn init(boot_info: &'static mut BootInfo) {
+fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
     let core_id = unsafe {
         BOOT_INFO = boot_info;
 
@@ -62,11 +61,15 @@ fn init(boot_info: &'static mut BootInfo) {
     gdt::init();
     interrupts::init();
 
-    // apic::init();
+    apic::init()?;
+
+    Ok(())
 }
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    init(boot_info);
+    if let Err(err) = init(boot_info) {
+        panic!("Kernel init failed: {err:?}");
+    }
 
     // warn!("Causing fault");
     // let ptr = (0xdeadbeafu64 + 0x8000000000u64) as *mut u8;

@@ -47,6 +47,8 @@ pub enum MemError {
     PtrNotAllocated(NonNull<u8>),
     #[error("Failed to free ptr")]
     FreeFailed(NonNull<u8>),
+    #[error("Page Table map failed")]
+    PageTableMap,
 }
 
 pub fn init() {
