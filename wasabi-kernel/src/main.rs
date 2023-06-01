@@ -6,7 +6,8 @@
     abi_x86_interrupt,
     ascii_char,
     let_chains,
-    allocator_api
+    allocator_api,
+    result_flattening
 )]
 #![allow(dead_code)]
 

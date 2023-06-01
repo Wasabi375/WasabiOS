@@ -1,5 +1,6 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use thiserror::Error;
 
 use crate::prelude::{LockCell, LockCellGuard, SpinLock};
 use core::{fmt::Write, mem};
@@ -8,7 +9,7 @@ use shared::lockcell::LockCellInternal;
 use staticvec::StaticString;
 use x86_64::{
     structures::paging::{
-        mapper::{MappedFrame, Translate, TranslateResult},
+        mapper::{MapToError, MappedFrame, Translate, TranslateResult},
         page_table::FrameError,
         Page, PageSize, PageTable, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable,
         Size1GiB, Size2MiB, Size4KiB,
@@ -18,6 +19,50 @@ use x86_64::{
 
 lazy_static! {
     static ref KERNEL_PAGE_TABLE: KernelPageTable = KernelPageTable::default();
+}
+
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum PageTableMapError {
+    #[error("Failed to alloc frame")]
+    FrameAllocationFailed,
+    #[error("Part of page is already mapped as hzge page")]
+    ParentEntryHugePage,
+    #[error("The page is already mapped to a frame {0:?}")]
+    PageAllreadyMapped4k(PhysFrame<Size4KiB>),
+    #[error("The page is already mapped to a frame {0:?}")]
+    PageAllreadyMapped2m(PhysFrame<Size2MiB>),
+    #[error("The page is already mapped to a frame {0:?}")]
+    PageAllreadyMapped1g(PhysFrame<Size1GiB>),
+}
+
+impl From<MapToError<Size4KiB>> for PageTableMapError {
+    fn from(value: MapToError<Size4KiB>) -> Self {
+        match value {
+            MapToError::FrameAllocationFailed => PageTableMapError::FrameAllocationFailed,
+            MapToError::ParentEntryHugePage => PageTableMapError::ParentEntryHugePage,
+            MapToError::PageAlreadyMapped(f) => PageTableMapError::PageAllreadyMapped4k(f),
+        }
+    }
+}
+
+impl From<MapToError<Size2MiB>> for PageTableMapError {
+    fn from(value: MapToError<Size2MiB>) -> Self {
+        match value {
+            MapToError::FrameAllocationFailed => PageTableMapError::FrameAllocationFailed,
+            MapToError::ParentEntryHugePage => PageTableMapError::ParentEntryHugePage,
+            MapToError::PageAlreadyMapped(f) => PageTableMapError::PageAllreadyMapped2m(f),
+        }
+    }
+}
+
+impl From<MapToError<Size1GiB>> for PageTableMapError {
+    fn from(value: MapToError<Size1GiB>) -> Self {
+        match value {
+            MapToError::FrameAllocationFailed => PageTableMapError::FrameAllocationFailed,
+            MapToError::ParentEntryHugePage => PageTableMapError::ParentEntryHugePage,
+            MapToError::PageAlreadyMapped(f) => PageTableMapError::PageAllreadyMapped1g(f),
+        }
+    }
 }
 
 pub struct KernelPageTable {

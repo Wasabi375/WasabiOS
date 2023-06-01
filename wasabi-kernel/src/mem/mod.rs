@@ -10,10 +10,11 @@ use log::{debug, error, info, trace, warn};
 
 use crate::mem::frame_allocator::PhysAllocator;
 use crate::mem::page_allocator::PageAllocator;
+use crate::mem::page_table::KernelPageTable;
 use crate::{boot_info, cpu};
 use bootloader_api::info::{FrameBuffer, MemoryRegionKind};
 use bootloader_api::BootInfo;
-use page_table::{recursive_index, RecursivePageTableExt};
+use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use shared::lockcell::LockCell;
 use thiserror::Error;
 use volatile::{access::ReadOnly, Volatile};
@@ -23,9 +24,7 @@ use x86_64::{PhysAddr, VirtAddr};
 
 pub type Result<T> = core::result::Result<T, MemError>;
 
-pub use page_table::KernelPageTable;
-
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum MemError {
     #[error("allocator has not been initialized")]
     NotInit,
@@ -47,8 +46,8 @@ pub enum MemError {
     PtrNotAllocated(NonNull<u8>),
     #[error("Failed to free ptr")]
     FreeFailed(NonNull<u8>),
-    #[error("Page Table map failed")]
-    PageTableMap,
+    #[error("Page Table map failed: {0:?}")]
+    PageTableMap(PageTableMapError),
 }
 
 pub fn init() {
@@ -89,6 +88,44 @@ pub fn init() {
     drop(recursive_page_table);
 
     kernel_heap::init();
+}
+
+#[macro_export]
+macro_rules! map_page {
+    ($page: expr, $size: ident, $flags: expr) => {{
+        use x86_64::structures::paging::PhysFrame;
+        use $crate::mem::frame_allocator::WasabiFrameAllocator;
+        use $crate::mem::page_table::PageTableMapError;
+
+        let frame_alloc: &mut WasabiFrameAllocator<$size> =
+            &mut WasabiFrameAllocator::<$size>::get_for_kernel().lock();
+        let frame: Option<PhysFrame<$size>> = frame_alloc.alloc();
+
+        frame
+            .ok_or_else(|| PageTableMapError::FrameAllocationFailed)
+            .map(|frame| map_page!($page, $size, $flags, frame, frame_alloc))
+            .flatten()
+    }};
+    ($page: expr, $size: ident, $flags: expr, $frame: expr) => {{
+        use $crate::mem::frame_allocator::WasabiFrameAllocator;
+        let frame_alloc: &mut WasabiFrameAllocator<$size> =
+            &mut WasabiFrameAllocator::get_for_kernel().lock();
+        map_page!($page, $size, $flags, $frame, frame_alloc)
+    }};
+    ($page: expr, $size: ident, $flags: expr, $frame: expr, $frame_alloc: expr) => {{
+        use x86_64::structures::paging::{mapper::RecursivePageTable, Page, PhysFrame};
+        use $crate::mem::page_table::{KernelPageTable, PageTableMapError};
+
+        let kernel_page_table: &mut RecursivePageTable<'static> =
+            &mut KernelPageTable::get().lock();
+
+        let page: Page<$size> = $page;
+        let frame: PhysFrame<$size> = $frame;
+        kernel_page_table
+            .map_to(page, frame, $flags, $frame_alloc)
+            .map_err(|e| PageTableMapError::from(e))
+            .map(|flusher| flusher.flush())
+    }};
 }
 
 /// prints out some random data about maped pages and phys frames

@@ -2,7 +2,10 @@
 use log::{debug, error, info, trace, warn};
 
 use crate::{
-    mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator, KernelPageTable},
+    mem::{
+        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
+        page_table::KernelPageTable,
+    },
     prelude::{LockCell, SpinLock},
 };
 

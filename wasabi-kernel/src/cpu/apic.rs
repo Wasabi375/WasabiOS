@@ -1,12 +1,7 @@
-use core::ops::DerefMut;
-
 use crate::{
     cpu::cpuid::cpuid,
-    locals,
-    mem::{
-        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator, KernelPageTable,
-        MemError, VirtAddrExt,
-    },
+    locals, map_page,
+    mem::{page_allocator::PageAllocator, MemError, VirtAddrExt},
     todo_warn,
 };
 use bit_field::BitField;
@@ -45,6 +40,7 @@ pub fn init() -> Result<(), MemError> {
     info!("local apic id: {local_apic_id}");
 
     let apic_base = ApicBase::create_from_msr(IA32_APIC_BASE)?;
+
     let id_reg = apic_base.id();
     assert_eq!(
         id_reg.read().id(),
@@ -64,7 +60,6 @@ pub fn init() -> Result<(), MemError> {
 pub struct ApicBase(VirtAddr);
 
 impl ApicBase {
-    #[allow(unused_variables, unreachable_code)] // TODO temp
     fn create_from_msr(apic_base: Msr) -> Result<Self, MemError> {
         // Safety: reading apic base is ok
         let apic_base_data = unsafe { apic_base.read() };
@@ -87,23 +82,13 @@ impl ApicBase {
             .lock()
             .allocate_page_4k()?;
 
+        let apic_table_flags: PageTableFlags = PageTableFlags::PRESENT
+            | PageTableFlags::WRITABLE
+            | PageTableFlags::NO_EXECUTE
+            | PageTableFlags::NO_CACHE;
+
         unsafe {
-            let apic_table_flags: PageTableFlags = PageTableFlags::PRESENT
-                | PageTableFlags::WRITABLE
-                | PageTableFlags::NO_EXECUTE
-                | PageTableFlags::NO_CACHE;
-            KernelPageTable::get()
-                .lock()
-                .map_to(
-                    page,
-                    phys_frame,
-                    apic_table_flags,
-                    WasabiFrameAllocator::<Size4KiB>::get_for_kernel()
-                        .lock()
-                        .deref_mut(),
-                )
-                .map_err(|_e| MemError::PageTableMap)? // TODO save inner error
-                .flush();
+            map_page!(page, Size4KiB, apic_table_flags).map_err(|e| MemError::PageTableMap(e))?;
         }
 
         let virt_base = page.start_address();
