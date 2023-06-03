@@ -30,6 +30,7 @@ impl Default for PageAllocator {
     }
 }
 
+// TODO convert errors from MemError to PageTableError
 impl PageAllocator {
     pub(crate) fn new() -> Self {
         let mut vaddrs = RangeSet::new();

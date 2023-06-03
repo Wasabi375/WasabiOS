@@ -5,7 +5,7 @@ use core::{
     hint::spin_loop,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering},
 };
 
 /// Trait that allows access to OS-level constructs defining interrupt state,
@@ -114,7 +114,7 @@ impl<T, M: ?Sized + LockCellInternal<T>> Drop for LockCellGuard<'_, T, M> {
 
 pub trait LockCell<T>
 where
-    Self: LockCellInternal<T>,
+    Self: LockCellInternal<T> + Send + Sync,
 {
     fn lock(&self) -> LockCellGuard<'_, T, Self>;
 }
@@ -123,7 +123,8 @@ where
 pub struct SpinLock<T, I> {
     open: AtomicBool,
     data: UnsafeCell<T>,
-    holder: UnsafeCell<Option<CoreId>>,
+    // FIXME: owner must be atomic, see Ticket Lock
+    owner: UnsafeCell<Option<CoreId>>,
     _interrupt_state: PhantomData<I>,
 }
 
@@ -153,7 +154,7 @@ impl<T, I> SpinLock<T, I> {
         Self {
             open: AtomicBool::new(true),
             data: UnsafeCell::new(data),
-            holder: UnsafeCell::new(None),
+            owner: UnsafeCell::new(None),
             _interrupt_state: PhantomData::default(),
         }
     }
@@ -173,8 +174,8 @@ impl<T, I: InterruptState> LockCell<T> for SpinLock<T, I> {
             {
                 Ok(_) => break,
                 Err(_) => {
-                    let holder = unsafe { *self.holder.get() };
-                    if let Some(holder) = holder && holder == I::core_id() {
+                    let owner = unsafe { *self.owner.get() };
+                    if let Some(owner) = owner && owner == I::core_id() {
                         panic!("Deadlock detected!");
                     }
                     spin_loop()
@@ -183,7 +184,7 @@ impl<T, I: InterruptState> LockCell<T> for SpinLock<T, I> {
         }
 
         unsafe {
-            *self.holder.get() = Some(I::core_id());
+            *self.owner.get() = Some(I::core_id());
         }
 
         LockCellGuard {
@@ -196,5 +197,74 @@ impl<T, I: InterruptState> LockCell<T> for SpinLock<T, I> {
 impl<T: Default, I> Default for SpinLock<T, I> {
     fn default() -> Self {
         Self::new(T::default())
+    }
+}
+
+#[derive(Debug)]
+pub struct TicketLock<T, I> {
+    current_ticket: AtomicU64,
+    next_ticket: AtomicU64,
+    data: UnsafeCell<T>,
+    owner: AtomicU16,
+    _interrupt_state: PhantomData<I>,
+}
+
+unsafe impl<T, I: InterruptState> Send for TicketLock<T, I> {}
+unsafe impl<T, I: InterruptState> Sync for TicketLock<T, I> {}
+
+impl<T, I> TicketLock<T, I> {
+    pub fn new(data: T) -> Self {
+        Self {
+            current_ticket: AtomicU64::new(0),
+            next_ticket: AtomicU64::new(0),
+            data: UnsafeCell::new(data),
+            owner: AtomicU16::new(!0),
+            _interrupt_state: PhantomData::default(),
+        }
+    }
+}
+
+impl<T, I: InterruptState> LockCell<T> for TicketLock<T, I> {
+    #[track_caller]
+    fn lock(&self) -> LockCellGuard<'_, T, Self> {
+        I::enter_lock();
+        let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
+
+        while self.current_ticket.load(Ordering::SeqCst) != ticket {
+            let owner = self.owner.load(Ordering::Acquire);
+            if owner != !0 && owner == I::core_id().0 as u16 {
+                panic!("Deadlock detected");
+            }
+            spin_loop();
+        }
+
+        self.owner.store(I::core_id().0 as u16, Ordering::Release);
+
+        LockCellGuard {
+            mutex: self,
+            _t: PhantomData::default(),
+        }
+    }
+}
+
+impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
+    unsafe fn get(&self) -> &T {
+        &*self.data.get()
+    }
+
+    unsafe fn get_mut(&self) -> &mut T {
+        &mut *self.data.get()
+    }
+
+    unsafe fn unlock<'s, 'l: 's>(&'s self, _guard: &mut LockCellGuard<'l, T, Self>) {
+        self.owner.store(!0, Ordering::Release);
+        self.current_ticket.fetch_add(1, Ordering::SeqCst);
+        I::exit_lock();
+    }
+
+    unsafe fn force_unlock(&self) {
+        self.owner.store(!0, Ordering::Release);
+        self.current_ticket.fetch_add(1, Ordering::SeqCst);
+        I::exit_lock();
     }
 }

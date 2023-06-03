@@ -1,20 +1,21 @@
-use crate::prelude::SpinLock;
+use crate::prelude::TicketLock;
 use lazy_static::lazy_static;
 use uart_16550::SerialPort;
 
 const COM1_IO_PORT: u16 = 0x3F8;
 
 lazy_static! {
-    pub static ref SERIAL1: SpinLock<SerialPort> = {
+    pub static ref SERIAL1: TicketLock<SerialPort> = {
         // Safety: COM1_IO_PORT is a valid Serial port
         let mut port = unsafe { SerialPort::new(COM1_IO_PORT) };
         port.init();
-        SpinLock::new(port)
+        TicketLock::new(port)
     };
 }
 
 #[doc(hidden)]
-pub fn _print(args: ::core::fmt::Arguments) {
+#[inline]
+pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
     use shared::lockcell::LockCell;
 

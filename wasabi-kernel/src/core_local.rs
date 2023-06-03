@@ -210,11 +210,15 @@ impl InterruptState for CoreInterruptState {
     }
 
     fn enter_lock() {
-        todo!()
+        unsafe {
+            locals!().disable_interrupts();
+        }
     }
 
     fn exit_lock() {
-        todo!()
+        unsafe {
+            locals!().enable_interrupts();
+        }
     }
 }
 

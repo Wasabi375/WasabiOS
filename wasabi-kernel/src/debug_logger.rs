@@ -1,19 +1,20 @@
+use lazy_static::__Deref;
 use log::{info, LevelFilter};
 use logger::StaticLogger;
 use uart_16550::SerialPort;
 
 use crate::{
     boot_info,
-    core_local::CoreInterruptState,
     framebuffer::{clear_frame_buffer, Color},
+    prelude::TicketLock,
     serial::SERIAL1,
     serial_println,
 };
 
-pub static mut LOGGER: Option<StaticLogger<'static, SerialPort, CoreInterruptState>> = None;
+pub static mut LOGGER: Option<StaticLogger<'static, SerialPort, TicketLock<SerialPort>>> = None;
 
 pub fn init() {
-    let logger = StaticLogger::new(&SERIAL1)
+    let logger = StaticLogger::new(SERIAL1.deref())
         .with_level(LevelFilter::Debug)
         // .with_level(LevelFilter::Trace)
         .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)

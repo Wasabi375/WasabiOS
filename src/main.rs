@@ -38,9 +38,8 @@ fn main() {
     }
     cmd.arg("-serial").arg("stdio");
 
-    // Virtualization is required, because qemu won't simulate apic
     if host_arch.is_windows() {
-        // cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
+        // cmd.arg("-accel").arg("whpx");
     } else {
         cmd.arg("-enable-kvm");
     }

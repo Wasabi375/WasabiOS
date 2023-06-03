@@ -44,16 +44,13 @@
 
 #![no_std]
 
-use core::fmt::Write;
-
-use colored::ColoredString;
+use core::{fmt::Write, marker::PhantomData};
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
-
-use shared::lockcell::{InterruptState, LockCell, SpinLock};
+use shared::lockcell::LockCell;
 use staticvec::StaticVec;
 
 #[cfg(feature = "color")]
-use colored::{Color, Colorize};
+use colored::{Color, ColoredString, Colorize};
 
 /// Implements [`Log`] and a set of simple builder methods for configuration.
 ///
@@ -62,7 +59,7 @@ use colored::{Color, Colorize};
 ///
 /// This logger does not use any heap allocations. All data is stored in place.
 /// It can only store [`LevelFilter`s] for `N` log targets/modules.
-pub struct StaticLogger<'a, W, I, const N: usize = 256> {
+pub struct StaticLogger<'a, W, L, const N: usize = 256> {
     /// The default logging level
     default_level: LevelFilter,
 
@@ -73,11 +70,15 @@ pub struct StaticLogger<'a, W, I, const N: usize = 256> {
     /// directly gives us the desired log level.
     module_levels: StaticVec<(&'a str, LevelFilter), N>,
 
-    writer: &'a SpinLock<W, I>,
+    writer: &'a L,
+    _phantom_writer: PhantomData<W>,
 
     #[cfg(feature = "color")]
     level_colors: [Color; 6],
 }
+
+unsafe impl<W, L: Sync, const N: usize> Sync for StaticLogger<'_, W, L, N> {}
+unsafe impl<W, L: Send, const N: usize> Send for StaticLogger<'_, W, L, N> {}
 
 const fn default_colors() -> [Color; 6] {
     [
@@ -90,7 +91,7 @@ const fn default_colors() -> [Color; 6] {
     ]
 }
 
-impl<'a, W, I> StaticLogger<'a, W, I> {
+impl<'a, W, L: LockCell<W>> StaticLogger<'a, W, L> {
     /// Initializes the global logger with a StaticLogger instance with
     /// default log level set to `Level::Trace`.
     ///
@@ -102,11 +103,12 @@ impl<'a, W, I> StaticLogger<'a, W, I> {
     ///
     /// [`init`]: #method.init
     #[must_use = "You must call init() to begin logging"]
-    pub const fn new(writer: &'a SpinLock<W, I>) -> StaticLogger<'a, W, I> {
+    pub const fn new(writer: &'a L) -> StaticLogger<'a, W, L> {
         StaticLogger {
             default_level: LevelFilter::Info,
             module_levels: StaticVec::new(),
             writer,
+            _phantom_writer: PhantomData,
             #[cfg(feature = "color")]
             level_colors: default_colors(),
         }
@@ -121,7 +123,7 @@ impl<'a, W, I> StaticLogger<'a, W, I> {
     /// [`env`]: #method.env
     /// [`with_module_level`]: #method.with_module_level
     #[must_use = "You must call init() to begin logging"]
-    pub fn with_level(mut self, level: LevelFilter) -> StaticLogger<'a, W, I> {
+    pub fn with_level(mut self, level: LevelFilter) -> StaticLogger<'a, W, L> {
         self.default_level = level;
         self
     }
@@ -161,7 +163,7 @@ impl<'a, W, I> StaticLogger<'a, W, I> {
         mut self,
         target: &'static str,
         level: LevelFilter,
-    ) -> StaticLogger<'a, W, I> {
+    ) -> StaticLogger<'a, W, L> {
         self.module_levels.push((target, level));
 
         /* Normally this is only called in `init` to avoid redundancy, but we can't initialize the logger in tests */
@@ -175,13 +177,13 @@ impl<'a, W, I> StaticLogger<'a, W, I> {
     /// Overrides the log color used for the specified level.
     #[cfg(feature = "color")]
     #[must_use = "You must call init() to begin logging"]
-    pub fn with_level_color(mut self, level: Level, color: Color) -> StaticLogger<'a, W, I> {
+    pub fn with_level_color(mut self, level: Level, color: Color) -> StaticLogger<'a, W, L> {
         self.level_colors[level as usize] = color;
 
         self
     }
 }
-impl<'a, W: Write, I: InterruptState> StaticLogger<'a, W, I> {
+impl<'a, W: Write, L: LockCell<W>> StaticLogger<'a, W, L> {
     /// 'Init' the actual logger, instantiate it and configure it,
     /// this method MUST be called in order for the logger to be effective.
     pub fn init(&'static mut self) -> Result<(), SetLoggerError> {
@@ -204,7 +206,7 @@ impl<'a, W: Write, I: InterruptState> StaticLogger<'a, W, I> {
     }
 }
 
-impl<'a, W: Write, I: InterruptState> Log for StaticLogger<'a, W, I> {
+impl<'a, W: Write, L: LockCell<W>> Log for StaticLogger<'a, W, L> {
     fn enabled(&self, metadata: &Metadata) -> bool {
         &metadata.level().to_level_filter()
             <= self
