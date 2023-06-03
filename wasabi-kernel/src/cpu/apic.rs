@@ -15,12 +15,15 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-struct APIC {}
-
 const IA32_APIC_BASE: Msr = Msr::new(0x1b);
 
 pub fn init() -> Result<(), MemError> {
     info!("Init Apic...");
+
+    let local_apic = locals!().apic.lock();
+    if local_apic.is_some() {
+        panic!("Apic should only ever be initialized once per core");
+    }
 
     disable_8259();
 
@@ -39,9 +42,9 @@ pub fn init() -> Result<(), MemError> {
         .unwrap_or_else(|_| panic!("local apic id does not fit in u8"));
     info!("local apic id: {local_apic_id}");
 
-    let apic_base = ApicBase::create_from_msr(IA32_APIC_BASE)?;
+    let apic = Apic::create_from_msr(IA32_APIC_BASE)?;
 
-    let id_reg = apic_base.id();
+    let id_reg = apic.id();
     assert_eq!(
         id_reg.read().id(),
         local_apic_id,
@@ -53,13 +56,14 @@ pub fn init() -> Result<(), MemError> {
         "apic id in locals()! did not match apic provided id"
     );
 
-    todo_warn!();
+    *local_apic = Some(apic);
+
     Ok(())
 }
 
-pub struct ApicBase(VirtAddr);
+pub struct Apic(VirtAddr);
 
-impl ApicBase {
+impl Apic {
     fn create_from_msr(apic_base: Msr) -> Result<Self, MemError> {
         // Safety: reading apic base is ok
         let apic_base_data = unsafe { apic_base.read() };
@@ -94,7 +98,7 @@ impl ApicBase {
         let virt_base = page.start_address();
         debug!("Create apic base at addr: Phys {phys_base:p}, Virt {virt_base:p}");
 
-        Ok(ApicBase(virt_base))
+        Ok(Apic(virt_base))
     }
 
     fn offset(&self, offset: Offset) -> VirtAddr {
@@ -108,6 +112,7 @@ impl ApicBase {
 }
 
 fn disable_8259() {
+    // TODO do I need this and why?
     unsafe {
         // Disable 8259 immediately, thanks kennystrawnmusic
 

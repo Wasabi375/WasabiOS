@@ -5,10 +5,12 @@ use core::{
 };
 
 use crate::{
-    cpu::{self, cpuid},
+    cpu::{self, apic::Apic, cpuid},
     locals,
+    prelude::TicketLock,
 };
 use alloc::boxed::Box;
+use log::debug;
 use shared::{lockcell::InterruptState, types::CoreId};
 use x86_64::VirtAddr;
 
@@ -61,6 +63,8 @@ pub struct CoreLocals {
     interrupt_count: AutoRefCounter,
     exception_count: AutoRefCounter,
     interrupts_disable_count: AtomicU64,
+
+    pub apic: TicketLock<Option<Apic>>,
 }
 
 impl CoreLocals {
@@ -75,6 +79,8 @@ impl CoreLocals {
             // interrupts disbale count is 1, because the boot section does not allow
             // for interrupts, after all we have not initialized them.
             interrupts_disable_count: AtomicU64::new(1),
+
+            apic: TicketLock::new(None),
         }
     }
 
@@ -174,10 +180,11 @@ pub unsafe fn init(core_id: CoreId) {
         interrupt_count: AutoRefCounter::new(0),
         exception_count: AutoRefCounter::new(0),
         interrupts_disable_count: AtomicU64::new(1),
+        apic: TicketLock::new(None),
     });
 
-    let core_local = Box::leak(core_local);
     core_local.virt_addr = VirtAddr::from_ptr(core_local);
+    debug!("Core Locals initialized from boot locals");
 
     unsafe {
         assert!(CORE_LOCALS_VADDRS[core_id.0 as usize].is_null());
