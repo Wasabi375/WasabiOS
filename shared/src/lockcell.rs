@@ -5,7 +5,7 @@ use core::{
     hint::spin_loop,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
 };
 
 /// Trait that allows access to OS-level constructs defining interrupt state,
@@ -213,13 +213,13 @@ unsafe impl<T, I: InterruptState> Send for TicketLock<T, I> {}
 unsafe impl<T, I: InterruptState> Sync for TicketLock<T, I> {}
 
 impl<T, I> TicketLock<T, I> {
-    pub fn new(data: T) -> Self {
+    pub const fn new(data: T) -> Self {
         Self {
             current_ticket: AtomicU64::new(0),
             next_ticket: AtomicU64::new(0),
             data: UnsafeCell::new(data),
             owner: AtomicU16::new(!0),
-            _interrupt_state: PhantomData::default(),
+            _interrupt_state: PhantomData,
         }
     }
 }
@@ -242,7 +242,7 @@ impl<T, I: InterruptState> LockCell<T> for TicketLock<T, I> {
 
         LockCellGuard {
             mutex: self,
-            _t: PhantomData::default(),
+            _t: PhantomData,
         }
     }
 }

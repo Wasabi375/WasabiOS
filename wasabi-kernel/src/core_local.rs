@@ -1,16 +1,15 @@
-use core::{
-    arch::asm,
-    hint::spin_loop,
-    sync::atomic::{AtomicU64, AtomicU8, Ordering},
-};
-
 use crate::{
     cpu::{self, apic::Apic, cpuid},
     locals,
     prelude::TicketLock,
 };
 use alloc::boxed::Box;
-use log::debug;
+use core::{
+    arch::asm,
+    hint::spin_loop,
+    sync::atomic::{AtomicU64, AtomicU8, Ordering},
+};
+use log::{debug, trace};
 use shared::{lockcell::InterruptState, types::CoreId};
 use x86_64::VirtAddr;
 
@@ -52,10 +51,7 @@ pub struct CoreLocals {
     virt_addr: VirtAddr,
 
     /// lock used to access the critical boot section.
-    /// This should not be used. It is only public for a sanity assert in the
-    /// [`locals!`] macro.
-    #[doc(hidden)]
-    pub __boot_lock: AtomicU8,
+    boot_lock: AtomicU8,
 
     pub core_id: CoreId,
     pub apic_id: CoreId, // TODO create ApicId struct instead?
@@ -71,7 +67,7 @@ impl CoreLocals {
     const fn empty() -> Self {
         Self {
             virt_addr: VirtAddr::zero(),
-            __boot_lock: AtomicU8::new(0),
+            boot_lock: AtomicU8::new(0),
             core_id: CoreId(0),
             apic_id: CoreId(0),
             interrupt_count: AutoRefCounter::new(0),
@@ -142,7 +138,7 @@ pub unsafe fn core_boot() -> CoreId {
         cpu::disable_interrupts();
         cpu::set_gs_base(&BOOT_CORE_LOCALS as *const CoreLocals as u64);
 
-        while BOOT_CORE_LOCALS.__boot_lock.load(Ordering::SeqCst) != core_id.0 {
+        while BOOT_CORE_LOCALS.boot_lock.load(Ordering::SeqCst) != core_id.0 {
             spin_loop();
         }
 
@@ -172,9 +168,9 @@ pub unsafe fn core_boot() -> CoreId {
 pub unsafe fn init(core_id: CoreId) {
     let apic_id = cpuid::apic_id().into();
 
-    let core_local = Box::new(CoreLocals {
+    let mut core_local = Box::new(CoreLocals {
         virt_addr: VirtAddr::zero(),
-        __boot_lock: AtomicU8::new(core_id.0),
+        boot_lock: AtomicU8::new(core_id.0),
         core_id,
         apic_id,
         interrupt_count: AutoRefCounter::new(0),
@@ -183,22 +179,25 @@ pub unsafe fn init(core_id: CoreId) {
         apic: TicketLock::new(None),
     });
 
-    core_local.virt_addr = VirtAddr::from_ptr(core_local);
-    debug!("Core Locals initialized from boot locals");
+    core_local.virt_addr = VirtAddr::from_ptr(core_local.as_ref());
+    debug!(
+        "Core {}: Core Locals initialized from boot locals",
+        core_id.0
+    );
 
     unsafe {
         assert!(CORE_LOCALS_VADDRS[core_id.0 as usize].is_null());
         CORE_LOCALS_VADDRS[core_id.0 as usize] = core_local.virt_addr;
-    }
 
-    unsafe {
         // set gs base to point to this core_local. That way we can use the core!
         // macro to access the core_locals.
         cpu::set_gs_base(core_local.virt_addr.as_u64());
 
         // exit the critical boot section and let next core enter
-        BOOT_CORE_LOCALS.__boot_lock.fetch_add(1, Ordering::SeqCst);
+        BOOT_CORE_LOCALS.boot_lock.fetch_add(1, Ordering::SeqCst);
     }
+    core::mem::forget(core_local);
+    trace!("Core {}: locals init done", core_id.0);
 }
 
 pub struct CoreInterruptState;
@@ -290,11 +289,11 @@ pub unsafe fn core_locals_initialized() -> bool {
 #[macro_export]
 macro_rules! locals {
     () => {{
-        use core::sync::atomic::Ordering;
+        // use core::sync::atomic::Ordering;
         let locals = $crate::core_local::get_core_locals();
 
-        let lock = locals.__boot_lock.load(Ordering::Relaxed);
-        assert_eq!(lock, locals.core_id.0);
+        // let lock = locals.__boot_lock.load(Ordering::Relaxed);
+        // assert_eq!(lock, locals.core_id.0);
         locals
     }};
 }

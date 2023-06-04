@@ -14,13 +14,13 @@ use shared::lockcell::LockCellInternal;
 /// This function is called on panic.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    if unsafe { &LOGGER }.is_none() {
-        panic_no_logger(info);
-    }
-
     unsafe {
         // TODO try with timeout first, before clobbering lock
         SERIAL1.deref().force_unlock();
+    }
+
+    if unsafe { &LOGGER }.is_none() {
+        panic_no_logger(info);
     }
 
     if let Some(fb) = boot_info().framebuffer.as_mut() {

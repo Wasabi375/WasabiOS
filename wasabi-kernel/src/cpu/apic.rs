@@ -2,7 +2,6 @@ use crate::{
     cpu::cpuid::cpuid,
     locals, map_page,
     mem::{page_allocator::PageAllocator, MemError, VirtAddrExt},
-    todo_warn,
 };
 use bit_field::BitField;
 use log::{debug, info, trace};
@@ -20,7 +19,7 @@ const IA32_APIC_BASE: Msr = Msr::new(0x1b);
 pub fn init() -> Result<(), MemError> {
     info!("Init Apic...");
 
-    let local_apic = locals!().apic.lock();
+    let mut local_apic = locals!().apic.lock();
     if local_apic.is_some() {
         panic!("Apic should only ever be initialized once per core");
     }
