@@ -1,3 +1,5 @@
+//! A hobby os-kernel written in Rust
+
 #![no_std]
 #![no_main]
 #![feature(
@@ -9,6 +11,7 @@
     allocator_api,
     result_flattening
 )]
+// #![warn(missing_docs, rustdoc::missing_crate_level_docs)] // TODO enable
 
 pub mod core_local;
 pub mod cpu;
@@ -32,13 +35,17 @@ use mem::MemError;
 
 extern crate alloc;
 
-// FIXME: this breaks rust uniquness guarantee
+/// Contains the [BootInfo] provided by the Bootloader
+/// FIXME: this breaks rust uniquness guarantee
 static mut BOOT_INFO: *mut BootInfo = null_mut();
 
+/// returns the [BootInfo] provided by the bootloader
+/// FIXME: this breaks rust uniquness guarantee
 pub fn boot_info() -> &'static mut BootInfo {
     unsafe { &mut *BOOT_INFO }
 }
 
+/// initializes the kernel.
 fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
     let core_id = unsafe {
         BOOT_INFO = boot_info;
@@ -66,6 +73,7 @@ fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
     Ok(())
 }
 
+/// the main entry point for the kernel. Called by the bootloader.
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if let Err(err) = init(boot_info) {
         panic!("Kernel init failed: {err:?}");
@@ -84,6 +92,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     cpu::halt();
 }
 
+/// configuration for the bootloader
 const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
     let mut config = bootloader_api::BootloaderConfig::new_default();
     config.mappings.page_table_recursive = Some(Mapping::Dynamic);

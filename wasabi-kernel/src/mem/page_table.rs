@@ -281,8 +281,7 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
         }
     }
 
-    /// Prints all mapped memory regions that are not part of the [BOOTLOADER_MEMORY_MAP_BASE]
-    /// linear mapping of physical memory.
+    /// Prints all mapped memory regions.
     fn print_all_mapped_regions(&mut self, ignore_cpu_flags: bool) {
         fn internal(
             level: u8,

@@ -1,3 +1,5 @@
+//! Local Apic implementation
+
 use crate::{
     cpu::cpuid::cpuid,
     locals, map_page,
@@ -6,7 +8,6 @@ use crate::{
 use bit_field::BitField;
 use log::{debug, info, trace};
 use shared::lockcell::LockCell;
-use volatile::{access::ReadOnly, Volatile};
 use x86_64::{
     instructions::port::Port,
     registers::model_specific::Msr,
@@ -14,8 +15,10 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
+/// MSR address of the local apic base.
 const IA32_APIC_BASE: Msr = Msr::new(0x1b);
 
+/// initializes the apic and stores it in [create::core_local::CoreLocals]
 pub fn init() -> Result<(), MemError> {
     info!("Init Apic...");
 
@@ -45,12 +48,12 @@ pub fn init() -> Result<(), MemError> {
 
     let id_reg = apic.id();
     assert_eq!(
-        id_reg.read().id(),
+        id_reg.id(),
         local_apic_id,
         "local apic id from cpuid and apic did not match"
     );
     assert_eq!(
-        id_reg.read().id(),
+        id_reg.id(),
         locals!().apic_id.0,
         "apic id in locals()! did not match apic provided id"
     );
@@ -60,9 +63,11 @@ pub fn init() -> Result<(), MemError> {
     Ok(())
 }
 
+/// A struct representing a local apic.
 pub struct Apic(VirtAddr);
 
 impl Apic {
+    /// create a [Apic] reading it's address from the [Msr]
     fn create_from_msr(apic_base: Msr) -> Result<Self, MemError> {
         // Safety: reading apic base is ok
         let apic_base_data = unsafe { apic_base.read() };
@@ -100,18 +105,20 @@ impl Apic {
         Ok(Apic(virt_base))
     }
 
+    /// calculate [VirtAddr] for the given [Offset]
     fn offset(&self, offset: Offset) -> VirtAddr {
         self.0 + offset as u64
     }
 
-    fn id(&self) -> Volatile<&Id, ReadOnly> {
+    /// returns the [Id] of this [Apic]
+    fn id(&self) -> Id {
         let id = unsafe { self.offset(Offset::Id).as_volatile() };
-        id
+        id.read()
     }
 }
 
+/// TODO do I need this and why?
 fn disable_8259() {
-    // TODO do I need this and why?
     unsafe {
         // Disable 8259 immediately, thanks kennystrawnmusic
 
@@ -146,6 +153,7 @@ fn disable_8259() {
     };
 }
 
+/// Offset of different registers into an [Apic]
 #[repr(usize)]
 pub enum Offset {
     Id = 0x20,
@@ -179,11 +187,13 @@ pub enum Offset {
     ExtendedInterruptLocalVectorTable = 0x500,
 }
 
+/// [Apic] id register
 #[derive(Debug, Copy, Clone)]
 #[repr(transparent)]
 pub struct Id(u32);
 
 impl Id {
+    /// reads the id from the register
     pub fn id(&self) -> u8 {
         self.0
             .get_bits(24..)

@@ -1,18 +1,15 @@
+//! A module containing logging and debug utilities
 use lazy_static::__Deref;
 use log::{info, LevelFilter};
 use logger::StaticLogger;
 use uart_16550::SerialPort;
 
-use crate::{
-    boot_info,
-    framebuffer::{clear_frame_buffer, Color},
-    prelude::TicketLock,
-    serial::SERIAL1,
-    serial_println,
-};
+use crate::{prelude::TicketLock, serial::SERIAL1, serial_println};
 
+/// the static logger used by the [log::log] macro
 pub static mut LOGGER: Option<StaticLogger<'static, SerialPort, TicketLock<SerialPort>>> = None;
 
+/// initializes the logger piping all [log::log] calls into the first serial port.
 pub fn init() {
     let logger = StaticLogger::new(SERIAL1.deref())
         .with_level(LevelFilter::Debug)
@@ -40,6 +37,12 @@ pub fn init() {
     info!("Static Logger initialized to Serial Port 1");
 }
 
+/// A macro logging and returning the result of any expression.
+/// The result of the expression is logged using the [log::debug] macro.
+///
+/// ```
+/// assert_eq!(5, dbg!(5)); // also calls log::debug(5)
+/// ```
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! dbg {
@@ -50,6 +53,7 @@ macro_rules! dbg {
     }};
 }
 
+/// Same as [todo!] but only calls a [log::warn] instead of [panic].
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! todo_warn {
@@ -61,6 +65,7 @@ macro_rules! todo_warn {
     };
 }
 
+/// Same as [todo!] but only calls a [log::error] instead of [panic].
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! todo_error {
@@ -70,14 +75,4 @@ macro_rules! todo_error {
     ($($arg:tt)+) => {
         log::error!("not yet implemented: {}", $crate::format_args!($($arg)+))
     };
-}
-
-pub fn fill_screen(c: Color) {
-    if let Some(fb) = boot_info().framebuffer.as_mut() {
-        clear_frame_buffer(fb, c);
-    }
-}
-
-pub fn debug_clear_screen() {
-    fill_screen(Color::BLACK);
 }
