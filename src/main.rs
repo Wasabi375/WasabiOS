@@ -24,6 +24,8 @@ fn main() {
     // read env variables that were set in build script
     let uefi_path = host_arch.resolve(env!("UEFI_PATH"));
     let bios_path = host_arch.resolve(env!("BIOS_PATH"));
+    let kernel_path = env!("KERNEL_PATH");
+    println!("Kernel elf at: {kernel_path}");
 
     // choose whether to start the UEFI or BIOS image
     let uefi = true;
