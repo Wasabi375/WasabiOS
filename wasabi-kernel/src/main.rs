@@ -57,7 +57,9 @@ fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
 
     trace!("{boot_info:#?}");
 
-    cpuid::check_cpuid_usable();
+    unsafe {
+        cpuid::check_cpuid_usable();
+    }
 
     mem::init();
 

@@ -1,3 +1,4 @@
+//! Utility functions for dealing with the `cpuid` instruction.
 use bit_field::BitField;
 use core::arch::x86_64::{__cpuid, __cpuid_count};
 use log::trace;
@@ -5,6 +6,7 @@ use x86_64::registers::rflags::{self, RFlags};
 
 pub use core::arch::x86_64::CpuidResult;
 
+/// calls the cpuid instruction with the provided `leaf` and if set `sub_leaf`
 pub fn cpuid(leaf: u32, sub_leaf: Option<u32>) -> CpuidResult {
     if let Some(ecx) = sub_leaf {
         unsafe { __cpuid_count(leaf, ecx) }
@@ -13,6 +15,7 @@ pub fn cpuid(leaf: u32, sub_leaf: Option<u32>) -> CpuidResult {
     }
 }
 
+/// get local_apic id by calling [cpuid].
 pub fn apic_id() -> u8 {
     let cpuid_apci_info = cpuid(1, None);
     let local_apic_id: u8 = cpuid_apci_info
@@ -24,7 +27,15 @@ pub fn apic_id() -> u8 {
     local_apic_id
 }
 
-pub fn check_cpuid_usable() {
+/// ensures that we are allowed to call [cpuid].
+///
+/// This will fail with an invalid opcode exception (#UD) if we are not
+/// running on a valid intel cpu that supports apic.
+///
+/// # Safety:
+///
+/// This can always fault, depending on the hardware. No way around it.
+pub unsafe fn check_cpuid_usable() {
     trace!("check cpuid usable");
 
     let mut rflags = rflags::read();
