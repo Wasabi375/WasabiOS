@@ -340,16 +340,6 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
         align <= self.align()
     }
 
-    fn new(size: usize, allocator: &'a mut A) -> Result<Self> {
-        let res = SlabAllocator {
-            size,
-            block: Some(SlabBlock::new(size, allocator)?),
-            allocator: Some(allocator),
-        };
-        res.verify_size();
-        Ok(res)
-    }
-
     fn empty() -> Self {
         SlabAllocator {
             size: 0,

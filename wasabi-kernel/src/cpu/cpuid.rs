@@ -49,21 +49,21 @@ pub fn check_cpuid_usable() {
 
     trace!("Max value for cpuid eax: {}", genuine_intel.eax);
 
-    fn u32_assert(u: u32, str: &str) {
-        let u_bytes: &[u8; 4] = unsafe { core::mem::transmute(&u) };
-        // Safety: we don't care that the to_ascii conversion of bytes might fail
-        // for printing.
-        // Worst case we get a missing char symbol. Most terminals are utf8 anyways
-        unsafe {
-            assert!(
-                u_bytes == str.as_bytes(),
-                "expected \"{str}\" but got \"{}\" instaed",
-                u_bytes.as_ascii_unchecked().as_str()
-            );
-        }
-    }
-
     // This does not seem to work with qemu, but should work in real hardware
+    // fn u32_assert(u: u32, str: &str) {
+    //     let u_bytes: &[u8; 4] = unsafe { core::mem::transmute(&u) };
+    //     // Safety: we don't care that the to_ascii conversion of bytes might fail
+    //     // for printing.
+    //     // Worst case we get a missing char symbol. Most terminals are utf8 anyways
+    //     unsafe {
+    //         assert!(
+    //             u_bytes == str.as_bytes(),
+    //             "expected \"{str}\" but got \"{}\" instaed",
+    //             u_bytes.as_ascii_unchecked().as_str()
+    //         );
+    //     }
+    // }
+    //
     // u32_assert(genuine_intel.ebx, r"Genu");
     // u32_assert(genuine_intel.ecx, r"ntel");
     // u32_assert(genuine_intel.ebx, r"ienI");

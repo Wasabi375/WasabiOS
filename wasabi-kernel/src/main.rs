@@ -9,7 +9,6 @@
     allocator_api,
     result_flattening
 )]
-#![allow(dead_code)]
 
 pub mod core_local;
 pub mod cpu;
