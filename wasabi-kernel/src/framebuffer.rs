@@ -1,12 +1,17 @@
+//! utilites for framebuffer access
+
 use bootloader_api::info::FrameBuffer;
 
+/// A simple rgb (u8) Color
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[allow(missing_docs)]
 pub struct Color {
-    r: u8,
-    g: u8,
-    b: u8,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
 }
 
+#[allow(missing_docs)]
 impl Color {
     pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
     pub const RED: Color = Color { r: 255, g: 0, b: 0 };
@@ -21,10 +26,14 @@ impl Color {
     pub const PANIC: Color = Color::PINK;
 }
 
+/// clears the framebuffer to the given color
+///
+/// uses [clear_frame_buffer_rgb] internally
 pub fn clear_frame_buffer(fb: &mut FrameBuffer, c: Color) {
     clear_frame_buffer_rgb(fb, c.r, c.g, c.b)
 }
 
+/// clears the framebuffer to the given rgb color
 pub fn clear_frame_buffer_rgb(fb: &mut FrameBuffer, r: u8, g: u8, b: u8) {
     let info = fb.info().clone();
     let buffer = fb.buffer_mut();

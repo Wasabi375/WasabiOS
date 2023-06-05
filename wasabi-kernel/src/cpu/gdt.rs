@@ -1,3 +1,5 @@
+//! utilities to setup the Generald Descriptor Table
+
 use lazy_static::lazy_static;
 use log::{debug, info, trace};
 use x86_64::{
@@ -11,8 +13,10 @@ use x86_64::{
 
 use crate::cpu::interrupts::DOUBLE_FAULT_STACK_SIZE;
 
+/// IST INDEX used to access separate stack for double fault exceptions
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 
+/// set up gdt
 pub fn init() {
     use x86_64::instructions::segmentation::{Segment, CS};
     use x86_64::instructions::tables::load_tss;
@@ -37,9 +41,11 @@ pub fn init() {
 }
 
 lazy_static! {
+    /// TSS holds address for kernel stack on interrupt
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
+            /// double fault stack
             static mut STACK: [u8; DOUBLE_FAULT_STACK_SIZE] = [0; DOUBLE_FAULT_STACK_SIZE];
 
             let start = VirtAddr::from_ptr(unsafe { &STACK });
@@ -51,6 +57,7 @@ lazy_static! {
 }
 
 lazy_static! {
+    /// the GDT used by this kernel
     static ref GDT: (GlobalDescriptorTable, Segments) = {
         let mut gdt = GlobalDescriptorTable::new();
         let code = gdt.add_entry(Descriptor::kernel_code_segment());
@@ -59,7 +66,10 @@ lazy_static! {
     };
 }
 
+/// wrappwer around the segements used by this kernel
 struct Segments {
+    /// kernel code segment
     code: SegmentSelector,
+    /// tss segment
     tss: SegmentSelector,
 }

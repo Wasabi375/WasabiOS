@@ -1,3 +1,5 @@
+//! kernel utilities/handlers for interrupts
+
 use log::{debug, info, warn};
 use shared::sizes::KiB;
 use x86_64::{
@@ -12,6 +14,7 @@ use crate::{
 use lazy_static::lazy_static;
 
 lazy_static! {
+    /// The interrupt descriptor table used by this kernel
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
         idt.breakpoint.set_handler_fn(breakpoint_handler);
@@ -25,6 +28,7 @@ lazy_static! {
     };
 }
 
+/// setup idt
 pub fn init() {
     info!("Load IDT");
     IDT.load();
@@ -37,9 +41,11 @@ pub fn init() {
 
 use paste::paste;
 
+#[doc(hidden)]
 macro_rules! int_fn_builder {
     ($int_type:ident) => {
         paste! {
+            /// creates a handler function for an $int_type
             #[allow(unused_macros)]
             macro_rules! [<$int_type _fn>]  {
                 ($name:ident, $ist_name:ident, $block:tt) => {
@@ -50,6 +56,7 @@ macro_rules! int_fn_builder {
                 };
             }
 
+            /// creats a handler function for an $int_type which will panic
             #[allow(unused_macros)]
             macro_rules! [<panic_ $int_type>]  {
                 ($name:ident, $ist_name:ident) => {
@@ -61,6 +68,7 @@ macro_rules! int_fn_builder {
             }
 
 
+            /// creates a handler function for an $int_type
             #[allow(unused_macros)]
             macro_rules! [<$int_type _with_error_fn>] {
                 ($name:ident, $ist_name:ident, $err_name:ident, $block:tt) => {
@@ -71,6 +79,7 @@ macro_rules! int_fn_builder {
                 };
             }
 
+            /// creats a handler function for an $int_type which will panic
             #[allow(unused_macros)]
             macro_rules! [<panic_ $int_type _with_error>] {
                 ($name:ident) => {
@@ -81,6 +90,7 @@ macro_rules! int_fn_builder {
                 };
             }
 
+            /// creates a page fault $int_type handler
             #[allow(unused_macros)]
             macro_rules! [<$int_type _page_fault_fn>] {
                 ($name:ident, $ist_name:ident, $err_name:ident, $block:tt) => {
@@ -101,7 +111,11 @@ exception_fn!(breakpoint_handler, stack_frame, {
     warn!("breakpoint hit at\n{stack_frame:#?}");
 });
 
+/// the stack size for the double fault exception stack
+///
+/// DF uses a separate stack, in case DF was caused by a stack overflow
 pub const DOUBLE_FAULT_STACK_SIZE: usize = KiB(4 * 5);
+
 exception_with_error_fn!(double_fault_handler, stack_frame, err, {
     panic!("DOUBLE FAULT({err})\n{stack_frame:#?}")
 });
