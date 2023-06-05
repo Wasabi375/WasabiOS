@@ -8,6 +8,8 @@ use syn::{parse_macro_input, DeriveInput};
 macro_rules! primitive_enum {
     ($type:ident) => {
         paste! {
+        // TODO I coul prob create the doc using #[doc] and make $type work
+        /// derive `TryFrom<Number>` for enum with primitive representation
         #[proc_macro_derive([<$type:camel Enum>])]
         pub fn [<derive_ $type _enum>](input: TokenStream) -> TokenStream {
             let DeriveInput { ident, data, .. } = parse_macro_input!(input);
@@ -42,7 +44,7 @@ macro_rules! primitive_enum {
                     output.into()
                 }
                 _ => {
-                    panic!("U8Enum is only allowed on enums");
+                    panic!("$type enum is only allowed on enums");
                 }
             }
         }

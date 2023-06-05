@@ -1,3 +1,9 @@
+//! LockCell implementations
+//!
+//! This module provides a [SpinLock] which is not preemtable (can't be used in
+//! interrupts) and [TicketLock] which is preemtable as well as a the necessary
+//! utilites, e.g. the [LockCell] trait and [LockCellGuard] struct.
+
 use crate::types::CoreId;
 use core::{
     cell::UnsafeCell,
@@ -36,7 +42,9 @@ pub trait InterruptState {
     fn exit_lock();
 }
 
-#[doc(hidden)]
+/// unsafe internals used by [LockCell]s and [LockCellGuard].
+///
+/// Normally this shouldn't be used unless you implement a [LockCell].
 pub trait LockCellInternal<T> {
     /// Returns a reference to the data behind the mutex
     ///
@@ -67,16 +75,30 @@ pub trait LockCellInternal<T> {
     unsafe fn force_unlock(&self);
 }
 
+/// A guard structure that is used to guard a lock.
+///
+/// This allows safe access to the value inside of a [LockCell].
+/// When this is dropped, the [LockCell] is unlocked again.
+///
+/// This can be obtained from [`LockCell::lock`]
 #[derive(Debug)]
 pub struct LockCellGuard<'l, T, M: ?Sized + LockCellInternal<T>> {
-    mutex: &'l M,
+    /// the lockcell that is guarded by `self`
+    lockcell: &'l M,
+    /// phantom data for the type `T`
     _t: PhantomData<T>,
 }
 
 impl<'l, T, M: ?Sized + LockCellInternal<T>> LockCellGuard<'l, T, M> {
-    pub fn new(mutex: &'l M) -> Self {
+    /// creates a new guard. This should only be called if you implement a [LockCell].
+    ///
+    /// # Safety:
+    ///
+    /// The caller must ensure that only 1 LockClellGuard exists for any given
+    /// `lockcell` at a time.
+    pub unsafe fn new(lockcell: &'l M) -> Self {
         LockCellGuard {
-            mutex,
+            lockcell,
             _t: PhantomData::default(),
         }
     }
@@ -89,14 +111,14 @@ impl<T, M: ?Sized + LockCellInternal<T>> Deref for LockCellGuard<'_, T, M> {
 
     fn deref(&self) -> &Self::Target {
         // Safety: There can always be only 1 guard for a given mutex so this is safe
-        unsafe { self.mutex.get() }
+        unsafe { self.lockcell.get() }
     }
 }
 
 impl<T, M: ?Sized + LockCellInternal<T>> DerefMut for LockCellGuard<'_, T, M> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // Safety: There can always be only 1 guard for a given mutex so this is safe
-        unsafe { self.mutex.get_mut() }
+        unsafe { self.lockcell.get_mut() }
     }
 }
 
@@ -108,23 +130,30 @@ impl<T: Display, M: ?Sized + LockCellInternal<T>> Display for LockCellGuard<'_, 
 
 impl<T, M: ?Sized + LockCellInternal<T>> Drop for LockCellGuard<'_, T, M> {
     fn drop(&mut self) {
-        unsafe { self.mutex.unlock(self) }
+        unsafe { self.lockcell.unlock(self) }
     }
 }
 
+/// A trait representing a lock cell that guards simultaneus access to a value.
 pub trait LockCell<T>
 where
     Self: LockCellInternal<T> + Send + Sync,
 {
+    /// gives out access to the value of this lock. Blocks until access is granted.
     fn lock(&self) -> LockCellGuard<'_, T, Self>;
 }
 
+/// A spin lock implementation for [LockCell].
 #[derive(Debug)]
 pub struct SpinLock<T, I> {
+    /// if `true` no one currently holds the lock.
     open: AtomicBool,
+    /// the data within the [SpinLock]
     data: UnsafeCell<T>,
-    // FIXME: owner must be atomic, see Ticket Lock
+    /// the current core that owns the lock.
+    /// FIXME: owner must be atomic, see [TicketLock]
     owner: UnsafeCell<Option<CoreId>>,
+    /// phantom access to the cores interrupt state
     _interrupt_state: PhantomData<I>,
 }
 
@@ -150,6 +179,7 @@ impl<T, I: InterruptState> LockCellInternal<T> for SpinLock<T, I> {
 }
 
 impl<T, I> SpinLock<T, I> {
+    /// creates a new [SpinLock]
     pub fn new(data: T) -> Self {
         Self {
             open: AtomicBool::new(true),
@@ -188,7 +218,7 @@ impl<T, I: InterruptState> LockCell<T> for SpinLock<T, I> {
         }
 
         LockCellGuard {
-            mutex: self,
+            lockcell: self,
             _t: PhantomData::default(),
         }
     }
@@ -200,12 +230,20 @@ impl<T: Default, I> Default for SpinLock<T, I> {
     }
 }
 
+/// A ticket lock implementation for [LockCell]
+///
+/// [TicketLock]s are preemtable and can be used within interrupts.
 #[derive(Debug)]
 pub struct TicketLock<T, I> {
+    /// the current ticket that can access the lock
     current_ticket: AtomicU64,
+    /// the next ticket we give out
     next_ticket: AtomicU64,
+    /// the data within the lock
     data: UnsafeCell<T>,
+    /// the current core holding the lock
     owner: AtomicU16,
+    /// phantom access to the cores interrupt state
     _interrupt_state: PhantomData<I>,
 }
 
@@ -213,6 +251,7 @@ unsafe impl<T, I: InterruptState> Send for TicketLock<T, I> {}
 unsafe impl<T, I: InterruptState> Sync for TicketLock<T, I> {}
 
 impl<T, I> TicketLock<T, I> {
+    /// creates a new [TicketLock]
     pub const fn new(data: T) -> Self {
         Self {
             current_ticket: AtomicU64::new(0),
@@ -241,7 +280,7 @@ impl<T, I: InterruptState> LockCell<T> for TicketLock<T, I> {
         self.owner.store(I::core_id().0 as u16, Ordering::Release);
 
         LockCellGuard {
-            mutex: self,
+            lockcell: self,
             _t: PhantomData,
         }
     }

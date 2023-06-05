@@ -1,3 +1,5 @@
+//! panic handler implementation
+
 use core::panic::PanicInfo;
 use lazy_static::__Deref;
 use log::error;
@@ -32,6 +34,7 @@ fn panic(info: &PanicInfo) -> ! {
     cpu::halt();
 }
 
+/// panic handler if we haven't initialized logging
 fn panic_no_logger(info: &PanicInfo) -> ! {
     if let Some(fb) = boot_info().framebuffer.as_mut() {
         clear_frame_buffer(fb, Color::PANIC);

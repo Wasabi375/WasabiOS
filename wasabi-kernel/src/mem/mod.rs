@@ -1,9 +1,9 @@
+//! module containing memory implementation
+
 pub mod frame_allocator;
 pub mod kernel_heap;
 pub mod page_allocator;
 pub mod page_table;
-
-use core::ptr::NonNull;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -14,6 +14,7 @@ use crate::mem::page_table::KernelPageTable;
 use crate::{boot_info, cpu};
 use bootloader_api::info::{FrameBuffer, MemoryRegionKind};
 use bootloader_api::BootInfo;
+use core::ptr::NonNull;
 use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use shared::lockcell::LockCell;
 use thiserror::Error;
@@ -22,8 +23,10 @@ use x86_64::structures::paging::{RecursivePageTable, Translate};
 use x86_64::{registers::control::Cr3, structures::paging::PageTable};
 use x86_64::{PhysAddr, VirtAddr};
 
+/// Result type with [MemError]
 pub type Result<T> = core::result::Result<T, MemError>;
 
+/// enum for all memory related errors
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum MemError {
     #[error("allocator has not been initialized")]
@@ -50,6 +53,8 @@ pub enum MemError {
     PageTableMap(PageTableMapError),
 }
 
+/// initialize memory: phys allocator, page allocator page table as well as
+/// kernel heap allocator.
 pub fn init() {
     let (level_4_page_table, _) = Cr3::read();
     info!(
@@ -90,6 +95,21 @@ pub fn init() {
     kernel_heap::init();
 }
 
+/// Macro to map a page
+///
+/// ```no_run
+/// # #[macro_use] extern crate wasabi-kernel;
+/// # fn main() {
+/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
+/// let page: Page<Size4KiB> = todo!();
+/// let phys_frame: PhysFrame<Size4KiB> = todo!();
+/// let frame_allocator: &mut WasabiFrameAllocator<Size4KiB> = todo!();
+///
+/// map_page!(page, Size4KiB, PageTableFlags::WRITABLE);
+/// map_page!(page, Size4KiB, PageTableFlags::WRITABLE, phys_frame);
+/// map_page!(page, Size4KiB, PageTableFlags::WRITABLE, phys_frame, frame_allocator);
+/// # }
+/// ```
 #[macro_export]
 macro_rules! map_page {
     ($page: expr, $size: ident, $flags: expr) => {{
@@ -186,6 +206,7 @@ fn print_debug_info(
     );
 }
 
+/// asserts that the given phys addr is not within the memory regions of the boot info
 fn assert_phys_not_available(addr: PhysAddr, message: &str) {
     let avail_mem = &boot_info().memory_regions;
 
@@ -197,6 +218,7 @@ fn assert_phys_not_available(addr: PhysAddr, message: &str) {
     assert!(!available, "{message}: Phys region {addr:p} is available!");
 }
 
+/// Extensiont trait for [VirtAddr]
 pub trait VirtAddrExt {
     /// returns a [Volatile] that provides access to the value behind this address
     ///

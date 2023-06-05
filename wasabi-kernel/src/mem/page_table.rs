@@ -123,7 +123,7 @@ impl LockCell<RecursivePageTable<'static>> for KernelPageTable {
         // forgetting guard here is fine, we don't want to unlock the table
         // when we drop it here. Unlock is done by the new guard we return instead
         mem::forget(guard);
-        LockCellGuard::new(self)
+        unsafe { LockCellGuard::new(self) }
     }
 }
 

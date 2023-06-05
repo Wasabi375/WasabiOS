@@ -1,10 +1,14 @@
+//! Utiltities for accessing the serial port
+
 use crate::prelude::TicketLock;
 use lazy_static::lazy_static;
 use uart_16550::SerialPort;
 
+/// address of the first IO port
 const COM1_IO_PORT: u16 = 0x3F8;
 
 lazy_static! {
+    /// the first serial port
     pub static ref SERIAL1: TicketLock<SerialPort> = {
         // Safety: COM1_IO_PORT is a valid Serial port
         let mut port = unsafe { SerialPort::new(COM1_IO_PORT) };
