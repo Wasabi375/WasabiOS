@@ -6,11 +6,23 @@ use uart_16550::SerialPort;
 
 use crate::{prelude::TicketLock, serial::SERIAL1, serial_println};
 
+/// number of module filers allowed for the logger
+const MAX_LEVEL_FILTERS: usize = 126;
+
+/// number of module renames allowed for the logger
+const MAX_RENAME_MAPPINGS: usize = 126;
+
 /// the static logger used by the [log::log] macro
 pub static mut LOGGER: Option<StaticLogger<'static, SerialPort, TicketLock<SerialPort>>> = None;
 
 /// initializes the logger piping all [log::log] calls into the first serial port.
 pub fn init() {
+    assert!(
+        MAX_LEVEL_FILTERS + MAX_RENAME_MAPPINGS <= 253,
+        "MAX_LEVEL_FILTERS + MAX_RENAME_MAPPINGS must be <= 253 or else \
+            StaticLogger doesn't fit in 4KiB which causes tripple fault on boot"
+    );
+
     let logger = StaticLogger::new(SERIAL1.deref())
         .with_level(LevelFilter::Debug)
         // .with_level(LevelFilter::Trace)
@@ -18,8 +30,11 @@ pub fn init() {
         .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
+        .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
+        .with_module_rename("wasabi_kernel", "")
         // comment to move ; to separate line - easy uncomment of module log levels
-        ;
+            ;
+
     if unsafe {
         LOGGER = Some(logger);
 

@@ -47,7 +47,7 @@
 use core::{fmt::Write, marker::PhantomData};
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use shared::lockcell::LockCell;
-use staticvec::StaticVec;
+use staticvec::{StaticString, StaticVec};
 
 #[cfg(feature = "color")]
 use colored::{Color, ColoredString, Colorize};
@@ -58,8 +58,8 @@ use colored::{Color, ColoredString, Colorize};
 /// then call [`init`](StaticLogger::init) to configure the [`log`] crate.
 ///
 /// This logger does not use any heap allocations. All data is stored in place.
-/// It can only store [`LevelFilter`]s for `N` log targets/modules.
-pub struct StaticLogger<'a, W, L, const N: usize = 256> {
+/// It can only store [`LevelFilter`]s for `N` log targets/modules and `R` rename mappings
+pub struct StaticLogger<'a, W, L, const N: usize = 126, const R: usize = 126> {
     /// The default logging level
     default_level: LevelFilter,
 
@@ -70,6 +70,11 @@ pub struct StaticLogger<'a, W, L, const N: usize = 256> {
     /// directly gives us the desired log level.
     module_levels: StaticVec<(&'a str, LevelFilter), N>,
 
+    /// a list off mappings renaming modules
+    ///
+    /// This can be used to shorten module names
+    module_rename_mapping: StaticVec<(&'a str, &'a str), R>,
+
     writer: &'a L,
     _phantom_writer: PhantomData<W>,
 
@@ -77,8 +82,8 @@ pub struct StaticLogger<'a, W, L, const N: usize = 256> {
     level_colors: [Color; 6],
 }
 
-unsafe impl<W, L: Sync, const N: usize> Sync for StaticLogger<'_, W, L, N> {}
-unsafe impl<W, L: Send, const N: usize> Send for StaticLogger<'_, W, L, N> {}
+unsafe impl<W, L: Sync, const N: usize, const R: usize> Sync for StaticLogger<'_, W, L, N, R> {}
+unsafe impl<W, L: Send, const N: usize, const R: usize> Send for StaticLogger<'_, W, L, N, R> {}
 
 const fn default_colors() -> [Color; 6] {
     [
@@ -91,7 +96,7 @@ const fn default_colors() -> [Color; 6] {
     ]
 }
 
-impl<'a, W, L: LockCell<W>> StaticLogger<'a, W, L> {
+impl<'a, W, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R> {
     /// Initializes the global logger with a StaticLogger instance with
     /// default log level set to `Level::Trace`.
     ///
@@ -103,10 +108,11 @@ impl<'a, W, L: LockCell<W>> StaticLogger<'a, W, L> {
     ///
     /// [`init`]: #method.init
     #[must_use = "You must call init() to begin logging"]
-    pub const fn new(writer: &'a L) -> StaticLogger<'a, W, L> {
+    pub const fn new(writer: &'a L) -> Self {
         StaticLogger {
             default_level: LevelFilter::Info,
             module_levels: StaticVec::new(),
+            module_rename_mapping: StaticVec::new(),
             writer,
             _phantom_writer: PhantomData,
             #[cfg(feature = "color")]
@@ -123,7 +129,7 @@ impl<'a, W, L: LockCell<W>> StaticLogger<'a, W, L> {
     /// [`env`]: #method.env
     /// [`with_module_level`]: #method.with_module_level
     #[must_use = "You must call init() to begin logging"]
-    pub fn with_level(mut self, level: LevelFilter) -> StaticLogger<'a, W, L> {
+    pub fn with_level(mut self, level: LevelFilter) -> Self {
         self.default_level = level;
         self
     }
@@ -159,11 +165,7 @@ impl<'a, W, L: LockCell<W>> StaticLogger<'a, W, L> {
     ///     .unwrap();
     /// ```
     #[must_use = "You must call init() to begin logging"]
-    pub fn with_module_level(
-        mut self,
-        target: &'static str,
-        level: LevelFilter,
-    ) -> StaticLogger<'a, W, L> {
+    pub fn with_module_level(mut self, target: &'static str, level: LevelFilter) -> Self {
         self.module_levels.push((target, level));
 
         /* Normally this is only called in `init` to avoid redundancy, but we can't initialize the logger in tests */
@@ -174,16 +176,22 @@ impl<'a, W, L: LockCell<W>> StaticLogger<'a, W, L> {
         self
     }
 
+    pub fn with_module_rename(mut self, target: &'static str, rename: &'static str) -> Self {
+        self.module_rename_mapping.push((target, rename));
+
+        self
+    }
+
     /// Overrides the log color used for the specified level.
     #[cfg(feature = "color")]
     #[must_use = "You must call init() to begin logging"]
-    pub fn with_level_color(mut self, level: Level, color: Color) -> StaticLogger<'a, W, L> {
+    pub fn with_level_color(mut self, level: Level, color: Color) -> Self {
         self.level_colors[level as usize] = color;
 
         self
     }
 }
-impl<'a, W: Write, L: LockCell<W>> StaticLogger<'a, W, L> {
+impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R> {
     /// 'Init' the actual logger, instantiate it and configure it,
     /// this method MUST be called in order for the logger to be effective.
     pub fn init(&'static mut self) -> Result<(), SetLoggerError> {
@@ -206,7 +214,9 @@ impl<'a, W: Write, L: LockCell<W>> StaticLogger<'a, W, L> {
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>> Log for StaticLogger<'a, W, L> {
+impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
+    for StaticLogger<'a, W, L, N, R>
+{
     fn enabled(&self, metadata: &Metadata) -> bool {
         &metadata.level().to_level_filter()
             <= self
@@ -227,12 +237,15 @@ impl<'a, W: Write, L: LockCell<W>> Log for StaticLogger<'a, W, L> {
             let level = record.level();
             let write_result = if cfg!(feature = "color") {
                 let color = self.level_colors[level as usize];
-                let level: ColoredString<50> = level
+                let mut level_str: StaticString<6> = StaticString::new();
+                write!(level_str, "{:<5}", level.as_str())
+                    .expect("StaticString of size 6 should be enough for the level");
+                let level: ColoredString<50> = level_str
                     .as_str()
                     .color(color)
-                    .expect("StaticString of size 50 should be enough for the level");
+                    .expect("StaticString of size 50 should be enough for the level + color");
 
-                write.write_fmt(format_args!("{:<5}", level))
+                write.write_fmt(format_args!("{}", level))
             } else {
                 write.write_fmt(format_args!("{:<5}", level))
             };
@@ -247,8 +260,24 @@ impl<'a, W: Write, L: LockCell<W>> Log for StaticLogger<'a, W, L> {
                 record.module_path().unwrap_or_default()
             };
 
+            let mut target_renamed = false;
+            for (old_name, new_name) in &self.module_rename_mapping {
+                if target.starts_with(old_name) {
+                    target_renamed = true;
+                    let rest = &target[old_name.len()..];
+                    write
+                        .write_fmt(format_args!(" [{}{}]", new_name, rest))
+                        .expect("Failed to write to serial port!");
+                }
+            }
+            if !target_renamed {
+                write
+                    .write_fmt(format_args!(" [{target}]"))
+                    .expect("Failed to write to serial port!");
+            }
+
             if write
-                .write_fmt(format_args!(" [{target}] {}\n", record.args()))
+                .write_fmt(format_args!(" {}\n", record.args()))
                 .is_err()
             {
                 drop(write);
