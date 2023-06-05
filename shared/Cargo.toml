@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 x86_64.workspace = true
 log.workspace = true
+paste.workspace = true

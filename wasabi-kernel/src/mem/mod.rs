@@ -8,7 +8,6 @@ pub mod page_table;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::mem::frame_allocator::PhysAllocator;
 use crate::mem::page_allocator::PageAllocator;
 use crate::mem::page_table::KernelPageTable;
 use crate::{boot_info, cpu};
@@ -84,8 +83,7 @@ pub fn init() {
         print_debug_info(&mut recursive_page_table, bootloader_page_table_vaddr);
     }
 
-    PhysAllocator::init(&boot_info().memory_regions);
-    let _phys_alloc = PhysAllocator::get();
+    frame_allocator::init(&boot_info().memory_regions);
 
     PageAllocator::get_kernel_allocator()
         .lock()

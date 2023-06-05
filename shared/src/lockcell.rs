@@ -10,9 +10,11 @@ use core::{
     fmt::Display,
     hint::spin_loop,
     marker::PhantomData,
+    mem::MaybeUninit,
     ops::{Deref, DerefMut},
     sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
 };
+use paste::paste;
 
 /// Trait that allows access to OS-level constructs defining interrupt state,
 /// exception state, unique core IDs, and enter/exit lock (for interrupt
@@ -180,12 +182,12 @@ impl<T, I: InterruptState> LockCellInternal<T> for SpinLock<T, I> {
 
 impl<T, I> SpinLock<T, I> {
     /// creates a new [SpinLock]
-    pub fn new(data: T) -> Self {
+    pub const fn new(data: T) -> Self {
         Self {
             open: AtomicBool::new(true),
             data: UnsafeCell::new(data),
             owner: UnsafeCell::new(None),
-            _interrupt_state: PhantomData::default(),
+            _interrupt_state: PhantomData,
         }
     }
 }
@@ -195,7 +197,7 @@ impl<T, I: InterruptState> LockCell<T> for SpinLock<T, I> {
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         assert!(
             !I::in_interrupt(),
-            "SpinLock can not be preemted. Use other lock type instead. TODO impl ticket lock"
+            "SpinLock can not be preemted. Use TicketLock instead"
         );
         loop {
             match self
@@ -305,5 +307,118 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
         self.owner.store(!0, Ordering::Release);
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
         I::exit_lock();
+    }
+}
+
+impl<T: Default, I: InterruptState> Default for TicketLock<T, I> {
+    fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
+
+/// A wrapper for a [`LockCell`] of an `MaybeUninit<T>`.
+///
+/// unlike a normal [LockCell], [`UnwrapLock::lock`] will return `T`
+/// or panic if the value was not initialized
+pub struct UnwrapLock<T, L: LockCell<MaybeUninit<T>>> {
+    /// inner lockcell that holds the `MaybeUninit<T>`
+    lockcell: L,
+    _t: PhantomData<T>,
+}
+
+macro_rules! unwrapLockWrapper {
+    ($lock_type:ident) => {
+        paste! {
+            pub type [<Unwrap $lock_type>]<T, I> = UnwrapLock<T, $lock_type<MaybeUninit<T>, I>>;
+
+            impl<T, I: InterruptState> [<Unwrap $lock_type>]<T, I> {
+                pub const unsafe fn new_uninit() -> Self {
+                    UnwrapLock::new($lock_type::new(MaybeUninit::uninit()))
+                }
+            }
+        }
+    };
+}
+
+unwrapLockWrapper!(SpinLock);
+unwrapLockWrapper!(TicketLock);
+
+impl<T, L: LockCell<MaybeUninit<T>> + Default> Default for UnwrapLock<T, L> {
+    fn default() -> Self {
+        Self {
+            lockcell: Default::default(),
+            _t: Default::default(),
+        }
+    }
+}
+
+unsafe impl<T, L: LockCell<MaybeUninit<T>>> Send for UnwrapLock<T, L> {}
+unsafe impl<T, L: LockCell<MaybeUninit<T>>> Sync for UnwrapLock<T, L> {}
+
+impl<T, L: LockCell<MaybeUninit<T>>> UnwrapLock<T, L> {
+    /// creates a new [UnwrapLock] from the given `inner` [LockCell]
+    ///
+    /// # Safety:
+    ///
+    /// the caller ensures that the lock is initialized with a value, before
+    /// [UnwrapLock::lock] is called.
+    pub const unsafe fn new(inner: L) -> Self {
+        Self {
+            lockcell: inner,
+            _t: PhantomData,
+        }
+    }
+
+    /// gives access to the locked `MaybeUninit`. Blocks until the lock is accessible.
+    ///
+    /// This is intented for initialization of the [UnwrapLock]
+    pub fn lock_uninit(&self) -> LockCellGuard<'_, MaybeUninit<T>, Self> {
+        let inner_guard = self.lockcell.lock();
+        core::mem::forget(inner_guard);
+        unsafe { LockCellGuard::new(self) }
+    }
+}
+
+impl<T, L: LockCell<MaybeUninit<T>>> LockCell<T> for UnwrapLock<T, L> {
+    fn lock(&self) -> LockCellGuard<'_, T, Self> {
+        let inner_guard = self.lockcell.lock();
+        core::mem::forget(inner_guard);
+        unsafe { LockCellGuard::new(self) }
+    }
+}
+
+impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T, L> {
+    unsafe fn get(&self) -> &T {
+        self.lockcell.get().assume_init_ref()
+    }
+
+    unsafe fn get_mut(&self) -> &mut T {
+        self.lockcell.get_mut().assume_init_mut()
+    }
+
+    unsafe fn unlock<'s, 'l: 's>(&'s self, _guard: &mut LockCellGuard<'l, T, Self>) {
+        self.lockcell.force_unlock();
+    }
+
+    unsafe fn force_unlock(&self) {
+        self.lockcell.force_unlock();
+    }
+}
+
+impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for UnwrapLock<T, L> {
+    unsafe fn get(&self) -> &MaybeUninit<T> {
+        self.lockcell.get()
+    }
+
+    unsafe fn get_mut(&self) -> &mut MaybeUninit<T> {
+        self.lockcell.get_mut()
+    }
+
+    unsafe fn unlock<'s, 'l: 's>(&'s self, _guard: &mut LockCellGuard<'l, MaybeUninit<T>, Self>) {
+        self.lockcell.force_unlock();
+    }
+
+    unsafe fn force_unlock(&self) {
+        self.lockcell.force_unlock();
     }
 }

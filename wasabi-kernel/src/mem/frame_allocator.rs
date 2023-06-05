@@ -1,10 +1,9 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::prelude::{LockCell, SpinLock};
+use crate::prelude::{LockCell, UnwrapSpinLock};
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use core::{marker::PhantomData, ptr::null_mut};
-use lazy_static::lazy_static;
 use shared::rangeset::{Range, RangeSet};
 use x86_64::{
     structures::paging::{
@@ -16,66 +15,77 @@ use x86_64::{
 /// A wrapper around a RangeSet that allows allocation and deallocation of
 /// Physical Frames of any size
 #[derive(Clone, Copy)]
-pub(super) struct PhysAllocator {
-    memory_ranges: &'static SpinLock<RangeSet<{ Self::N }>>,
+struct PhysAllocator {
+    memory_ranges: RangeSet<{ Self::N }>,
 }
 
-lazy_static! {
-    static ref GLOBAL_PHYS_ALLOCATOR: SpinLock<RangeSet<{ PhysAllocator::N }>> =
-        SpinLock::default();
-    static ref KERNEL_FRAME_ALLOCATOR_4K: SpinLock<WasabiFrameAllocator<Size4KiB>> =
-        SpinLock::new(WasabiFrameAllocator::new(PhysAllocator::get()));
-    static ref KERNEL_FRAME_ALLOCATOR_2M: SpinLock<WasabiFrameAllocator<Size2MiB>> =
-        SpinLock::new(WasabiFrameAllocator::new(PhysAllocator::get()));
-    static ref KERNEL_FRAME_ALLOCATOR_1G: SpinLock<WasabiFrameAllocator<Size1GiB>> =
-        SpinLock::new(WasabiFrameAllocator::new(PhysAllocator::get()));
+type LockedPhysAlloc = UnwrapSpinLock<PhysAllocator>;
+
+static GLOBAL_PHYS_ALLOCATOR: LockedPhysAlloc = unsafe { UnwrapSpinLock::new_uninit() };
+static KERNEL_FRAME_ALLOCATOR_4K: UnwrapSpinLock<WasabiFrameAllocator<Size4KiB>> =
+    unsafe { UnwrapSpinLock::new_uninit() };
+static KERNEL_FRAME_ALLOCATOR_2M: UnwrapSpinLock<WasabiFrameAllocator<Size2MiB>> =
+    unsafe { UnwrapSpinLock::new_uninit() };
+static KERNEL_FRAME_ALLOCATOR_1G: UnwrapSpinLock<WasabiFrameAllocator<Size1GiB>> =
+    unsafe { UnwrapSpinLock::new_uninit() };
+
+pub fn init(regions: &MemoryRegions) {
+    let mut ranges = RangeSet::<{ PhysAllocator::N }>::new();
+
+    for region in regions
+        .iter()
+        .filter(|r| r.kind == MemoryRegionKind::Usable)
+    {
+        let range = Range {
+            start: region.start,
+            end: region.end - 1u64,
+        };
+
+        ranges.insert(range);
+    }
+
+    let allocator = PhysAllocator {
+        memory_ranges: ranges,
+    };
+    GLOBAL_PHYS_ALLOCATOR.lock_uninit().write(allocator);
+
+    info!(
+        "PhysAllocator::new() with {} usable regions mapped into {} ranges \
+             with a total of {} bytes",
+        regions
+            .iter()
+            .filter(|r| r.kind == MemoryRegionKind::Usable)
+            .count(),
+        ranges.entries().len(),
+        ranges.sum().expect("No physical memory found")
+    );
+
+    KERNEL_FRAME_ALLOCATOR_4K
+        .lock_uninit()
+        .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
+    KERNEL_FRAME_ALLOCATOR_2M
+        .lock_uninit()
+        .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
+    KERNEL_FRAME_ALLOCATOR_1G
+        .lock_uninit()
+        .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
 }
 
 impl PhysAllocator {
     pub const N: usize = 256;
-    pub fn get() -> Self {
-        Self {
-            memory_ranges: &GLOBAL_PHYS_ALLOCATOR,
-        }
-    }
 
-    pub(super) fn init(regions: &MemoryRegions) {
-        let mut ranges = GLOBAL_PHYS_ALLOCATOR.lock();
-
-        for region in regions
-            .iter()
-            .filter(|r| r.kind == MemoryRegionKind::Usable)
-        {
-            let range = Range {
-                start: region.start,
-                end: region.end - 1u64,
-            };
-
-            ranges.insert(range);
-        }
-
-        info!(
-            "PhysAllocator::new() with {} usable regions mapped into {} ranges with a total of {} bytes",
-            regions.iter()
-                .filter(|r| r.kind == MemoryRegionKind::Usable)
-                .count(),
-            ranges.entries().len(),
-            ranges.sum().expect("No physical memory found") // TODO: print deadlock
-        );
-    }
-
-    pub fn alloc<S: PageSize>(&self) -> Option<PhysFrame<S>> {
+    pub fn alloc<S: PageSize>(&mut self) -> Option<PhysFrame<S>> {
         let size = S::SIZE;
         let align = S::SIZE;
 
-        let alloc_start = self.memory_ranges.lock().allocate(size, align);
+        let alloc_start = self.memory_ranges.allocate(size, align);
         alloc_start.map(|s| PhysAddr::new(s as u64)).map(|s| {
             PhysFrame::from_start_address(s).expect("range set should only return valid alignments")
         })
     }
 
-    pub fn free<S: PageSize>(&self, frame: PhysFrame<S>) {
-        self.memory_ranges.lock().insert(Range {
+    pub fn free<S: PageSize>(&mut self, frame: PhysFrame<S>) {
+        self.memory_ranges.insert(Range {
             start: frame.start_address().as_u64(),
             end: frame.start_address().as_u64() + frame.size() - 1u64,
         });
@@ -90,32 +100,32 @@ struct UnusedFrame {
     next: *mut UnusedFrame,
 }
 
-pub struct WasabiFrameAllocator<S> {
-    phys_alloc: PhysAllocator,
+pub struct WasabiFrameAllocator<'a, S> {
+    phys_alloc: &'a LockedPhysAlloc,
     first_unused_frame: *mut UnusedFrame,
     size: PhantomData<S>,
 }
 
-impl WasabiFrameAllocator<Size4KiB> {
-    pub fn get_for_kernel() -> &'static SpinLock<Self> {
+impl WasabiFrameAllocator<'_, Size4KiB> {
+    pub fn get_for_kernel() -> &'static UnwrapSpinLock<Self> {
         &KERNEL_FRAME_ALLOCATOR_4K
     }
 }
 
-impl WasabiFrameAllocator<Size2MiB> {
-    pub fn get_for_kernel() -> &'static SpinLock<Self> {
+impl WasabiFrameAllocator<'_, Size2MiB> {
+    pub fn get_for_kernel() -> &'static UnwrapSpinLock<Self> {
         &KERNEL_FRAME_ALLOCATOR_2M
     }
 }
 
-impl WasabiFrameAllocator<Size1GiB> {
-    pub fn get_for_kernel() -> &'static SpinLock<Self> {
+impl WasabiFrameAllocator<'_, Size1GiB> {
+    pub fn get_for_kernel() -> &'static UnwrapSpinLock<Self> {
         &KERNEL_FRAME_ALLOCATOR_1G
     }
 }
 
-impl<S: PageSize> WasabiFrameAllocator<S> {
-    pub(super) fn new(phys_allocator: PhysAllocator) -> Self {
+impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
+    fn new(phys_allocator: &'a LockedPhysAlloc) -> Self {
         WasabiFrameAllocator {
             phys_alloc: phys_allocator,
             first_unused_frame: null_mut(),
@@ -133,7 +143,7 @@ impl<S: PageSize> WasabiFrameAllocator<S> {
 
     pub fn alloc(&mut self) -> Option<PhysFrame<S>> {
         if self.first_unused_frame.is_null() {
-            return self.phys_alloc.alloc();
+            return self.phys_alloc.lock().alloc();
         }
 
         todo!()
@@ -145,19 +155,19 @@ impl<S: PageSize> WasabiFrameAllocator<S> {
     pub unsafe fn free(&mut self, frame: PhysFrame<S>) {
         // TODO store unused frames in free list
 
-        self.phys_alloc.free(frame);
+        self.phys_alloc.lock().free(frame);
     }
 }
 
 // Safety: all frame allocations go through range-set which ensures that we
 // only return unique frames
-unsafe impl<S: PageSize> FrameAllocator<S> for WasabiFrameAllocator<S> {
+unsafe impl<S: PageSize> FrameAllocator<S> for WasabiFrameAllocator<'_, S> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<S>> {
         self.alloc()
     }
 }
 
-impl<S: PageSize> FrameDeallocator<S> for WasabiFrameAllocator<S> {
+impl<S: PageSize> FrameDeallocator<S> for WasabiFrameAllocator<'_, S> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<S>) {
         self.free(frame)
     }
