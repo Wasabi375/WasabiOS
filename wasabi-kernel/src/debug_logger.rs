@@ -31,7 +31,8 @@ pub fn init() {
         // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
         .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
-        .with_module_rename("wasabi_kernel", "")
+        .with_module_rename("wasabi_kernel::", "::")
+        // .with_module_rename("wasabi_kernel", "::") // FIXME this tripple faults????
         // comment to move ; to separate line - easy uncomment of module log levels
             ;
 

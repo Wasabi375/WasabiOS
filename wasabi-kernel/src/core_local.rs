@@ -86,7 +86,7 @@ pub struct CoreLocals {
     pub core_id: CoreId,
     /// The core local apic id. This is assigned by the hardware and is not necessarially
     /// equal to the core id.
-    pub apic_id: CoreId, // TODO create ApicId struct instead?
+    pub apic_id: CoreId,
 
     /// Current depth of interrupts. Every time an interrupt fires, this is incremented
     /// and decremented once the interrupt is done. Therefore a `count() > 0` implies

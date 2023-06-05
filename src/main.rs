@@ -17,8 +17,6 @@ impl Arch {
 }
 
 fn main() {
-    // TODO resolve wsl paths
-    //
     let host_arch = HostArchitecture::get();
 
     // read env variables that were set in build script

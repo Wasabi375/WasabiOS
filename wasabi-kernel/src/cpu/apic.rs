@@ -27,7 +27,7 @@ pub fn init() -> Result<(), MemError> {
         panic!("Apic should only ever be initialized once per core");
     }
 
-    disable_8259();
+    disable_pic();
 
     let cpuid_apci_info = cpuid(1, None);
 
@@ -117,8 +117,8 @@ impl Apic {
     }
 }
 
-/// TODO do I need this and why?
-fn disable_8259() {
+/// disables the 8259 pic
+fn disable_pic() {
     unsafe {
         // Disable 8259 immediately, thanks kennystrawnmusic
 

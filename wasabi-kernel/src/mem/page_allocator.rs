@@ -22,7 +22,7 @@ pub struct PageAllocator {
     vaddrs: RangeSet<{ PAGE_ALLOCATOR_MAX_RANGE_COUNT as usize }>,
 }
 
-pub const MAX_VIRT_ADDR: u64 = 0xffffffffffff;
+pub const MAX_VIRT_ADDR: u64 = 0x0000_ffff_ffff_ffff;
 
 impl Default for PageAllocator {
     fn default() -> Self {
