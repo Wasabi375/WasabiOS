@@ -16,21 +16,6 @@ use crate::string::StaticString;
 use crate::utils::partial_compare;
 use crate::StaticVec;
 
-#[cfg(feature = "std")]
-use core::str;
-
-#[cfg(feature = "std")]
-use crate::utils::const_min;
-
-#[cfg(feature = "std")]
-use alloc::string::String;
-
-#[cfg(feature = "std")]
-use alloc::vec::Vec;
-
-#[cfg(feature = "std")]
-use std::io::{self, BorrowedCursor, BufRead, IoSlice, IoSliceMut, Read};
-
 #[cfg(feature = "serde")]
 use core::marker::PhantomData;
 

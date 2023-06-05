@@ -18,7 +18,7 @@ mod string_trait_impls;
 #[macro_use]
 mod string_utils;
 
-/// A fixed-capacity [`String`](alloc::string::String)-like struct built around an instance of
+/// A fixed-capacity `String`-like struct built around an instance of
 /// `StaticVec<u8, N>`.
 ///
 /// ## Examples

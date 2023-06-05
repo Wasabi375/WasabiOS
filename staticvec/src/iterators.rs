@@ -36,7 +36,7 @@ pub struct StaticVecIntoIter<T, const N: usize> {
     pub(crate) data: MaybeUninit<[T; N]>,
 }
 
-/// A "draining" iterator, analogous to [`vec::Drain`](alloc::vec::Drain).
+/// A "draining" iterator, analogous to `vec::Drain`.
 /// Instances of [`StaticVecDrain`](crate::iterators::StaticVecDrain) are created
 /// by the [`drain_iter`](crate::StaticVec::drain_iter) method on [`StaticVec`](crate::StaticVec),
 /// as while the [`drain`](crate::StaticVec::drain) method does have a similar purpose, it works by
@@ -48,7 +48,7 @@ pub struct StaticVecDrain<'a, T: 'a, const N: usize> {
     pub(crate) vec: *mut StaticVec<T, N>,
 }
 
-/// A "splicing" iterator, analogous to [`vec::Splice`](alloc::vec::Splice).
+/// A "splicing" iterator, analogous to `vec::Splice`.
 /// Instances of [`StaticVecSplice`](crate::iterators::StaticVecSplice) are created
 /// by the [`splice`](crate::StaticVec::splice) method on [`StaticVec`](crate::StaticVec).
 pub struct StaticVecSplice<T, I: Iterator<Item = T>, const N: usize> {

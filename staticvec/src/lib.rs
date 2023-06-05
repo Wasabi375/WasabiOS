@@ -1,19 +1,4 @@
-//! **Note:** the complete list of things **not** available when using `default-features = false`
-//! for `#![no_std]` compatibility is as follows:
-//! - [`StaticVec::sorted`]
-//! - [`StaticVec::into_vec`] (and the corresponding [`Into`] impl)
-//! - [`StaticVec::from_vec`] (and the corresponding [`From`] impl)
-//! - the implementation of the [`Read`](std::io::Read) trait for [`StaticVec`]
-//! - the implementation of the [`BufRead`](std::io::BufRead) trait for [`StaticVec`]
-//! - the implementation of the [`io::Write`](std::io::Write) trait for [`StaticVec`]
-//! - the implementation of [`From`] for [`StaticString`](crate::string::StaticString) from
-//!   [`String`](alloc::string::String)
-//! - the implementations of [`PartialEq`] and [`PartialOrd`] against
-//!   [`String`](alloc::string::String) for [`StaticString`](crate::string::StaticString)
-//! - the implementation of [`Error`](std::error::Error) for [`StringError`]
-//! - the `bounds_to_string` function unique to this crate and implemented by several of the
-//!   iterators in it
-
+//! No std and no alloc vector and strings.
 #![no_std]
 #![allow(
   // Clippy wants every single instance of the word "StaticVec" to be in syntax-highlight
@@ -75,7 +60,7 @@ mod trait_impls;
 #[doc(hidden)]
 pub mod utils;
 
-/// A [`Vec`](alloc::vec::Vec)-like struct (mostly directly API-compatible where it can be)
+/// A `Vec`-like struct (mostly directly API-compatible where it can be)
 /// implemented with const generics around an array of fixed `N` capacity.
 ///
 /// Please note that while `rustdoc` does currently correctly render inherent `const fn` method
@@ -186,7 +171,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// where *either* [`new_from_slice`](crate::StaticVec::new_from_slice) or
     /// [`new_from_array`](crate::StaticVec::new_from_array) would be accepted by the compiler,
     /// and expect it to "just work" like the appropriate one of the two on a contextual basis.
-    /// For example, the two "extra" instances of [`Box`](std::boxed::Box) on the next line will
+    /// For example, the two "extra" instances of `Box` on the next line will
     /// be correctly dropped just as they would be when calling
     /// [`new_from_array`](crate::StaticVec::new_from_array).
     /// ```
@@ -251,7 +236,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         }
     }
 
-    /// Returns the current length of the StaticVec. Just as for a normal [`Vec`](alloc::vec::Vec),
+    /// Returns the current length of the StaticVec. Just as for a normal `Vec`,
     /// this means the number of elements that have been added to it with
     /// [`push`](crate::StaticVec::push), [`insert`](crate::StaticVec::insert), etc. except in the
     /// case that it has been set directly with the unsafe [`set_len`](crate::StaticVec::set_len)
@@ -1380,16 +1365,14 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// [`Copy`](core::marker::Copy) to avoid soundness issues, and
     /// [`PartialOrd`](core::cmp::PartialOrd) to make the sorting possible.
     ///
-    /// Unlike [`sorted`](crate::StaticVec::sorted) and
-    /// [`sorted_unstable`](crate::StaticVec::sorted_unstable), this function does not make use of
-    /// Rust's built-in sorting methods, but instead makes direct use of a comparatively
-    /// unsophisticated recursive quicksort algorithm implemented in this crate.
+    /// This function does not make use of Rust's built-in sorting methods, but
+    /// instead makes direct use of a comparatively unsophisticated recursive
+    /// quicksort algorithm implemented in this crate.
     ///
     /// This has the advantage of only needing to have [`PartialOrd`](core::cmp::PartialOrd) as a
     /// constraint as opposed to [`Ord`](core::cmp::Ord), but is very likely less performant for
     /// most inputs, so if the type you're sorting does derive or implement
-    /// [`Ord`](core::cmp::Ord) it's recommended that you use [`sorted`](crate::StaticVec::sorted) or
-    /// [`sorted_unstable`](crate::StaticVec::sorted_unstable) instead of this function.
+    /// [`Ord`](core::cmp::Ord) it's recommended that you use `.clone().as_mut_slice().sort()` instead.
     ///
     /// # Example usage:
     /// ```

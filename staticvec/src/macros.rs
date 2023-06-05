@@ -1,4 +1,4 @@
-/// Creates a new [`StaticVec`](crate::StaticVec) from a [`vec!`](alloc::vec::Vec)-style
+/// Creates a new [`StaticVec`](crate::StaticVec) from a `vec!`-style
 /// pseudo-slice. The newly created [`StaticVec`](crate::StaticVec) will have a capacity and length
 /// exactly equal to the number of elements in the so-called slice. The "array-like" `[value; N]`
 /// syntax is also supported, and both forms can be used in const contexts. This macro has no
