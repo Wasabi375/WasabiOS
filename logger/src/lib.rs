@@ -20,7 +20,7 @@
 //! simple_logger::init_with_level(log::Level::Warn).unwrap();
 //! ```
 //!
-//! From: https://github.com/borntyping/rust-simple_logger/blob/main/src/lib.rs
+//! From: `<https://github.com/borntyping/rust-simple_logger/blob/main/src/lib.rs>`
 //!
 //! Copyright 2015-2021 Sam Clements
 //!
@@ -55,10 +55,10 @@ use colored::{Color, ColoredString, Colorize};
 /// Implements [`Log`] and a set of simple builder methods for configuration.
 ///
 /// Use the various "builder" methods on this struct to configure the logger,
-/// then call [`init`] to configure the [`log`] crate.
+/// then call [`init`](StaticLogger::init) to configure the [`log`] crate.
 ///
 /// This logger does not use any heap allocations. All data is stored in place.
-/// It can only store [`LevelFilter`s] for `N` log targets/modules.
+/// It can only store [`LevelFilter`]s for `N` log targets/modules.
 pub struct StaticLogger<'a, W, L, const N: usize = 256> {
     /// The default logging level
     default_level: LevelFilter,

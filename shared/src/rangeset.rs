@@ -20,7 +20,7 @@
 //! OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //! SOFTWARE.
 //!
-//! based on: https://github.com/gamozolabs/chocolate_milk/blob/643f47b901ceda1f688d3c20ff92b0f41af80251/shared/rangeset/src/lib.rs
+//! based on: `<https://github.com/gamozolabs/chocolate_milk/blob/643f47b901ceda1f688d3c20ff92b0f41af80251/shared/rangeset/src/lib.rs>`
 
 //! Library which provides a `RangeSet` which contains non-overlapping sets of
 //! `u64` inclusive ranges. The `RangeSet` can be used to insert or remove
