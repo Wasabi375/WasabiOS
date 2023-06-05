@@ -10,29 +10,24 @@ use crate::{
         page_table::KernelPageTable,
         MemError, Result,
     },
-    prelude::{LockCell, SpinLock},
+    prelude::{LockCell, SpinLock, UnwrapSpinLock},
 };
 
 use core::{
     alloc::{GlobalAlloc, Layout},
-    mem::{align_of, size_of},
+    mem::{align_of, size_of, MaybeUninit},
     ops::DerefMut,
     ptr::{null_mut, NonNull},
 };
-use lazy_static::lazy_static;
 use linked_list_allocator::Heap as LinkedHeap;
-use shared::sizes::KiB;
+use shared::{lockcell::LockCellInternal, sizes::KiB};
 use x86_64::{
     structures::paging::{Mapper, PageSize, PageTableFlags, Size4KiB},
     VirtAddr,
 };
 
-lazy_static! {
-    // safety: we are initializing static mem so KernelHeap::empty is ok
-    // FIXME lazy_static uses a SpinLock and we wrap another SpinLock around that?
-    /// the [KernelHeap]
-    static ref KERNEL_HEAP: SpinLock<KernelHeap> = unsafe { SpinLock::new(KernelHeap::empty()) };
-}
+/// the [KernelHeap]
+static KERNEL_HEAP: UnwrapSpinLock<KernelHeap> = unsafe { UnwrapSpinLock::new_uninit() };
 
 /// ZST for [GlobalAlloc] implementation
 struct KernelHeapGlobalAllocator;
@@ -93,11 +88,18 @@ pub fn init() {
         }
     }
 
-    let heap = KernelHeap::get();
-    let mut guard = heap.lock();
-    if let Err(e) = guard.init(pages) {
-        panic!("KernelHeap::init(): {e:?}");
+    let mut kernel_lock = KERNEL_HEAP.lock_uninit();
+    unsafe {
+        // Safety: we call init right after we move this to static storage
+        kernel_lock.write(KernelHeap::new(pages));
     }
+
+    // Safety: we hold the unit_lock so accessing the heap is valid.
+    // we don't use the lock so we can get at the static lifetime
+    let heap: &mut KernelHeap = unsafe { UnwrapSpinLock::get_mut(&KERNEL_HEAP) };
+    if let Err(e) = heap.init() {
+        panic!("KernelHeap::new(): {e:?}")
+    };
 
     trace!("kernel init done");
 }
@@ -157,57 +159,50 @@ pub struct KernelHeap {
 
 impl KernelHeap {
     /// returns a static ref to the [KernelHeap] lock.
-    pub fn get() -> &'static SpinLock<KernelHeap> {
+    pub fn get() -> &'static UnwrapSpinLock<KernelHeap> {
         &KERNEL_HEAP
     }
 }
 
 impl KernelHeap {
-    /// creates an empty, unusable heap.
+    /// creates a usable heap for the given pages
     ///
-    /// use [init](KernelHeap::init) to intialize before, the heap can be used.
+    /// # Safety
     ///
-    /// Safety: This must only be used to initialize static memory
-    unsafe fn empty() -> Self {
+    /// caller ensures that [KernelHeap::init] is the first function called
+    /// on this struct. In order to do that, the heap must be moved to static memory
+    unsafe fn new<S: PageSize>(pages: Pages<S>) -> Self {
+        trace!("KernelHeap::new()");
         let heap = LockedAllocator {
             allocator: SpinLock::new(LinkedHeap::empty()),
         };
-        let slabs = [
-            SlabAllocator::empty(),
-            SlabAllocator::empty(),
-            SlabAllocator::empty(),
-            SlabAllocator::empty(),
-            SlabAllocator::empty(),
-        ];
-        Self {
-            start: VirtAddr::zero(),
-            end: VirtAddr::zero(),
-            slab_allocators: slabs,
-            linked_heap: heap,
-        }
-    }
-
-    /// initializes the heap
-    fn init<S: PageSize>(&mut self, pages: Pages<S>) -> Result<()> {
-        trace!("KernelHeap::init()");
-        self.start = pages.start_addr();
-        self.end = pages.end_addr();
 
         unsafe {
-            self.linked_heap
-                .allocator
+            heap.allocator
                 .lock()
                 .init(pages.start_addr().as_mut_ptr(), pages.size() as usize);
         }
 
-        let static_heap = unsafe { &*(&self.linked_heap as *const LockedAllocator<_>) };
+        let mut slabs: [MaybeUninit<_>; SLAB_ALLOCATOR_SIZES_BYTES.len()] =
+            MaybeUninit::uninit_array();
+        for (slab, size) in slabs.iter_mut().zip(SLAB_ALLOCATOR_SIZES_BYTES.iter()) {
+            let new_slab = unsafe { SlabAllocator::new(*size) };
+            slab.write(new_slab);
+        }
 
-        for i in 0..SLAB_ALLOCATOR_SIZES_BYTES.len() {
-            let size = SLAB_ALLOCATOR_SIZES_BYTES[i];
-            let slab = &mut self.slab_allocators[i];
+        Self {
+            start: pages.start_addr(),
+            end: pages.end_addr(),
+            slab_allocators: unsafe { MaybeUninit::array_assume_init(slabs) },
+            linked_heap: heap,
+        }
+    }
 
-            trace!("init slab for size {size}");
-            slab.init(size, static_heap)?;
+    /// init the kernel allocator. This should be called after the allocator
+    /// was moved to static memory
+    fn init(&'static mut self) -> Result<()> {
+        for slab in self.slab_allocators.iter_mut() {
+            slab.init(&self.linked_heap)?;
         }
         Ok(())
     }
@@ -243,7 +238,7 @@ impl MutAllocator for KernelHeap {
     }
 }
 
-impl Allocator for SpinLock<KernelHeap> {
+impl Allocator for UnwrapSpinLock<KernelHeap> {
     fn alloc(&self, layout: Layout) -> Result<NonNull<u8>> {
         self.lock().alloc(layout)
     }
@@ -263,7 +258,7 @@ struct SlabAllocator<'a, A> {
     block: Option<NonNull<SlabBlock>>,
 
     /// the allocator used to alloc blocks
-    allocator: Option<&'a A>,
+    allocator: MaybeUninit<&'a A>,
 }
 
 /// a block of memory used by [SlabAllocator]s to allocate smaller blocks
@@ -286,6 +281,95 @@ struct SlabBlock {
     used: usize,
     /// the size of allocations freed from this block
     freed: usize,
+}
+
+impl<'a, A: Allocator> SlabAllocator<'a, A> {
+    /// utility to verify size of self is valid
+    #[inline]
+    fn verify_size(&self) {
+        assert!(self.size.is_power_of_two());
+    }
+
+    /// utility to verify align of self is valid
+    #[inline]
+    fn align(&self) -> usize {
+        self.size
+    }
+
+    /// returns `true` if this allocator can allocate memory with the given alignment
+    #[inline]
+    fn can_accept_align(&self, align: usize) -> bool {
+        assert!(align.is_power_of_two());
+        // alignments are always a powe of 2, so if requested align
+        // is less or equal to our align it will always match up.
+        // Requested 8, our 16 => 16 is always aligned to 8 as well
+        align <= self.align()
+    }
+
+    /// creates a new Slab Allocator
+    ///
+    /// # Safety:
+    ///
+    /// caller ensures that [SlabAllocator::init] is the first function called
+    /// on self.
+    unsafe fn new(size: usize) -> Self {
+        let slab = Self {
+            size,
+            block: None,
+            allocator: MaybeUninit::uninit(),
+        };
+        slab.verify_size();
+        slab
+    }
+
+    /// initializes the Slab Allocator
+    fn init(&mut self, allocator: &'a A) -> Result<()> {
+        self.allocator.write(allocator);
+        self.block = Some(SlabBlock::new(self.size, allocator)?);
+
+        Ok(())
+    }
+
+    /// getter for the internal allocator
+    #[inline]
+    fn allocator(&self) -> &A {
+        unsafe { self.allocator.assume_init() }
+    }
+
+    /// returns the first block of this [SlabAllocator]
+    #[inline]
+    fn first_block(&mut self) -> Option<&mut SlabBlock> {
+        unsafe { self.block.map(|mut b| b.as_mut()) }
+    }
+
+    /// returns the first block of this [SlabAllocator] or creates a new
+    /// one if none exists
+    fn first_block_or_push(&mut self) -> Result<&mut SlabBlock> {
+        if let Some(mut block_ptr) = self.block {
+            unsafe { Ok(block_ptr.as_mut()) }
+        } else {
+            self.push_new_block()
+        }
+    }
+
+    /// returns the first block of this [SlabAllocator] or creates one
+    /// if no block exists
+    #[inline]
+    fn push_new_block(&mut self) -> Result<&mut SlabBlock> {
+        let mut block_ptr = SlabBlock::new(self.size, self.allocator())?;
+        let block = unsafe { block_ptr.as_mut() };
+
+        block.next = self.block;
+
+        if let Some(mut first_ptr) = self.block {
+            let first = unsafe { first_ptr.as_mut() };
+            first.prev = Some(block_ptr);
+        }
+
+        self.block = Some(block_ptr);
+
+        Ok(block)
+    }
 }
 
 impl SlabBlock {
@@ -382,83 +466,6 @@ impl SlabBlock {
     }
 }
 
-impl<'a, A: Allocator> SlabAllocator<'a, A> {
-    /// utility to verify size of self is valid
-    #[inline]
-    fn verify_size(&self) {
-        assert!(self.size.is_power_of_two());
-    }
-
-    /// utility to verify align of self is valid
-    #[inline]
-    fn align(&self) -> usize {
-        self.size
-    }
-
-    /// returns `true` if this allocator can allocate memory with the given alignment
-    #[inline]
-    fn can_accept_align(&self, align: usize) -> bool {
-        assert!(align.is_power_of_two());
-        // alignments are always a powe of 2, so if requested align
-        // is less or equal to our align it will always match up.
-        // Requested 8, our 16 => 16 is always aligned to 8 as well
-        align <= self.align()
-    }
-
-    /// create a new empty `SlabAllocator`
-    fn empty() -> Self {
-        SlabAllocator {
-            size: 0,
-            block: None,
-            allocator: None,
-        }
-    }
-
-    /// initializes the slab allocator
-    fn init(&mut self, size: usize, allocator: &'a A) -> Result<()> {
-        self.size = size;
-        self.allocator = Some(allocator);
-        self.block = Some(SlabBlock::new(size, allocator)?);
-        self.verify_size();
-        Ok(())
-    }
-
-    /// returns the first block of this [SlabAllocator]
-    #[inline]
-    fn first_block(&mut self) -> Option<&mut SlabBlock> {
-        unsafe { self.block.map(|mut b| b.as_mut()) }
-    }
-
-    fn first_block_or_push(&mut self) -> Result<&mut SlabBlock> {
-        if let Some(mut block_ptr) = self.block {
-            unsafe { Ok(block_ptr.as_mut()) }
-        } else {
-            self.push_new_block()
-        }
-    }
-
-    /// returns the first block of this [SlabAllocator] or creates one
-    /// if no block exists
-    #[inline]
-    fn push_new_block(&mut self) -> Result<&mut SlabBlock> {
-        let allocator = self.allocator.ok_or(MemError::NotInit)?;
-
-        let mut block_ptr = SlabBlock::new(self.size, allocator)?;
-        let block = unsafe { block_ptr.as_mut() };
-
-        block.next = self.block;
-
-        if let Some(mut first_ptr) = self.block {
-            let first = unsafe { first_ptr.as_mut() };
-            first.prev = Some(block_ptr);
-        }
-
-        self.block = Some(block_ptr);
-
-        Ok(block)
-    }
-}
-
 impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
     fn alloc(&mut self, layout: Layout) -> Result<NonNull<u8>> {
         if layout.size() > self.size {
@@ -499,7 +506,6 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
 
         let addr = VirtAddr::from_ptr(ptr.as_ptr());
         let size = self.size;
-        let allocator = self.allocator.ok_or(MemError::NotInit)?;
 
         let block = self
             .first_block()
@@ -532,7 +538,7 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
             // only free at the end, so that we ensure a consistent
             // linked list state, even if the free fails
             let free_layout = SlabBlock::layout();
-            allocator.free(slab_ptr, free_layout)?;
+            self.allocator().free(slab_ptr, free_layout)?;
         }
 
         Ok(())

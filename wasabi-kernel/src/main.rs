@@ -9,7 +9,9 @@
     ascii_char,
     let_chains,
     allocator_api,
-    result_flattening
+    result_flattening,
+    maybe_uninit_uninit_array,
+    maybe_uninit_array_assume_init
 )]
 // #![warn(missing_docs, rustdoc::missing_crate_level_docs)] // TODO enable
 
