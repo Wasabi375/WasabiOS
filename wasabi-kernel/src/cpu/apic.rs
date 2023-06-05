@@ -18,7 +18,7 @@ use x86_64::{
 /// MSR address of the local apic base.
 const IA32_APIC_BASE: Msr = Msr::new(0x1b);
 
-/// initializes the apic and stores it in [create::core_local::CoreLocals]
+/// initializes the apic and stores it in [CoreLocals](crate::core_local::CoreLocals)
 pub fn init() -> Result<(), MemError> {
     info!("Init Apic...");
 

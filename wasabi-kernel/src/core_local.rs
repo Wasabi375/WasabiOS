@@ -130,7 +130,7 @@ impl CoreLocals {
         self.interrupt_count.increment()
     }
 
-    /// increment the [Self::expcetion_count] and return a guard to decrement it again.
+    /// increment the [Self::exception_count] and return a guard to decrement it again.
     pub fn inc_exception(&self) -> AutoRefCounterGuard<'_> {
         self.exception_count.increment()
     }
