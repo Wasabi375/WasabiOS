@@ -343,6 +343,14 @@ macro_rules! unwrapLockWrapper {
 unwrapLockWrapper!(SpinLock);
 unwrapLockWrapper!(TicketLock);
 
+impl<T, L: LockCell<MaybeUninit<T>>> Drop for UnwrapLock<T, L> {
+    fn drop(&mut self) {
+        unsafe {
+            self.lock_uninit().assume_init_drop();
+        }
+    }
+}
+
 impl<T, L: LockCell<MaybeUninit<T>> + Default> Default for UnwrapLock<T, L> {
     fn default() -> Self {
         Self {
