@@ -28,6 +28,7 @@ pub type Result<T> = core::result::Result<T, MemError>;
 
 /// enum for all memory related errors
 #[derive(Error, Debug, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub enum MemError {
     #[error("allocator has not been initialized")]
     NotInit,

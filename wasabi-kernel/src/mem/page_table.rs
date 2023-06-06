@@ -22,6 +22,7 @@ pub static KERNEL_PAGE_TABLE: UnwrapSpinLock<RecursivePageTable> =
     unsafe { UnwrapSpinLock::new_uninit() };
 
 #[derive(Error, Debug, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub enum PageTableMapError {
     #[error("Failed to alloc frame")]
     FrameAllocationFailed,
@@ -71,7 +72,7 @@ pub fn init(page_table: RecursivePageTable<'static>) {
     KERNEL_PAGE_TABLE.lock_uninit().write(page_table);
 }
 
-/// extension trait for [RecurisvePageTable]
+/// extension trait for [RecursivePageTable]
 pub trait RecursivePageTableExt {
     /// calculate the l4 table addr based on the given recursive [PageTableIndex].
     fn l4_table_vaddr(r: PageTableIndex) -> VirtAddr;

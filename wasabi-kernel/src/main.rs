@@ -13,7 +13,7 @@
     maybe_uninit_uninit_array,
     maybe_uninit_array_assume_init
 )]
-// #![warn(missing_docs, rustdoc::missing_crate_level_docs)] // TODO enable
+#![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 
 pub mod core_local;
 pub mod cpu;

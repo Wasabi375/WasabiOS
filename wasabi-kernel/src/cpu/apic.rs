@@ -154,6 +154,7 @@ fn disable_pic() {
 }
 
 /// Offset of different registers into an [Apic]
+#[allow(missing_docs)]
 #[repr(usize)]
 pub enum Offset {
     Id = 0x20,
