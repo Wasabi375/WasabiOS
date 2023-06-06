@@ -7,7 +7,7 @@ use crate::{
     mem::{
         frame_allocator::WasabiFrameAllocator,
         page_allocator::{PageAllocator, Pages},
-        page_table::KernelPageTable,
+        page_table::KERNEL_PAGE_TABLE,
         MemError, Result,
     },
     prelude::{LockCell, SpinLock, UnwrapSpinLock},
@@ -70,21 +70,23 @@ pub fn init() {
         .allocate_pages::<Size4KiB>(KERNEL_HEAP_PAGE_COUNT)
         .expect("Out of pages setting up kernel heap");
 
-    let mut page_table = KernelPageTable::get().lock();
+    {
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
 
-    let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
-    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
-    for page in pages.iter() {
-        let frame = frame_allocator
-            .alloc()
-            .expect("Out of memory setting up kernel heap");
-        unsafe {
-            match page_table.map_to(page, frame, flags, frame_allocator.deref_mut()) {
-                Ok(flusher) => flusher.flush(),
-                Err(e) => panic!("Failed to map page {page:?} to frame {frame:?}: {e:?}"),
+        for page in pages.iter() {
+            let frame = frame_allocator
+                .alloc()
+                .expect("Out of memory setting up kernel heap");
+            unsafe {
+                match page_table.map_to(page, frame, flags, frame_allocator.deref_mut()) {
+                    Ok(flusher) => flusher.flush(),
+                    Err(e) => panic!("Failed to map page {page:?} to frame {frame:?}: {e:?}"),
+                }
+                trace!("Page {page:?} mapped to {frame:?}");
             }
-            trace!("Page {page:?} mapped to {frame:?}");
         }
     }
 

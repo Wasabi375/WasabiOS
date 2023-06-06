@@ -68,6 +68,11 @@ impl<const N: usize> RangeSet<N> {
         }
     }
 
+    #[inline]
+    pub const fn capacity(&self) -> usize {
+        N
+    }
+
     /// Get all the entries in the RangeSet as a slice
     pub fn entries(&self) -> &[Range] {
         &self.ranges[..self.in_use as usize]

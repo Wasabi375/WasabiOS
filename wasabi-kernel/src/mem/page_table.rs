@@ -1,11 +1,11 @@
+//! Page table implementation for the kernel
+
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use thiserror::Error;
 
-use crate::prelude::{LockCell, LockCellGuard, SpinLock};
-use core::{fmt::Write, mem};
-use lazy_static::lazy_static;
-use shared::lockcell::LockCellInternal;
+use crate::prelude::UnwrapSpinLock;
+use core::fmt::Write;
 use staticvec::StaticString;
 use x86_64::{
     structures::paging::{
@@ -17,9 +17,9 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-lazy_static! {
-    static ref KERNEL_PAGE_TABLE: KernelPageTable = KernelPageTable::default();
-}
+/// the kernel [RecursivePageTable]
+pub static KERNEL_PAGE_TABLE: UnwrapSpinLock<RecursivePageTable> =
+    unsafe { UnwrapSpinLock::new_uninit() };
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum PageTableMapError {
@@ -65,76 +65,28 @@ impl From<MapToError<Size1GiB>> for PageTableMapError {
     }
 }
 
-pub struct KernelPageTable {
-    table: SpinLock<Option<RecursivePageTable<'static>>>,
+/// initialize the kernel page table
+pub fn init(page_table: RecursivePageTable<'static>) {
+    trace!("store kernel page table in lock");
+    KERNEL_PAGE_TABLE.lock_uninit().write(page_table);
 }
 
-unsafe impl Send for KernelPageTable {}
-unsafe impl Sync for KernelPageTable {}
-
-impl Default for KernelPageTable {
-    fn default() -> Self {
-        Self {
-            table: Default::default(),
-        }
-    }
-}
-
-impl KernelPageTable {
-    pub fn get() -> &'static Self {
-        &KERNEL_PAGE_TABLE
-    }
-
-    pub(super) fn init(&self, pt: RecursivePageTable<'static>) {
-        *self.table.lock() = Some(pt);
-    }
-}
-
-impl LockCellInternal<RecursivePageTable<'static>> for KernelPageTable {
-    unsafe fn get(&self) -> &RecursivePageTable<'static> {
-        self.table
-            .get()
-            .as_ref()
-            .expect("Kernel page table needs to be initialized first")
-    }
-
-    unsafe fn get_mut(&self) -> &mut RecursivePageTable<'static> {
-        self.table
-            .get_mut()
-            .as_mut()
-            .expect("Kernel page table needs to be initialized first")
-    }
-
-    unsafe fn unlock<'s, 'l: 's>(
-        &'s self,
-        _guard: &mut LockCellGuard<'l, RecursivePageTable<'static>, Self>,
-    ) {
-        self.table.force_unlock();
-    }
-
-    unsafe fn force_unlock(&self) {
-        self.table.force_unlock();
-    }
-}
-
-impl LockCell<RecursivePageTable<'static>> for KernelPageTable {
-    fn lock(&self) -> shared::lockcell::LockCellGuard<'_, RecursivePageTable<'static>, Self> {
-        let guard = self.table.lock();
-        // forgetting guard here is fine, we don't want to unlock the table
-        // when we drop it here. Unlock is done by the new guard we return instead
-        mem::forget(guard);
-        unsafe { LockCellGuard::new(self) }
-    }
-}
-
+/// extension trait for [RecurisvePageTable]
 pub trait RecursivePageTableExt {
+    /// calculate the l4 table addr based on the given recursive [PageTableIndex].
     fn l4_table_vaddr(r: PageTableIndex) -> VirtAddr;
+
+    /// calculate the l3 table addr based on the given recursive [PageTableIndex].
     fn l3_table_vaddr(r: PageTableIndex, l4_index: PageTableIndex) -> VirtAddr;
+
+    /// calculate the l2 table addr based on the given recursive [PageTableIndex].
     fn l2_table_vaddr(
         r: PageTableIndex,
         l4_index: PageTableIndex,
         l3_index: PageTableIndex,
     ) -> VirtAddr;
+
+    /// calculate the l1 table addr based on the given recursive [PageTableIndex].
     fn l1_table_vaddr(
         r: PageTableIndex,
         l4_index: PageTableIndex,
@@ -142,15 +94,19 @@ pub trait RecursivePageTableExt {
         l2_index: PageTableIndex,
     ) -> VirtAddr;
 
+    /// print the page table flags for the given vaddr
+    /// TODO specify log level
     fn print_page_flags_for_vaddr(&mut self, vaddr: VirtAddr, message: Option<&str>);
 
+    /// print all mapped memory regions
+    /// TODO specify log level
     fn print_all_mapped_regions(&mut self, ignore_cpu_flags: bool);
 
+    /// get the recursive [PageTableIndex] of this page table
     fn recursive_index(&mut self) -> PageTableIndex;
 }
 
-const L4_MASK: u64 = 0xff8000000000;
-
+/// get the recursive [PageTableIndex] of the page table, provided by the bootloader.
 #[inline]
 pub fn recursive_index() -> PageTableIndex {
     let boot_info = crate::boot_info();
@@ -281,7 +237,6 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
         }
     }
 
-    /// Prints all mapped memory regions.
     fn print_all_mapped_regions(&mut self, ignore_cpu_flags: bool) {
         fn internal(
             level: u8,
@@ -395,6 +350,8 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
     }
 }
 
+/// utility struct for [RecursivePageTable::print_page_flags_for_vaddr]
+/// representing a linear region of memory, both in virt and phys space
 #[derive(Clone, Debug)]
 struct LinearMapMemRegion {
     vstart: VirtAddr,
@@ -405,6 +362,7 @@ struct LinearMapMemRegion {
 }
 
 impl LinearMapMemRegion {
+    /// creates a new empty [LinearMapMemRegion]
     fn empty() -> Self {
         Self {
             vstart: VirtAddr::new(0),
@@ -415,6 +373,10 @@ impl LinearMapMemRegion {
         }
     }
 
+    /// tries to extend the [LinearMapMemRegion].
+    ///
+    /// If the extension is not connected to self, [`print`](LinearMapMemRegion::print)s
+    /// the region and modifies `self` to include only the extension.
     fn extend_or_print<S: PageSize>(
         &mut self,
         vaddr: VirtAddr,
@@ -440,7 +402,10 @@ impl LinearMapMemRegion {
         }
     }
 
+    /// prints [self]
     fn print(&self) {
+        const L4_MASK: u64 = 0xff8000000000;
+
         let mut pt = StaticString::<20>::new();
         let r: u64 = recursive_index().into();
         if (self.vstart.as_u64() & L4_MASK) == r << 39 {

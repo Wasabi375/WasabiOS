@@ -8,19 +8,20 @@ pub mod page_table;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::mem::page_allocator::PageAllocator;
-use crate::mem::page_table::KernelPageTable;
-use crate::{boot_info, cpu};
-use bootloader_api::info::{FrameBuffer, MemoryRegionKind};
-use bootloader_api::BootInfo;
+use crate::{boot_info, cpu, mem::page_table::KERNEL_PAGE_TABLE, prelude::LockCell};
+use bootloader_api::{
+    info::{FrameBuffer, MemoryRegionKind},
+    BootInfo,
+};
 use core::ptr::NonNull;
 use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
-use shared::lockcell::LockCell;
 use thiserror::Error;
 use volatile::{access::ReadOnly, Volatile};
-use x86_64::structures::paging::{RecursivePageTable, Translate};
-use x86_64::{registers::control::Cr3, structures::paging::PageTable};
-use x86_64::{PhysAddr, VirtAddr};
+use x86_64::{
+    registers::control::Cr3,
+    structures::paging::{PageTable, RecursivePageTable, Translate},
+    PhysAddr, VirtAddr,
+};
 
 /// Result type with [MemError]
 pub type Result<T> = core::result::Result<T, MemError>;
@@ -63,7 +64,7 @@ pub fn init() {
     );
 
     let bootloader_page_table_vaddr = RecursivePageTable::l4_table_vaddr(recursive_index());
-    let bootloader_page_table: &mut PageTable =
+    let bootloader_page_table: &'static mut PageTable =
         unsafe { &mut *bootloader_page_table_vaddr.as_mut_ptr() };
 
     let recursive_page_table = RecursivePageTable::new(bootloader_page_table)
@@ -76,19 +77,20 @@ pub fn init() {
     assert_eq!(calc_pt_addr, level_4_page_table.start_address());
     trace!("bootloader page table can map it's own vaddr back to cr3 addr");
 
-    KernelPageTable::get().init(recursive_page_table);
-    let mut recursive_page_table = KernelPageTable::get().lock();
+    page_table::init(recursive_page_table);
 
-    if log::log_enabled!(log::Level::Trace) {
-        print_debug_info(&mut recursive_page_table, bootloader_page_table_vaddr);
+    {
+        let mut recursive_page_table = KERNEL_PAGE_TABLE.lock();
+
+        if log::log_enabled!(log::Level::Trace) {
+            print_debug_info(&mut recursive_page_table, bootloader_page_table_vaddr);
+        }
+
+        frame_allocator::init(&boot_info().memory_regions);
+
+        page_allocator::init(&mut recursive_page_table);
     }
-
-    frame_allocator::init(&boot_info().memory_regions);
-
-    PageAllocator::get_kernel_allocator()
-        .lock()
-        .init_from_page_table(&mut recursive_page_table);
-    drop(recursive_page_table);
+    info!("kernel page table, page and frame allocators initialized.");
 
     kernel_heap::init();
 }
@@ -132,10 +134,9 @@ macro_rules! map_page {
     }};
     ($page: expr, $size: ident, $flags: expr, $frame: expr, $frame_alloc: expr) => {{
         use x86_64::structures::paging::{mapper::RecursivePageTable, Page, PhysFrame};
-        use $crate::mem::page_table::{KernelPageTable, PageTableMapError};
+        use $crate::mem::page_table::{PageTableMapError, KERNEL_PAGE_TABLE};
 
-        let kernel_page_table: &mut RecursivePageTable<'static> =
-            &mut KernelPageTable::get().lock();
+        let kernel_page_table: &mut RecursivePageTable<'static> = &mut KERNEL_PAGE_TABLE.lock();
 
         let page: Page<$size> = $page;
         let frame: PhysFrame<$size> = $frame;
