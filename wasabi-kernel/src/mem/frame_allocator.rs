@@ -3,7 +3,7 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::prelude::{LockCell, UnwrapSpinLock};
+use crate::prelude::{LockCell, UnwrapTicketLock};
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use core::{marker::PhantomData, ptr::null_mut};
 use shared::rangeset::{Range, RangeSet};
@@ -21,20 +21,20 @@ struct PhysAllocator {
     memory_ranges: RangeSet<{ Self::N }>,
 }
 
-/// a typealias for [UnwrapSpinLock] around a [PhysAllocator]
-type LockedPhysAlloc = UnwrapSpinLock<PhysAllocator>;
+/// a typealias for [UnwrapTicketLock] around a [PhysAllocator]
+type LockedPhysAlloc = UnwrapTicketLock<PhysAllocator>;
 
 /// The global kernel phys allocator. This is used by the frame allocators to create frames
-static GLOBAL_PHYS_ALLOCATOR: LockedPhysAlloc = unsafe { UnwrapSpinLock::new_uninit() };
+static GLOBAL_PHYS_ALLOCATOR: LockedPhysAlloc = unsafe { UnwrapTicketLock::new_uninit() };
 /// A [WasabiFrameAllocator] for 4KiB pages
-static KERNEL_FRAME_ALLOCATOR_4K: UnwrapSpinLock<WasabiFrameAllocator<Size4KiB>> =
-    unsafe { UnwrapSpinLock::new_uninit() };
+static KERNEL_FRAME_ALLOCATOR_4K: UnwrapTicketLock<WasabiFrameAllocator<Size4KiB>> =
+    unsafe { UnwrapTicketLock::new_uninit() };
 /// A [WasabiFrameAllocator] for 2MiB pages
-static KERNEL_FRAME_ALLOCATOR_2M: UnwrapSpinLock<WasabiFrameAllocator<Size2MiB>> =
-    unsafe { UnwrapSpinLock::new_uninit() };
+static KERNEL_FRAME_ALLOCATOR_2M: UnwrapTicketLock<WasabiFrameAllocator<Size2MiB>> =
+    unsafe { UnwrapTicketLock::new_uninit() };
 /// A [WasabiFrameAllocator] for 1GiB pages
-static KERNEL_FRAME_ALLOCATOR_1G: UnwrapSpinLock<WasabiFrameAllocator<Size1GiB>> =
-    unsafe { UnwrapSpinLock::new_uninit() };
+static KERNEL_FRAME_ALLOCATOR_1G: UnwrapTicketLock<WasabiFrameAllocator<Size1GiB>> =
+    unsafe { UnwrapTicketLock::new_uninit() };
 
 /// initializes the frame allocators
 pub fn init(regions: &MemoryRegions) {
@@ -124,21 +124,21 @@ pub struct WasabiFrameAllocator<'a, S> {
 
 impl WasabiFrameAllocator<'_, Size4KiB> {
     /// Get the 4KiB frame allocator
-    pub fn get_for_kernel() -> &'static UnwrapSpinLock<Self> {
+    pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
         &KERNEL_FRAME_ALLOCATOR_4K
     }
 }
 
 impl WasabiFrameAllocator<'_, Size2MiB> {
     /// Get the 2MiB frame allocator
-    pub fn get_for_kernel() -> &'static UnwrapSpinLock<Self> {
+    pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
         &KERNEL_FRAME_ALLOCATOR_2M
     }
 }
 
 impl WasabiFrameAllocator<'_, Size1GiB> {
     /// Get the 1GiB frame allocator
-    pub fn get_for_kernel() -> &'static UnwrapSpinLock<Self> {
+    pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
         &KERNEL_FRAME_ALLOCATOR_1G
     }
 }

@@ -4,7 +4,7 @@
 use log::{debug, error, info, trace, warn};
 
 use super::{MemError, Result};
-use crate::{mem::page_table::RecursivePageTableExt, prelude::UnwrapSpinLock};
+use crate::{mem::page_table::RecursivePageTableExt, prelude::UnwrapTicketLock};
 use shared::rangeset::{Range, RangeSet};
 use x86_64::{
     structures::paging::{
@@ -15,8 +15,8 @@ use x86_64::{
 };
 
 /// the kernel page allocator
-static KERNEL_PAGE_ALLOCATOR: UnwrapSpinLock<PageAllocator> =
-    unsafe { UnwrapSpinLock::new_uninit() };
+static KERNEL_PAGE_ALLOCATOR: UnwrapTicketLock<PageAllocator> =
+    unsafe { UnwrapTicketLock::new_uninit() };
 
 /// the largets valid virt addr
 ///
@@ -154,7 +154,7 @@ impl PageAllocator {
     }
 
     /// get access to the kernel's [PageAllocator]
-    pub fn get_kernel_allocator() -> &'static UnwrapSpinLock<Self> {
+    pub fn get_kernel_allocator() -> &'static UnwrapTicketLock<Self> {
         &KERNEL_PAGE_ALLOCATOR
     }
 

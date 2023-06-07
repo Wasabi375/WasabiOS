@@ -10,7 +10,7 @@ use crate::{
         page_table::KERNEL_PAGE_TABLE,
         MemError, Result,
     },
-    prelude::{LockCell, SpinLock, UnwrapSpinLock},
+    prelude::{LockCell, TicketLock, UnwrapTicketLock},
 };
 
 use core::{
@@ -27,7 +27,7 @@ use x86_64::{
 };
 
 /// the [KernelHeap]
-static KERNEL_HEAP: UnwrapSpinLock<KernelHeap> = unsafe { UnwrapSpinLock::new_uninit() };
+static KERNEL_HEAP: UnwrapTicketLock<KernelHeap> = unsafe { UnwrapTicketLock::new_uninit() };
 
 /// ZST for [GlobalAlloc] implementation
 struct KernelHeapGlobalAllocator;
@@ -98,7 +98,7 @@ pub fn init() {
 
     // Safety: we hold the unit_lock so accessing the heap is valid.
     // we don't use the lock so we can get at the static lifetime
-    let heap: &mut KernelHeap = unsafe { UnwrapSpinLock::get_mut(&KERNEL_HEAP) };
+    let heap: &mut KernelHeap = unsafe { UnwrapTicketLock::get_mut(&KERNEL_HEAP) };
     if let Err(e) = heap.init() {
         panic!("KernelHeap::new(): {e:?}")
     };
@@ -161,7 +161,7 @@ pub struct KernelHeap {
 
 impl KernelHeap {
     /// returns a static ref to the [KernelHeap] lock.
-    pub fn get() -> &'static UnwrapSpinLock<KernelHeap> {
+    pub fn get() -> &'static UnwrapTicketLock<KernelHeap> {
         &KERNEL_HEAP
     }
 }
@@ -176,7 +176,7 @@ impl KernelHeap {
     unsafe fn new<S: PageSize>(pages: Pages<S>) -> Self {
         trace!("KernelHeap::new()");
         let heap = LockedAllocator {
-            allocator: SpinLock::new(LinkedHeap::empty()),
+            allocator: TicketLock::new(LinkedHeap::empty()),
         };
 
         unsafe {
@@ -240,7 +240,7 @@ impl MutAllocator for KernelHeap {
     }
 }
 
-impl Allocator for UnwrapSpinLock<KernelHeap> {
+impl Allocator for UnwrapTicketLock<KernelHeap> {
     fn alloc(&self, layout: Layout) -> Result<NonNull<u8>> {
         self.lock().alloc(layout)
     }
@@ -559,9 +559,9 @@ impl MutAllocator for LinkedHeap {
     }
 }
 
-/// a wrapper around a [SpinLock] containing an [MutAllocator]
+/// a wrapper around a [TicketLock] containing an [MutAllocator]
 struct LockedAllocator<A> {
-    allocator: SpinLock<A>,
+    allocator: TicketLock<A>,
 }
 
 impl<A: MutAllocator> Allocator for LockedAllocator<A> {

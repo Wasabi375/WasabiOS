@@ -4,7 +4,7 @@
 use log::{debug, error, info, trace, warn};
 use thiserror::Error;
 
-use crate::prelude::UnwrapSpinLock;
+use crate::prelude::UnwrapTicketLock;
 use core::fmt::Write;
 use staticvec::StaticString;
 use x86_64::{
@@ -18,8 +18,8 @@ use x86_64::{
 };
 
 /// the kernel [RecursivePageTable]
-pub static KERNEL_PAGE_TABLE: UnwrapSpinLock<RecursivePageTable> =
-    unsafe { UnwrapSpinLock::new_uninit() };
+pub static KERNEL_PAGE_TABLE: UnwrapTicketLock<RecursivePageTable> =
+    unsafe { UnwrapTicketLock::new_uninit() };
 
 #[derive(Error, Debug, PartialEq, Eq)]
 #[allow(missing_docs)]
