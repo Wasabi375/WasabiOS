@@ -1,3 +1,6 @@
 # TODO
 
+* PageTable add mut/ref versions of many functions upstream
+        that way we can use &self instead of &mut self in many places
+    * simplify our code to use &self where possible
 * Page table pages should be NO_EXEC

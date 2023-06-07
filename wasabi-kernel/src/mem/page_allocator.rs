@@ -25,12 +25,6 @@ static KERNEL_PAGE_ALLOCATOR: UnwrapTicketLock<PageAllocator> =
 /// that a virt addr can point to.
 const MAX_VIRT_ADDR: u64 = 0x0000_ffff_ffff_ffff;
 
-/// A page allocator
-pub struct PageAllocator {
-    /// rangeset used by the allocator to keep track of used virt mem
-    vaddrs: RangeSet<256>,
-}
-
 /// initialize the kernel page allocator.
 ///
 /// The `page_table` is used to figure out, which part of the virt memory space
@@ -142,6 +136,12 @@ pub fn init(page_table: &mut RecursivePageTable) {
     KERNEL_PAGE_ALLOCATOR
         .lock_uninit()
         .write(PageAllocator { vaddrs });
+}
+
+/// A page allocator
+pub struct PageAllocator {
+    /// rangeset used by the allocator to keep track of used virt mem
+    vaddrs: RangeSet<256>,
 }
 
 // TODO convert errors from MemError to PageTableError

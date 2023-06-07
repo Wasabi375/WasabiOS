@@ -109,6 +109,8 @@ pub trait RecursivePageTableExt {
 }
 
 /// get the recursive [PageTableIndex] of the page table, provided by the bootloader.
+/// TODO: remove pub. pub(super) is probably enough. This shouldn't be after the
+///     boot process is done anyways
 #[inline]
 pub fn recursive_index() -> PageTableIndex {
     let boot_info = crate::boot_info();
@@ -343,10 +345,11 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
 
         info!("Listing all frames for page table: ");
         let mut linear_mapping_mem_region = LinearMapMemRegion::empty();
+        let recursive_index = self.recursive_index();
         internal(
             4,
             self.level_4_table(),
-            [recursive_index(); 4],
+            [recursive_index; 4],
             &mut linear_mapping_mem_region,
             ignore_cpu_flags,
         );

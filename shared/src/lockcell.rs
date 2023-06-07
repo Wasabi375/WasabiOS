@@ -17,41 +17,13 @@ use core::{
 };
 use paste::paste;
 
-/// Trait that allows access to OS-level constructs defining interrupt state,
-/// exception state, unique core IDs, and enter/exit lock (for interrupt
-/// disabling and enabling) primitives.
-pub trait InterruptState {
-    /// Returns `true` if we're currently in an interrupt
-    fn in_interrupt() -> bool;
-
-    /// Returns `true` if we're currently in an exception. Which indicates that
-    /// a lock cannot be held as we may have pre-empted a non-preemptable lock
-    fn in_exception() -> bool;
-
-    /// Gets the ID of the running core. It's required that this core ID is
-    /// unique to the core.
-    fn core_id() -> CoreId;
-
-    /// A lock which does not allow interrupting was taken, and thus interrupts
-    /// must be disabled. It's up to the callee to handle the nesting of the
-    /// interrupt status. Eg. using a refcount of number of interrupt disable
-    /// requests
-    ///
-    /// # Safety:
-    ///
-    /// caller must ensure that interrupts can be disabled safely
-    unsafe fn enter_lock();
-
-    /// A lock which does not allow interrupting was released, and thus
-    /// interrupts can be enabled. It's up to the callee to handle the nesting
-    /// of the interrupt status. Eg. using a refcount of number of interrupt
-    /// disable requests
-    ///
-    /// # Safety:
-    ///
-    /// * caller must ensure that this function is called exactly once per invocation
-    ///     of [InterruptState::enter_lock]
-    unsafe fn exit_lock();
+/// A trait representing a lock cell that guards simultaneus access to a value.
+pub trait LockCell<T>
+where
+    Self: LockCellInternal<T> + Send + Sync,
+{
+    /// gives out access to the value of this lock. Blocks until access is granted.
+    fn lock(&self) -> LockCellGuard<'_, T, Self>;
 }
 
 /// unsafe internals used by [LockCell]s and [LockCellGuard].
@@ -144,15 +116,6 @@ impl<T, M: ?Sized + LockCellInternal<T>> Drop for LockCellGuard<'_, T, M> {
     fn drop(&mut self) {
         unsafe { self.lockcell.unlock(self) }
     }
-}
-
-/// A trait representing a lock cell that guards simultaneus access to a value.
-pub trait LockCell<T>
-where
-    Self: LockCellInternal<T> + Send + Sync,
-{
-    /// gives out access to the value of this lock. Blocks until access is granted.
-    fn lock(&self) -> LockCellGuard<'_, T, Self>;
 }
 
 /// A ticket lock implementation for [LockCell]
@@ -408,4 +371,41 @@ impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for Unwrap
     unsafe fn force_unlock(&self) {
         self.lockcell.force_unlock();
     }
+}
+
+/// Trait that allows access to OS-level constructs defining interrupt state,
+/// exception state, unique core IDs, and enter/exit lock (for interrupt
+/// disabling and enabling) primitives.
+pub trait InterruptState {
+    /// Returns `true` if we're currently in an interrupt
+    fn in_interrupt() -> bool;
+
+    /// Returns `true` if we're currently in an exception. Which indicates that
+    /// a lock cannot be held as we may have pre-empted a non-preemptable lock
+    fn in_exception() -> bool;
+
+    /// Gets the ID of the running core. It's required that this core ID is
+    /// unique to the core.
+    fn core_id() -> CoreId;
+
+    /// A lock which does not allow interrupting was taken, and thus interrupts
+    /// must be disabled. It's up to the callee to handle the nesting of the
+    /// interrupt status. Eg. using a refcount of number of interrupt disable
+    /// requests
+    ///
+    /// # Safety:
+    ///
+    /// caller must ensure that interrupts can be disabled safely
+    unsafe fn enter_lock();
+
+    /// A lock which does not allow interrupting was released, and thus
+    /// interrupts can be enabled. It's up to the callee to handle the nesting
+    /// of the interrupt status. Eg. using a refcount of number of interrupt
+    /// disable requests
+    ///
+    /// # Safety:
+    ///
+    /// * caller must ensure that this function is called exactly once per invocation
+    ///     of [InterruptState::enter_lock]
+    unsafe fn exit_lock();
 }

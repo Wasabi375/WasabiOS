@@ -14,13 +14,6 @@ use x86_64::{
     PhysAddr,
 };
 
-/// A wrapper around a RangeSet that allows allocation and deallocation of
-/// Physical Frames of any size
-#[derive(Clone, Copy)]
-struct PhysAllocator {
-    memory_ranges: RangeSet<{ Self::N }>,
-}
-
 /// a typealias for [UnwrapTicketLock] around a [PhysAllocator]
 type LockedPhysAlloc = UnwrapTicketLock<PhysAllocator>;
 
@@ -81,6 +74,13 @@ pub fn init(regions: &MemoryRegions) {
     KERNEL_FRAME_ALLOCATOR_1G
         .lock_uninit()
         .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
+}
+
+/// A wrapper around a RangeSet that allows allocation and deallocation of
+/// Physical Frames of any size
+#[derive(Clone, Copy)]
+struct PhysAllocator {
+    memory_ranges: RangeSet<{ Self::N }>,
 }
 
 impl PhysAllocator {

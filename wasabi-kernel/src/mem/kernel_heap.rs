@@ -30,42 +30,9 @@ use x86_64::{
 // Safety: initialized by [init] before it we use allocated types
 static KERNEL_HEAP: UnwrapTicketLock<KernelHeap> = unsafe { UnwrapTicketLock::new_uninit() };
 
-/// ZST for [GlobalAlloc] implementation
-struct KernelHeapGlobalAllocator;
-
 /// holds ZST for [global_allocator]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: KernelHeapGlobalAllocator = KernelHeapGlobalAllocator;
-
-unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        trace!(target: "GlobalAlloc", "allocate {layout:?}");
-        match KernelHeap::get().alloc(layout) {
-            Ok(mut mem) => unsafe {
-                // Safety: [KernelHeap::alloc] returns a valid pointer
-                // and we still have unique access to it
-                mem.as_mut()
-            },
-            Err(err) => {
-                error!("Kernel Heap allocation failed for layout {layout:?}: {err:?}");
-                null_mut()
-            }
-        }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        trace!(target: "GlobalAlloc", "free {ptr:p} - {layout:?}");
-        if let Some(non_null) = NonNull::new(ptr) {
-            // Safety: see safety guarantees of [GlobalAlloc]
-            match unsafe { KernelHeap::get().free(non_null, layout) } {
-                Ok(_) => {}
-                Err(err) => error!("Failed to free {non_null:p} with layout {layout:?}: {err:?}"),
-            }
-        } else {
-            error!("tried to free null pointer with layout {layout:?}");
-        }
-    }
-}
 
 /// initializes the kernel heap
 pub fn init() {
@@ -113,6 +80,39 @@ pub fn init() {
     trace!("kernel init done");
 }
 
+/// ZST for [GlobalAlloc] implementation
+struct KernelHeapGlobalAllocator;
+
+unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        trace!(target: "GlobalAlloc", "allocate {layout:?}");
+        match KernelHeap::get().alloc(layout) {
+            Ok(mut mem) => unsafe {
+                // Safety: [KernelHeap::alloc] returns a valid pointer
+                // and we still have unique access to it
+                mem.as_mut()
+            },
+            Err(err) => {
+                error!("Kernel Heap allocation failed for layout {layout:?}: {err:?}");
+                null_mut()
+            }
+        }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        trace!(target: "GlobalAlloc", "free {ptr:p} - {layout:?}");
+        if let Some(non_null) = NonNull::new(ptr) {
+            // Safety: see safety guarantees of [GlobalAlloc]
+            match unsafe { KernelHeap::get().free(non_null, layout) } {
+                Ok(_) => {}
+                Err(err) => error!("Failed to free {non_null:p} with layout {layout:?}: {err:?}"),
+            }
+        } else {
+            error!("tried to free null pointer with layout {layout:?}");
+        }
+    }
+}
+
 /// number of memory pages used by the kernel heap
 const KERNEL_HEAP_PAGE_COUNT: usize = 5;
 
@@ -150,17 +150,6 @@ trait MutAllocator {
     /// the caller must ensure that the ptr and layout match
     /// and that the ptr was allocated by this [MutAllocator]
     unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()>;
-}
-
-impl<A: Allocator> MutAllocator for A {
-    fn alloc(&mut self, layout: Layout) -> Result<NonNull<u8>> {
-        Allocator::alloc(self, layout)
-    }
-
-    unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
-        // Safety: same as [MutAllocator::free]
-        unsafe { Allocator::free(self, ptr, layout) }
-    }
 }
 
 /// represents the heap used by the kernel
@@ -287,28 +276,6 @@ struct SlabAllocator<'a, A> {
     allocator: MaybeUninit<&'a A>,
 }
 
-/// a block of memory used by [SlabAllocator]s to allocate smaller blocks
-///
-/// This struct represents the header of a block. [`SlabBlock::new`] allocate
-/// [SLAB_BLOCK_SIZE] bytes and fits this struct at the start of the allocation.
-/// [`SlabBlock::start`] and [`SlabBlock::end`] point to the start and end of the
-/// rest of the allocation.
-#[derive(Debug)]
-struct SlabBlock {
-    /// the next block in the linked list
-    next: Option<NonNull<SlabBlock>>,
-    /// the previous block in the linked list
-    prev: Option<NonNull<SlabBlock>>,
-    /// the start of memory managed by this block
-    start: VirtAddr,
-    /// the end of memory managed by this block
-    end: VirtAddr,
-    /// the memory used from this block
-    used: usize,
-    /// the size of allocations freed from this block
-    freed: usize,
-}
-
 impl<'a, A: Allocator> SlabAllocator<'a, A> {
     /// utility to verify size of self is valid
     #[inline]
@@ -402,6 +369,114 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
 
         Ok(block)
     }
+}
+
+impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
+    fn alloc(&mut self, layout: Layout) -> Result<NonNull<u8>> {
+        if layout.size() > self.size {
+            return Err(MemError::InvalidAllocSize {
+                size: layout.size(),
+                expected: self.size,
+            });
+        }
+        if !self.can_accept_align(layout.align()) {
+            return Err(MemError::InvalidAllocAlign {
+                align: layout.align(),
+                expected: self.align(),
+            });
+        }
+        let size = self.size;
+
+        let block = match self.first_block_or_push()?.find_block_with_space(size) {
+            Some(block) => block,
+            None => self.push_new_block()?,
+        };
+
+        block.alloc(size)
+    }
+
+    unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
+        if layout.size() > self.size {
+            return Err(MemError::InvalidAllocSize {
+                size: layout.size(),
+                expected: self.size,
+            });
+        }
+        if !self.can_accept_align(layout.align()) {
+            return Err(MemError::InvalidAllocAlign {
+                align: layout.align(),
+                expected: self.align(),
+            });
+        }
+
+        let addr = VirtAddr::from_ptr(ptr.as_ptr());
+        let size = self.size;
+
+        let block = self
+            .first_block()
+            .ok_or(MemError::FreeFailed(ptr))?
+            .find_block_containing(addr)
+            .ok_or(MemError::PtrNotAllocated(ptr))?;
+
+        block.freed += size;
+        let mut next_first = None;
+
+        if block.is_freed(size) {
+            let slab_ptr = NonNull::new(block as *mut SlabBlock as *mut u8).unwrap();
+
+            if let Some(mut prev_ptr) = block.prev {
+                // safety: we only store valid references and have mut access,
+                // because we have mut access to self
+                let prev = unsafe { prev_ptr.as_mut() };
+                prev.next = block.next;
+            } else {
+                // if prev is none, it means it is the first block in the list
+                next_first = Some(block.next.clone());
+            }
+            if let Some(mut next_ptr) = block.next {
+                // safety: we only store valid references and have mut access,
+                // because we have mut access to self
+                let next = unsafe { next_ptr.as_mut() };
+                next.prev = block.prev
+            }
+
+            if let Some(next_first) = next_first {
+                self.block = next_first;
+            }
+
+            // only free at the end, so that we ensure a consistent
+            // linked list state, even if the free fails
+            let free_layout = SlabBlock::layout();
+            unsafe {
+                // Safety: same guarantee as this function
+                self.allocator().free(slab_ptr, free_layout)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// a block of memory used by [SlabAllocator]s to allocate smaller blocks
+///
+/// This struct represents the header of a block. [`SlabBlock::new`] allocate
+/// [SLAB_BLOCK_SIZE] bytes and fits this struct at the start of the allocation.
+/// [`SlabBlock::start`] and [`SlabBlock::end`] point to the start and end of the
+/// rest of the allocation.
+#[derive(Debug)]
+struct SlabBlock {
+    /// the next block in the linked list
+    next: Option<NonNull<SlabBlock>>,
+    /// the previous block in the linked list
+    prev: Option<NonNull<SlabBlock>>,
+    /// the start of memory managed by this block
+    start: VirtAddr,
+    /// the end of memory managed by this block
+    end: VirtAddr,
+    /// the memory used from this block
+    used: usize,
+    /// the size of allocations freed from this block
+    freed: usize,
 }
 
 impl SlabBlock {
@@ -508,89 +583,14 @@ impl SlabBlock {
     }
 }
 
-impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
+impl<A: Allocator> MutAllocator for A {
     fn alloc(&mut self, layout: Layout) -> Result<NonNull<u8>> {
-        if layout.size() > self.size {
-            return Err(MemError::InvalidAllocSize {
-                size: layout.size(),
-                expected: self.size,
-            });
-        }
-        if !self.can_accept_align(layout.align()) {
-            return Err(MemError::InvalidAllocAlign {
-                align: layout.align(),
-                expected: self.align(),
-            });
-        }
-        let size = self.size;
-
-        let block = match self.first_block_or_push()?.find_block_with_space(size) {
-            Some(block) => block,
-            None => self.push_new_block()?,
-        };
-
-        block.alloc(size)
+        Allocator::alloc(self, layout)
     }
 
     unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
-        if layout.size() > self.size {
-            return Err(MemError::InvalidAllocSize {
-                size: layout.size(),
-                expected: self.size,
-            });
-        }
-        if !self.can_accept_align(layout.align()) {
-            return Err(MemError::InvalidAllocAlign {
-                align: layout.align(),
-                expected: self.align(),
-            });
-        }
-
-        let addr = VirtAddr::from_ptr(ptr.as_ptr());
-        let size = self.size;
-
-        let block = self
-            .first_block()
-            .ok_or(MemError::FreeFailed(ptr))?
-            .find_block_containing(addr)
-            .ok_or(MemError::PtrNotAllocated(ptr))?;
-
-        block.freed += size;
-        let mut next_first = None;
-
-        if block.is_freed(size) {
-            let slab_ptr = NonNull::new(block as *mut SlabBlock as *mut u8).unwrap();
-
-            if let Some(mut prev_ptr) = block.prev {
-                // safety: we only store valid references and have mut access,
-                // because we have mut access to self
-                let prev = unsafe { prev_ptr.as_mut() };
-                prev.next = block.next;
-            } else {
-                // if prev is none, it means it is the first block in the list
-                next_first = Some(block.next.clone());
-            }
-            if let Some(mut next_ptr) = block.next {
-                // safety: we only store valid references and have mut access,
-                // because we have mut access to self
-                let next = unsafe { next_ptr.as_mut() };
-                next.prev = block.prev
-            }
-
-            if let Some(next_first) = next_first {
-                self.block = next_first;
-            }
-
-            // only free at the end, so that we ensure a consistent
-            // linked list state, even if the free fails
-            let free_layout = SlabBlock::layout();
-            unsafe {
-                // Safety: same guarantee as this function
-                self.allocator().free(slab_ptr, free_layout)?;
-            }
-        }
-
-        Ok(())
+        // Safety: same as [MutAllocator::free]
+        unsafe { Allocator::free(self, ptr, layout) }
     }
 }
 

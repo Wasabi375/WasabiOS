@@ -174,6 +174,33 @@ macro_rules! map_page {
     }};
 }
 
+/// Extensiont trait for [VirtAddr]
+pub trait VirtAddrExt {
+    /// returns a [Volatile] that provides access to the value behind this address
+    ///
+    /// Safety: VirtAddr must be a valid reference
+    unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly>;
+
+    /// returns a [Volatile] that provides access to the value behind this address
+    ///
+    /// Safety: VirtAddr must be a valid *mut* reference
+    unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T>;
+}
+
+#[allow(unsafe_op_in_unsafe_fn)]
+impl VirtAddrExt for VirtAddr {
+    unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly> {
+        trace!("new volatile at {self:p}");
+        let r: &T = &*self.as_ptr();
+        Volatile::new_read_only(r)
+    }
+
+    unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T> {
+        let r: &mut T = &mut *self.as_mut_ptr();
+        Volatile::new(r)
+    }
+}
+
 /// prints out some random data about maped pages and phys frames
 fn print_debug_info(
     recursive_page_table: &mut RecursivePageTable,
@@ -243,31 +270,4 @@ fn assert_phys_not_available(addr: PhysAddr, message: &str) {
             && region.kind == MemoryRegionKind::Usable
     });
     assert!(!available, "{message}: Phys region {addr:p} is available!");
-}
-
-/// Extensiont trait for [VirtAddr]
-pub trait VirtAddrExt {
-    /// returns a [Volatile] that provides access to the value behind this address
-    ///
-    /// Safety: VirtAddr must be a valid reference
-    unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly>;
-
-    /// returns a [Volatile] that provides access to the value behind this address
-    ///
-    /// Safety: VirtAddr must be a valid *mut* reference
-    unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T>;
-}
-
-#[allow(unsafe_op_in_unsafe_fn)]
-impl VirtAddrExt for VirtAddr {
-    unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly> {
-        trace!("new volatile at {self:p}");
-        let r: &T = &*self.as_ptr();
-        Volatile::new_read_only(r)
-    }
-
-    unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T> {
-        let r: &mut T = &mut *self.as_mut_ptr();
-        Volatile::new(r)
-    }
 }
