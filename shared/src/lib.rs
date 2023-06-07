@@ -18,6 +18,14 @@ pub mod types {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
     pub struct CoreId(pub u8);
 
+    impl CoreId {
+        /// Whether this core is the bootstrap core used for initialization of
+        /// global systems
+        pub fn is_bsc(&self) -> bool {
+            self.0 == 0
+        }
+    }
+
     impl Deref for CoreId {
         type Target = u8;
 

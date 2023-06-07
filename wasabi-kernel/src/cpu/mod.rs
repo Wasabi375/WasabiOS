@@ -5,92 +5,105 @@ pub mod cpuid;
 pub mod gdt;
 pub mod interrupts;
 
-use core::arch::asm;
-use x86_64::{instructions, registers::model_specific::Msr};
+pub use instructions::*;
 
-/// MSR for active FS base
-static mut IA32_FS_BASE: Msr = Msr::new(0xc0000100);
+#[allow(unsafe_op_in_unsafe_fn)]
+mod instructions {
+    use core::arch::asm;
+    use x86_64::{instructions, registers::model_specific::Msr};
 
-/// MSR for active GS base
-static mut IA32_GS_BASE: Msr = Msr::new(0xc0000101);
+    /// MSR for active FS base
+    static mut IA32_FS_BASE: Msr = Msr::new(0xc0000100);
 
-/// issues a single halt instruction
-#[inline]
-pub fn halt_single() {
-    instructions::hlt();
-}
+    /// MSR for active GS base
+    static mut IA32_GS_BASE: Msr = Msr::new(0xc0000101);
 
-/// issues the halt instruction in a loop.
-#[inline]
-pub fn halt() -> ! {
-    loop {
-        halt_single();
+    /// issues a single halt instruction
+    #[inline]
+    pub fn halt_single() {
+        instructions::hlt();
     }
-}
 
-/// reads the RIP register.
-///
-/// # Safety:
-///
-/// the caller must guarantee that it is save to access the register.
-/// This should always be the case, but I still want this operation
-/// to be marked as unsafe, because messing with the RIP is never a good idea.
-/// Basically this should only be called to display additional debugging information.
-#[inline]
-pub unsafe fn read_rip() -> u64 {
-    let rdi: u64;
-    asm! {
-
-        "lea {0}, [rip]",
-        out(reg) rdi
+    /// issues the halt instruction in a loop.
+    #[inline]
+    pub fn halt() -> ! {
+        loop {
+            halt_single();
+        }
     }
-    rdi
-}
 
-/// Disbales interrupts.
-///
-/// When possibel `locals!().disbale_interrupts()` should be used instead.
-///
-/// ## See:
-/// [crate::core_local::CoreLocals]  
-/// [crate::locals]
-///
-/// # Safety:
-///
-/// caller must ensure that disbaled interrupts don't violate any safety guarantees
-pub unsafe fn disable_interrupts() {
-    asm! {
-        "cli"
+    /// reads the RIP register.
+    ///
+    /// # Safety:
+    ///
+    /// the caller must guarantee that it is save to access the register.
+    /// This should always be the case, but I still want this operation
+    /// to be marked as unsafe, because messing with the RIP is never a good idea.
+    /// Basically this should only be called to display additional debugging information.
+    #[inline]
+    pub unsafe fn read_rip() -> u64 {
+        let rdi: u64;
+        asm! {
+
+            "lea {0}, [rip]",
+            out(reg) rdi
+        }
+        rdi
     }
-}
 
-/// # Safety: caller must ensure that interrupts don't violate any safety guarantees
-pub unsafe fn enable_interrupts() {
-    asm! {
-        "sti"
+    /// Disbales interrupts.
+    ///
+    /// When possibel `locals!().disbale_interrupts()` should be used instead.
+    ///
+    /// ## See:
+    /// [crate::core_local::CoreLocals]  
+    /// [crate::locals]
+    ///
+    /// # Safety:
+    ///
+    /// caller must ensure that disbaled interrupts don't violate any safety guarantees
+    pub unsafe fn disable_interrupts() {
+        asm! {
+            "cli"
+        }
     }
-}
 
-/// Get the GS base
-#[inline]
-pub unsafe fn gs_base() -> u64 {
-    IA32_GS_BASE.read()
-}
+    /// # Safety: caller must ensure that interrupts don't violate any safety guarantees
+    pub unsafe fn enable_interrupts() {
+        asm! {
+            "sti"
+        }
+    }
 
-/// Set the GS base
-#[inline]
-pub unsafe fn set_gs_base(base: u64) {
-    IA32_GS_BASE.write(base);
-}
+    /// Get the GS base
+    #[inline]
+    pub fn gs_base() -> u64 {
+        // Safety: accessing reading gs segment is save
+        unsafe { IA32_GS_BASE.read() }
+    }
 
-/// Get the FS base
-#[inline]
-pub unsafe fn fs_base() -> u64 {
-    IA32_FS_BASE.read()
-}
+    /// Set the GS base
+    #[inline]
+    pub fn set_gs_base(base: u64) {
+        unsafe {
+            // Safety: accessing reading gs segment is save
+            IA32_GS_BASE.write(base);
+        }
+    }
 
-/// Set the FS base
-#[inline]
-pub unsafe fn set_fs_base(base: u64) {
-    IA32_FS_BASE.write(base);
+    /// Get the FS base
+    #[inline]
+    pub fn fs_base() -> u64 {
+        // Safety: accessing reading fs segment is save
+        unsafe { IA32_FS_BASE.read() }
+    }
+
+    /// Set the FS base
+    #[inline]
+    pub fn set_fs_base(base: u64) {
+        unsafe {
+            // Safety: accessing reading fs segment is save
+            IA32_FS_BASE.write(base);
+        }
+    }
 }

@@ -16,11 +16,16 @@ use shared::lockcell::LockCellInternal;
 /// This function is called on panic.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // TODO: kill other cores before clobbering the lock
+    // Safety: we panic, and no longer care. We just want to log
     unsafe {
         // TODO try with timeout first, before clobbering lock
         SERIAL1.deref().force_unlock();
     }
 
+    // Saftey: [LOGGER] is only writen to during the boot process.
+    // Either we are in the boot process, in which case only we have access
+    // or we aren't in which case everyone only reads
     if unsafe { &LOGGER }.is_none() {
         panic_no_logger(info);
     }

@@ -152,6 +152,11 @@ impl CoreLocals {
     ///
     /// Also interrupts will never be enabled if we are currently inside an interrupt.
     /// In that case exiting the interrupt will reenable interrupts.
+    ///
+    /// # Safety:
+    ///
+    /// * must only be called once for each call to [CoreLocals::disable_interrupts]
+    /// * caller must ensure that interrupts are save
     pub unsafe fn enable_interrupts(&self) {
         let old_disable_count = self.interrupts_disable_count.fetch_sub(1, Ordering::SeqCst);
 
@@ -165,6 +170,8 @@ impl CoreLocals {
         // correctly get re-enabled in this case when the IRET loads the old
         // interrupt flag.
         if old_disable_count == 1 && !self.in_interrupt() {
+            // Safety: Not currently in an interrupt and outstanding interrupt count
+            // is 0
             unsafe {
                 cpu::enable_interrupts();
             }
@@ -172,9 +179,14 @@ impl CoreLocals {
     }
 
     /// Disable interrupts and increment [Self::interrupt_count]
+    ///
+    /// # Safety:
+    ///
+    /// caller must ensure that interrupts can be safely disabled
     pub unsafe fn disable_interrupts(&self) {
         self.interrupts_disable_count.fetch_add(1, Ordering::SeqCst);
         unsafe {
+            // Safety: see function safety definition
             cpu::disable_interrupts();
         }
     }
@@ -183,34 +195,37 @@ impl CoreLocals {
 /// Starts the core boot process, enabling the `locals!` macro to access the boot locals
 /// region.
 ///
+/// This will create a critical section that only 1 CPU can enter at a time and ends
+/// when [`init`] is called.
+///
 /// # Safety
 ///
 /// this function must only be called once per CPU core, at the start of the execution.
-/// This will create a critical section that only 1 CPU can enter at a time and ends
-/// when [`init`] is called.
 pub unsafe fn core_boot() -> CoreId {
     let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::AcqRel).into();
 
+    let boot_core_locals = unsafe { &mut BOOT_CORE_LOCALS };
+
     unsafe {
         cpu::disable_interrupts();
-        cpu::set_gs_base(&BOOT_CORE_LOCALS as *const CoreLocals as u64);
-
-        while BOOT_CORE_LOCALS.boot_lock.load(Ordering::SeqCst) != core_id.0 {
-            spin_loop();
-        }
-
-        BOOT_CORE_LOCALS.core_id = core_id;
-        BOOT_CORE_LOCALS.virt_addr = VirtAddr::from_ptr(&BOOT_CORE_LOCALS);
-
-        assert_eq!(BOOT_CORE_LOCALS.interrupt_count.count(), 0);
-        assert_eq!(BOOT_CORE_LOCALS.exception_count.count(), 0);
-        assert_eq!(
-            BOOT_CORE_LOCALS
-                .interrupts_disable_count
-                .load(Ordering::Relaxed),
-            1
-        );
+        cpu::set_gs_base(boot_core_locals as *const CoreLocals as u64);
     }
+
+    while boot_core_locals.boot_lock.load(Ordering::SeqCst) != core_id.0 {
+        spin_loop();
+    }
+
+    boot_core_locals.core_id = core_id;
+    boot_core_locals.virt_addr = VirtAddr::from_ptr(boot_core_locals);
+
+    assert_eq!(boot_core_locals.interrupt_count.count(), 0);
+    assert_eq!(boot_core_locals.exception_count.count(), 0);
+    assert_eq!(
+        boot_core_locals
+            .interrupts_disable_count
+            .load(Ordering::Relaxed),
+        1
+    );
 
     core_id
 }
@@ -243,16 +258,25 @@ pub unsafe fn init(core_id: CoreId) {
     );
 
     unsafe {
+        // safety: we are in the kernel boot process and we only access our own
+        // core's data
         assert!(CORE_LOCALS_VADDRS[core_id.0 as usize].is_null());
         CORE_LOCALS_VADDRS[core_id.0 as usize] = core_local.virt_addr;
+    }
 
-        // set gs base to point to this core_local. That way we can use the core!
-        // macro to access the core_locals.
-        cpu::set_gs_base(core_local.virt_addr.as_u64());
+    // set gs base to point to this core_local. That way we can use the core!
+    // macro to access the core_locals.
+    cpu::set_gs_base(core_local.virt_addr.as_u64());
 
+    unsafe {
         // exit the critical boot section and let next core enter
+        // safety: at this point we are still in the boot process so we still
+        // have unique access to [BOOT_CORE_LOCALS]
         BOOT_CORE_LOCALS.boot_lock.fetch_add(1, Ordering::SeqCst);
     }
+
+    // don't drop core_local, we want it to life forever in static memory.
+    // However we can't use a static variable, because we need 1 per core
     core::mem::forget(core_local);
     trace!("Core {}: locals init done", core_id.0);
 }
@@ -275,14 +299,16 @@ impl InterruptState for CoreInterruptState {
         locals!().core_id
     }
 
-    fn enter_lock() {
+    unsafe fn enter_lock() {
         unsafe {
+            // safety: disbaling interrupts is ok for locked critical sections
             locals!().disable_interrupts();
         }
     }
 
-    fn exit_lock() {
+    unsafe fn exit_lock() {
         unsafe {
+            // safety: only called once, when a lock-guard is dropped
             locals!().enable_interrupts();
         }
     }
@@ -303,6 +329,9 @@ pub fn get_max_core_id() -> u8 {
 pub unsafe fn get_core_locals() -> &'static CoreLocals {
     unsafe {
         let ptr: usize;
+        // Safety: we assume that gs contains the vaddr of this cores
+        // [CoreLocals], which starts with it's own address, therefor we
+        // can access the [CoreLocals] vaddr using `gs:[0]`
         asm! {
             "mov {0}, gs:[0]",
             out(reg) ptr
@@ -324,12 +353,9 @@ pub unsafe fn get_core_locals() -> &'static CoreLocals {
 #[macro_export]
 macro_rules! locals {
     () => {{
-        // use core::sync::atomic::Ordering;
         #[allow(unused_unsafe)]
         let locals = unsafe { $crate::core_local::get_core_locals() };
 
-        // let lock = locals.__boot_lock.load(Ordering::Relaxed);
-        // assert_eq!(lock, locals.core_id.0);
         locals
     }};
 }

@@ -16,7 +16,11 @@ const MAX_RENAME_MAPPINGS: usize = 126;
 pub static mut LOGGER: Option<StaticLogger<'static, SerialPort, TicketLock<SerialPort>>> = None;
 
 /// initializes the logger piping all [log::log] calls into the first serial port.
-pub fn init() {
+///
+/// # Safety:
+///
+/// must only ever be called once at the start of the kernel boot proces
+pub unsafe fn init() {
     assert!(
         MAX_LEVEL_FILTERS + MAX_RENAME_MAPPINGS <= 253,
         "MAX_LEVEL_FILTERS + MAX_RENAME_MAPPINGS must be <= 253 or else \
@@ -36,6 +40,8 @@ pub fn init() {
         // comment to move ; to separate line - easy uncomment of module log levels
             ;
 
+    // Safety: this is fine, since we are in the kernel boot and this is only
+    // called once, meaning we ensure rust mutability guarantees
     if unsafe {
         LOGGER = Some(logger);
 
@@ -44,6 +50,9 @@ pub fn init() {
     .is_err()
     {
         serial_println!("!!! Failed to init logger !!!!");
+
+        // Safety: this is fine, since we are in the kernel boot and this is only
+        // called once, meaning we ensure rust mutability guarantees
         unsafe {
             LOGGER = None;
         }

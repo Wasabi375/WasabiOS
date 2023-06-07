@@ -36,13 +36,22 @@ pub trait InterruptState {
     /// must be disabled. It's up to the callee to handle the nesting of the
     /// interrupt status. Eg. using a refcount of number of interrupt disable
     /// requests
-    fn enter_lock();
+    ///
+    /// # Safety:
+    ///
+    /// caller must ensure that interrupts can be disabled safely
+    unsafe fn enter_lock();
 
     /// A lock which does not allow interrupting was released, and thus
     /// interrupts can be enabled. It's up to the callee to handle the nesting
     /// of the interrupt status. Eg. using a refcount of number of interrupt
     /// disable requests
-    fn exit_lock();
+    ///
+    /// # Safety:
+    ///
+    /// * caller must ensure that this function is called exactly once per invocation
+    ///     of [InterruptState::enter_lock]
+    unsafe fn exit_lock();
 }
 
 /// unsafe internals used by [LockCell]s and [LockCellGuard].
@@ -182,6 +191,9 @@ impl<T, I> TicketLock<T, I> {
     }
 
     /// creates a new preemtable [TicketLock]
+    ///
+    /// This assumes that it is save to disable interrupts
+    /// while the lock is held.
     pub const fn new_preemtable(data: T) -> Self {
         Self {
             current_ticket: AtomicU64::new(0),
@@ -203,7 +215,10 @@ impl<T, I: InterruptState> LockCell<T> for TicketLock<T, I> {
         );
 
         if self.preemtable {
-            I::enter_lock();
+            unsafe {
+                // Safety: disabling interrupts is ok, for preemtable locks
+                I::enter_lock();
+            }
         }
 
         let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
@@ -238,6 +253,8 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
         self.owner.store(!0, Ordering::Release);
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
         if self.preemtable {
+            // Safety: this will restore the interrupt state from when we called
+            // enter_lock, so this is safe
             I::exit_lock();
         }
     }
@@ -279,11 +296,19 @@ macro_rules! unwrapLockWrapper {
 
             impl<T, I: InterruptState> [<Unwrap $lock_type>]<T, I> {
                 /// creates a new [Self] that is uninitialized
+                ///
+                /// # Safety
+                ///
+                /// caller ensures that the [UnwrapLock] is initialized before it is accessed
                 pub const unsafe fn new_uninit() -> Self {
                     UnwrapLock::new($lock_type::new(MaybeUninit::uninit()))
                 }
 
                 /// creates a new preemtable [Self] that is uninitialized
+                ///
+                /// # Safety
+                ///
+                /// caller ensures that the [UnwrapLock] is initialized before it is accessed
                 pub const unsafe fn new_preemtable_uninit() -> Self {
                     UnwrapLock::new($lock_type::new_preemtable(MaybeUninit::uninit()))
                 }

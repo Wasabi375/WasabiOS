@@ -8,6 +8,8 @@ pub use core::arch::x86_64::CpuidResult;
 
 /// calls the cpuid instruction with the provided `leaf` and if set `sub_leaf`
 pub fn cpuid(leaf: u32, sub_leaf: Option<u32>) -> CpuidResult {
+    // safety: cpuid is a save instruction, assuming [check_cpuid_usable]
+    // succeeded
     if let Some(ecx) = sub_leaf {
         unsafe { __cpuid_count(leaf, ecx) }
     } else {
@@ -78,4 +80,5 @@ pub unsafe fn check_cpuid_usable() {
     // u32_assert(genuine_intel.ebx, r"Genu");
     // u32_assert(genuine_intel.ecx, r"ntel");
     // u32_assert(genuine_intel.ebx, r"ienI");
+    trace!("cpuid usable");
 }

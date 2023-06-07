@@ -25,14 +25,18 @@ struct PhysAllocator {
 type LockedPhysAlloc = UnwrapTicketLock<PhysAllocator>;
 
 /// The global kernel phys allocator. This is used by the frame allocators to create frames
+// Safetey: this is initailized by [init] before it is used
 static GLOBAL_PHYS_ALLOCATOR: LockedPhysAlloc = unsafe { UnwrapTicketLock::new_uninit() };
 /// A [WasabiFrameAllocator] for 4KiB pages
+// Safetey: this is initailized by [init] before it is used
 static KERNEL_FRAME_ALLOCATOR_4K: UnwrapTicketLock<WasabiFrameAllocator<Size4KiB>> =
     unsafe { UnwrapTicketLock::new_uninit() };
 /// A [WasabiFrameAllocator] for 2MiB pages
+// Safetey: this is initailized by [init] before it is used
 static KERNEL_FRAME_ALLOCATOR_2M: UnwrapTicketLock<WasabiFrameAllocator<Size2MiB>> =
     unsafe { UnwrapTicketLock::new_uninit() };
 /// A [WasabiFrameAllocator] for 1GiB pages
+// Safetey: this is initailized by [init] before it is used
 static KERNEL_FRAME_ALLOCATOR_1G: UnwrapTicketLock<WasabiFrameAllocator<Size1GiB>> =
     unsafe { UnwrapTicketLock::new_uninit() };
 
@@ -194,6 +198,6 @@ unsafe impl<S: PageSize> FrameAllocator<S> for WasabiFrameAllocator<'_, S> {
 
 impl<S: PageSize> FrameDeallocator<S> for WasabiFrameAllocator<'_, S> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<S>) {
-        self.free(frame)
+        unsafe { self.free(frame) }
     }
 }

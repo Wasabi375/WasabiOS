@@ -14,6 +14,7 @@
     maybe_uninit_array_assume_init
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod core_local;
 pub mod cpu;
@@ -38,33 +39,44 @@ use mem::MemError;
 extern crate alloc;
 
 /// Contains the [BootInfo] provided by the Bootloader
-/// FIXME: this breaks rust uniquness guarantee
+/// TODO: this breaks rust uniquness guarantee
 static mut BOOT_INFO: *mut BootInfo = null_mut();
 
 /// returns the [BootInfo] provided by the bootloader
-/// FIXME: this breaks rust uniquness guarantee
+/// TODO: this breaks rust uniquness guarantee
 pub fn boot_info() -> &'static mut BootInfo {
     unsafe { &mut *BOOT_INFO }
 }
 
 /// initializes the kernel.
 fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
-    let core_id = unsafe {
-        BOOT_INFO = boot_info;
-
-        core_boot()
-    };
-
-    debug_logger::init();
-
-    trace!("{boot_info:#?}");
-
+    // Safety: TODO: boot info handling not really save, but it's fine for now
+    // we are still single core and don't really care
     unsafe {
-        cpuid::check_cpuid_usable();
+        BOOT_INFO = boot_info;
     }
 
-    mem::init();
+    // Safety:
+    // `init` is only called once per core and `core_boot`
+    let core_id = unsafe { core_boot() };
 
+    if core_id.is_bsc() {
+        unsafe {
+            // Safety: bsp during `init`
+            debug_logger::init();
+
+            // Safety: inherently unsafe and can crash, but if cpuid isn't supported
+            // we will crash at some point in the future anyways, so we might as well
+            // crash early
+            cpuid::check_cpuid_usable();
+
+            // Safety: bsp during `init` and locks and logging are working
+            mem::init();
+        }
+    }
+
+    // Safety:
+    // this is called after `core_boot()` and we have initialized memory and logging
     unsafe {
         core_local::init(core_id);
     }

@@ -3,7 +3,7 @@
 use crate::{
     cpu::cpuid::cpuid,
     locals, map_page,
-    mem::{page_allocator::PageAllocator, MemError, VirtAddrExt},
+    mem::{MemError, VirtAddrExt},
 };
 use bit_field::BitField;
 use log::{debug, info, trace};
@@ -86,18 +86,12 @@ impl Apic {
 
         assert_eq!(phys_base, phys_frame.start_address());
 
-        let page = PageAllocator::get_kernel_allocator()
-            .lock()
-            .allocate_page_4k()?;
-
         let apic_table_flags: PageTableFlags = PageTableFlags::PRESENT
             | PageTableFlags::WRITABLE
             | PageTableFlags::NO_EXECUTE
             | PageTableFlags::NO_CACHE;
 
-        unsafe {
-            map_page!(page, Size4KiB, apic_table_flags).map_err(|e| MemError::PageTableMap(e))?;
-        }
+        let page = map_page!(Size4KiB, apic_table_flags)?;
 
         let virt_base = page.start_address();
         debug!("Create apic base at addr: Phys {phys_base:p}, Virt {virt_base:p}");
@@ -112,6 +106,7 @@ impl Apic {
 
     /// returns the [Id] of this [Apic]
     fn id(&self) -> Id {
+        // safety: [offset] returns valid virt addrs assuming the apic base is valid
         let id = unsafe { self.offset(Offset::Id).as_volatile() };
         id.read()
     }
@@ -119,6 +114,8 @@ impl Apic {
 
 /// disables the 8259 pic
 fn disable_pic() {
+    // safety: copy pasta to disable pic. This is safe, because the
+    // port addrs are the valid addrs for the pic
     unsafe {
         // Disable 8259 immediately, thanks kennystrawnmusic
 

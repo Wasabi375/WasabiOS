@@ -56,7 +56,11 @@ pub enum MemError {
 
 /// initialize memory: phys allocator, page allocator page table as well as
 /// kernel heap allocator.
-pub fn init() {
+///
+/// # Safety:
+///
+/// Must be called only once during kernel boot process. Requires locks and logging
+pub unsafe fn init() {
     let (level_4_page_table, _) = Cr3::read();
     info!(
         "Level 4 page table at {:?} with rec index {:?}",
@@ -65,6 +69,9 @@ pub fn init() {
     );
 
     let bootloader_page_table_vaddr = RecursivePageTable::l4_table_vaddr(recursive_index());
+
+    // Safety: assuming the bootloader doesn't lie to us, this is the valid page table vaddr
+    // and we have mutable access, because we are in the boot process of the kernel
     let bootloader_page_table: &'static mut PageTable =
         unsafe { &mut *bootloader_page_table_vaddr.as_mut_ptr() };
 
@@ -113,6 +120,25 @@ pub fn init() {
 /// ```
 #[macro_export]
 macro_rules! map_page {
+    ($size: ident, $flags: expr) => {{
+        use $crate::mem::page_allocator::PageAllocator;
+        use $crate::mem::MemError;
+
+        let page = PageAllocator::get_kernel_allocator()
+            .lock()
+            .allocate_page::<$size>();
+        match page {
+            Ok(page) => unsafe {
+                // Safety: we are mapping a new unused page to a new unused frame,
+                // so the mapping is save
+                match map_page!(page, $size, $flags) {
+                    Ok(_) => Ok(page),
+                    Err(err) => Err(MemError::PageTableMap(err)),
+                }
+            },
+            Err(err) => Err(err),
+        }
+    }};
     ($page: expr, $size: ident, $flags: expr) => {{
         use x86_64::structures::paging::PhysFrame;
         use $crate::mem::frame_allocator::WasabiFrameAllocator;
@@ -180,6 +206,7 @@ fn print_debug_info(
         Some("RSDP"),
     );
 
+    // Safety: reading rip is inherently unsafe
     let rip = unsafe { cpu::read_rip() };
     recursive_page_table.print_page_flags_for_vaddr(VirtAddr::new(rip), Some("RDI"));
 
@@ -231,6 +258,7 @@ pub trait VirtAddrExt {
     unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T>;
 }
 
+#[allow(unsafe_op_in_unsafe_fn)]
 impl VirtAddrExt for VirtAddr {
     unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly> {
         trace!("new volatile at {self:p}");

@@ -18,6 +18,7 @@ use x86_64::{
 };
 
 /// the kernel [RecursivePageTable]
+// Safety: not used before initialized in [init]
 pub static KERNEL_PAGE_TABLE: UnwrapTicketLock<RecursivePageTable> =
     unsafe { UnwrapTicketLock::new_uninit() };
 
@@ -325,6 +326,8 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
                     let entry_table_vaddr =
                         (l4_index << 39) | (l3_index << 30) | (l2_index << 21) | (l1_index << 12);
 
+                    // safety: entry_table_vaddr is a valid pointer to the next level page table
+                    // in a recurcive page table
                     let entry_table: &PageTable =
                         unsafe { &*(entry_table_vaddr as *const PageTable) };
                     internal(

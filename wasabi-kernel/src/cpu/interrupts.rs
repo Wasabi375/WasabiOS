@@ -21,6 +21,7 @@ lazy_static! {
         unsafe {
             idt.double_fault
                 .set_handler_fn(double_fault_handler)
+                // safety: [DOUBLE_FAULT_IST_INDEX] is a valid stack index
                 .set_stack_index(DOUBLE_FAULT_IST_INDEX);
         }
         idt.page_fault.set_handler_fn(page_fault_handler);
@@ -34,8 +35,10 @@ pub fn init() {
     IDT.load();
 
     unsafe {
-        locals!().enable_interrupts();
         debug!("interrupts are enabled starting now");
+        // safety: this enables interrupts for the kernel after necessary
+        // setup is finished
+        locals!().enable_interrupts();
     }
 }
 

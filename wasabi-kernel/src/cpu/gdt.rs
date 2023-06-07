@@ -26,7 +26,9 @@ pub fn init() {
 
     debug!("Load TSS and set CS");
     unsafe {
+        // safety: `code` contains a valid cs segment
         CS::set_reg(GDT.1.code);
+        // safety: `tss` points to a valid TSS entry
         load_tss(GDT.1.tss);
 
         // Intel X86 Spec: 3.7.4.1
@@ -48,6 +50,7 @@ lazy_static! {
             /// double fault stack
             static mut STACK: [u8; DOUBLE_FAULT_STACK_SIZE] = [0; DOUBLE_FAULT_STACK_SIZE];
 
+            // safety: lazy_static initializer is guared by a spin lock
             let start = VirtAddr::from_ptr(unsafe { &STACK });
             let end = start + DOUBLE_FAULT_STACK_SIZE;
             end

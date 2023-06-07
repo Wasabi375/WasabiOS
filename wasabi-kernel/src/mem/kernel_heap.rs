@@ -27,6 +27,7 @@ use x86_64::{
 };
 
 /// the [KernelHeap]
+// Safety: initialized by [init] before it we use allocated types
 static KERNEL_HEAP: UnwrapTicketLock<KernelHeap> = unsafe { UnwrapTicketLock::new_uninit() };
 
 /// ZST for [GlobalAlloc] implementation
@@ -40,7 +41,11 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         trace!(target: "GlobalAlloc", "allocate {layout:?}");
         match KernelHeap::get().alloc(layout) {
-            Ok(mut mem) => mem.as_mut(),
+            Ok(mut mem) => unsafe {
+                // Safety: [KernelHeap::alloc] returns a valid pointer
+                // and we still have unique access to it
+                mem.as_mut()
+            },
             Err(err) => {
                 error!("Kernel Heap allocation failed for layout {layout:?}: {err:?}");
                 null_mut()
@@ -51,7 +56,8 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         trace!(target: "GlobalAlloc", "free {ptr:p} - {layout:?}");
         if let Some(non_null) = NonNull::new(ptr) {
-            match KernelHeap::get().free(non_null, layout) {
+            // Safety: see safety guarantees of [GlobalAlloc]
+            match unsafe { KernelHeap::get().free(non_null, layout) } {
                 Ok(_) => {}
                 Err(err) => error!("Failed to free {non_null:p} with layout {layout:?}: {err:?}"),
             }
@@ -81,6 +87,7 @@ pub fn init() {
                 .alloc()
                 .expect("Out of memory setting up kernel heap");
             unsafe {
+                // Safety: we are mapping new unused pages to new unused phys frames
                 match page_table.map_to(page, frame, flags, frame_allocator.deref_mut()) {
                     Ok(flusher) => flusher.flush(),
                     Err(e) => panic!("Failed to map page {page:?} to frame {frame:?}: {e:?}"),
@@ -122,6 +129,11 @@ trait Allocator {
 
     /// free a pointer with a given [Layout]. This can fail with [MemError],
     /// e.g. when the `ptr` was not allocated by this [Allocator]
+    ///
+    /// # Safety:
+    ///
+    /// the caller must ensure that the ptr and layout match
+    /// and that the ptr was allocated by this [Allocator]
     unsafe fn free(&self, ptr: NonNull<u8>, layout: Layout) -> Result<()>;
 }
 
@@ -132,6 +144,11 @@ trait MutAllocator {
 
     /// free a pointer with a given [Layout]. This can fail with [MemError],
     /// e.g. when the `ptr` was not allocated by this [Allocator]
+    ///
+    /// # Safety:
+    ///
+    /// the caller must ensure that the ptr and layout match
+    /// and that the ptr was allocated by this [MutAllocator]
     unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()>;
 }
 
@@ -141,7 +158,8 @@ impl<A: Allocator> MutAllocator for A {
     }
 
     unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
-        Allocator::free(self, ptr, layout)
+        // Safety: same as [MutAllocator::free]
+        unsafe { Allocator::free(self, ptr, layout) }
     }
 }
 
@@ -182,12 +200,16 @@ impl KernelHeap {
         unsafe {
             heap.allocator
                 .lock()
+                // safety: called only once and the range passed is valid memory
+                // not used for anything else
                 .init(pages.start_addr().as_mut_ptr(), pages.size() as usize);
         }
 
         let mut slabs: [MaybeUninit<_>; SLAB_ALLOCATOR_SIZES_BYTES.len()] =
             MaybeUninit::uninit_array();
         for (slab, size) in slabs.iter_mut().zip(SLAB_ALLOCATOR_SIZES_BYTES.iter()) {
+            // safety: our safety guarantees, that [KernelHeap::init] is called
+            // before anything else, and there we call `nwe_slab.init`.
             let new_slab = unsafe { SlabAllocator::new(*size) };
             slab.write(new_slab);
         }
@@ -232,11 +254,13 @@ impl MutAllocator for KernelHeap {
 
         for slab in &mut self.slab_allocators {
             if slab.size >= layout.size() {
-                return slab.free(ptr, layout);
+                // safety: same guarantee as ours
+                return unsafe { slab.free(ptr, layout) };
             }
         }
 
-        self.linked_heap.free(ptr, layout)
+        // safety: same guarantee as ours
+        unsafe { self.linked_heap.free(ptr, layout) }
     }
 }
 
@@ -246,7 +270,7 @@ impl Allocator for UnwrapTicketLock<KernelHeap> {
     }
 
     unsafe fn free(&self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
-        self.lock().free(ptr, layout)
+        unsafe { self.lock().free(ptr, layout) }
     }
 }
 
@@ -335,12 +359,14 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
     /// getter for the internal allocator
     #[inline]
     fn allocator(&self) -> &A {
+        // safety: guranteed by the `new`'s safety gurantees
         unsafe { self.allocator.assume_init() }
     }
 
     /// returns the first block of this [SlabAllocator]
     #[inline]
     fn first_block(&mut self) -> Option<&mut SlabBlock> {
+        // safety: we only store valid references in block
         unsafe { self.block.map(|mut b| b.as_mut()) }
     }
 
@@ -348,6 +374,7 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
     /// one if none exists
     fn first_block_or_push(&mut self) -> Result<&mut SlabBlock> {
         if let Some(mut block_ptr) = self.block {
+            // safety: we only store valid references in block
             unsafe { Ok(block_ptr.as_mut()) }
         } else {
             self.push_new_block()
@@ -359,11 +386,14 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
     #[inline]
     fn push_new_block(&mut self) -> Result<&mut SlabBlock> {
         let mut block_ptr = SlabBlock::new(self.size, self.allocator())?;
+        // safety: `SlabBlock:new` returns a valid reference and we have
+        // unique access, because we own the ptr and haven't shared it yet
         let block = unsafe { block_ptr.as_mut() };
 
         block.next = self.block;
 
         if let Some(mut first_ptr) = self.block {
+            // safety: we only store valid references in block
             let first = unsafe { first_ptr.as_mut() };
             first.prev = Some(block_ptr);
         }
@@ -396,6 +426,7 @@ impl SlabBlock {
         let free_start = (block_start + size_of::<SlabBlock>()).align_up(size as u64);
         let free_end = block_start + (SLAB_BLOCK_SIZE - 1);
 
+        // safety: we just allocated this memory so we can access it however we want
         let block = unsafe { &mut *(memory.as_ptr() as *mut SlabBlock) };
 
         block.next = None;
@@ -420,6 +451,8 @@ impl SlabBlock {
         if self.contains(addr) {
             Some(self)
         } else if let Some(mut next) = self.next {
+            // safety: we onyl store valid references and we have mut access,
+            // because we have mut access to self
             unsafe { next.as_mut().find_block_containing(addr) }
         } else {
             None
@@ -443,6 +476,8 @@ impl SlabBlock {
         if !self.is_full(size) {
             Some(self)
         } else if let Some(mut next) = self.next {
+            // safety: we onyl store valid references and we have mut access,
+            // because we have mut access to self
             unsafe { next.as_mut().find_block_with_space(size) }
         } else {
             None
@@ -464,6 +499,11 @@ impl SlabBlock {
 
         assert!(start.is_aligned(size as u64));
 
+        // safety:
+        // start + used ..=end is unused memory.
+        // We take the next size bytes from this region and return this as a new
+        // block of memory. We increment start in order to ensure that the
+        // prerequisite holds in the future
         unsafe { Ok(NonNull::new_unchecked(start.as_mut_ptr())) }
     }
 }
@@ -522,6 +562,8 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
             let slab_ptr = NonNull::new(block as *mut SlabBlock as *mut u8).unwrap();
 
             if let Some(mut prev_ptr) = block.prev {
+                // safety: we only store valid references and have mut access,
+                // because we have mut access to self
                 let prev = unsafe { prev_ptr.as_mut() };
                 prev.next = block.next;
             } else {
@@ -529,6 +571,8 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
                 next_first = Some(block.next.clone());
             }
             if let Some(mut next_ptr) = block.next {
+                // safety: we only store valid references and have mut access,
+                // because we have mut access to self
                 let next = unsafe { next_ptr.as_mut() };
                 next.prev = block.prev
             }
@@ -540,7 +584,10 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
             // only free at the end, so that we ensure a consistent
             // linked list state, even if the free fails
             let free_layout = SlabBlock::layout();
-            self.allocator().free(slab_ptr, free_layout)?;
+            unsafe {
+                // Safety: same guarantee as this function
+                self.allocator().free(slab_ptr, free_layout)?;
+            }
         }
 
         Ok(())
@@ -554,7 +601,8 @@ impl MutAllocator for LinkedHeap {
     }
 
     unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
-        self.deallocate(ptr, layout);
+        // safety: same gaurantee as this function
+        unsafe { self.deallocate(ptr, layout) };
         Ok(())
     }
 }
@@ -570,6 +618,6 @@ impl<A: MutAllocator> Allocator for LockedAllocator<A> {
     }
 
     unsafe fn free(&self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
-        self.allocator.lock().free(ptr, layout)
+        unsafe { self.allocator.lock().free(ptr, layout) }
     }
 }
