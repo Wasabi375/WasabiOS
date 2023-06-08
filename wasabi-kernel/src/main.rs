@@ -18,8 +18,8 @@
 
 pub mod core_local;
 pub mod cpu;
-pub mod debug_logger;
 pub mod framebuffer;
+pub mod logger;
 pub mod mem;
 pub mod panic;
 pub mod prelude;
@@ -63,7 +63,7 @@ fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
     if core_id.is_bsc() {
         unsafe {
             // Safety: bsp during `init`
-            debug_logger::init();
+            logger::init();
 
             // Safety: inherently unsafe and can crash, but if cpuid isn't supported
             // we will crash at some point in the future anyways, so we might as well

@@ -8,7 +8,7 @@ pub mod page_table;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::{boot_info, cpu, mem::page_table::KERNEL_PAGE_TABLE, prelude::LockCell};
+use crate::{boot_info, mem::page_table::KERNEL_PAGE_TABLE, prelude::LockCell};
 use bootloader_api::{
     info::{FrameBuffer, MemoryRegionKind},
     BootInfo,
@@ -18,7 +18,7 @@ use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use thiserror::Error;
 use volatile::{access::ReadOnly, Volatile};
 use x86_64::{
-    registers::control::Cr3,
+    registers::{control::Cr3, read_rip},
     structures::paging::{PageTable, RecursivePageTable, Translate},
     PhysAddr, VirtAddr,
 };
@@ -233,9 +233,8 @@ fn print_debug_info(
         Some("RSDP"),
     );
 
-    // Safety: reading rip is inherently unsafe
-    let rip = unsafe { cpu::read_rip() };
-    recursive_page_table.print_page_flags_for_vaddr(VirtAddr::new(rip), Some("RDI"));
+    let rip = read_rip();
+    recursive_page_table.print_page_flags_for_vaddr(rip, Some("RDI"));
 
     let memory_regions = &boot_info().memory_regions;
 
@@ -252,12 +251,7 @@ fn print_debug_info(
         recursive_page_table.translate_addr(fb_vaddr).unwrap(),
         "framebuffer",
     );
-    assert_phys_not_available(
-        recursive_page_table
-            .translate_addr(VirtAddr::new(rip))
-            .unwrap(),
-        "rip",
-    );
+    assert_phys_not_available(recursive_page_table.translate_addr(rip).unwrap(), "rip");
 }
 
 /// asserts that the given phys addr is not within the memory regions of the boot info

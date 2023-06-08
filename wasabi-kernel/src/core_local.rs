@@ -3,6 +3,9 @@
 //! This provides the [locals!] macro as well as [CoreLocals] struct
 //! which can be used to access per core data.
 
+#[allow(unused_imports)]
+use log::{debug, info, trace, warn};
+
 use crate::{
     cpu::{self, apic::Apic, cpuid},
     locals,
@@ -14,7 +17,6 @@ use core::{
     hint::spin_loop,
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
-use log::{debug, trace};
 use shared::{lockcell::InterruptState, types::CoreId};
 use x86_64::VirtAddr;
 

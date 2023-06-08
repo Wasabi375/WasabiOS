@@ -32,25 +32,6 @@ mod instructions {
         }
     }
 
-    /// reads the RIP register.
-    ///
-    /// # Safety:
-    ///
-    /// the caller must guarantee that it is save to access the register.
-    /// This should always be the case, but I still want this operation
-    /// to be marked as unsafe, because messing with the RIP is never a good idea.
-    /// Basically this should only be called to display additional debugging information.
-    #[inline]
-    pub unsafe fn read_rip() -> u64 {
-        let rdi: u64;
-        asm! {
-
-            "lea {0}, [rip]",
-            out(reg) rdi
-        }
-        rdi
-    }
-
     /// Disbales interrupts.
     ///
     /// When possibel `locals!().disbale_interrupts()` should be used instead.

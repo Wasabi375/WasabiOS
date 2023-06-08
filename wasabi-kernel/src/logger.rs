@@ -7,10 +7,10 @@ use uart_16550::SerialPort;
 use crate::{prelude::TicketLock, serial::SERIAL1, serial_println};
 
 /// number of module filers allowed for the logger
-const MAX_LEVEL_FILTERS: usize = 8;
+const MAX_LEVEL_FILTERS: usize = 100;
 
 /// number of module renames allowed for the logger
-const MAX_RENAME_MAPPINGS: usize = 8;
+const MAX_RENAME_MAPPINGS: usize = 100;
 
 /// the static logger used by the [log::log] macro
 pub static mut LOGGER: Option<
