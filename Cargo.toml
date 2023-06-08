@@ -4,10 +4,11 @@ version = "0.1.0"
 
 [features]
 no-color = [ "wasabi-kernel/no-color" ]
+bios-boot = ["bootloader/bios"]
 
 
 [build-dependencies]
-bootloader = { version = "0.11", path = "../bootloader" }
+bootloader = { version = "0.11", path = "../bootloader", default-features = false, features = ["uefi"]}
 wasabi-kernel = { path = "wasabi-kernel", artifact = "bin", target = "x86_64-unknown-none" }
 
 [dependencies]

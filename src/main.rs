@@ -21,7 +21,10 @@ fn main() {
 
     // read env variables that were set in build script
     let uefi_path = host_arch.resolve(env!("UEFI_PATH"));
+
+    #[cfg(feature = "bios-boot")]
     let bios_path = host_arch.resolve(env!("BIOS_PATH"));
+
     let kernel_path = env!("KERNEL_PATH");
     println!("Kernel elf at: {kernel_path}");
 
@@ -34,6 +37,7 @@ fn main() {
             .arg(host_arch.resolve(ovmf_prebuilt::ovmf_pure_efi()));
         cmd.arg("-drive").arg(concat("format=raw,file=", uefi_path));
     } else {
+        #[cfg(feature = "bios-boot")]
         cmd.arg("-drive").arg(concat("format=raw,file=", bios_path));
     }
     cmd.arg("-serial").arg("stdio");
