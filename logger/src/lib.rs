@@ -44,7 +44,10 @@
 
 #![no_std]
 
-use core::{fmt::Write, marker::PhantomData};
+use core::{
+    fmt::{self, Write},
+    marker::PhantomData,
+};
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use shared::lockcell::LockCell;
 use staticvec::{StaticString, StaticVec};
@@ -96,7 +99,10 @@ const fn default_colors() -> [Color; 6] {
     ]
 }
 
-impl<'a, W, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R> {
+impl<'a, W, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R>
+where
+    W: fmt::Write,
+{
     /// Initializes the global logger with a StaticLogger instance with
     /// default log level set to `Level::Trace`.
     ///
@@ -108,7 +114,7 @@ impl<'a, W, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, 
     ///
     /// [`init`]: #method.init
     #[must_use = "You must call init() to begin logging"]
-    pub const fn new(writer: &'a L) -> Self {
+    pub fn new(writer: &'a L) -> Self {
         StaticLogger {
             default_level: LevelFilter::Info,
             module_levels: StaticVec::new(),

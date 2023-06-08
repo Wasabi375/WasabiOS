@@ -7,13 +7,21 @@ use uart_16550::SerialPort;
 use crate::{prelude::TicketLock, serial::SERIAL1, serial_println};
 
 /// number of module filers allowed for the logger
-const MAX_LEVEL_FILTERS: usize = 126;
+const MAX_LEVEL_FILTERS: usize = 8;
 
 /// number of module renames allowed for the logger
-const MAX_RENAME_MAPPINGS: usize = 126;
+const MAX_RENAME_MAPPINGS: usize = 8;
 
 /// the static logger used by the [log::log] macro
-pub static mut LOGGER: Option<StaticLogger<'static, SerialPort, TicketLock<SerialPort>>> = None;
+pub static mut LOGGER: Option<
+    StaticLogger<
+        'static,
+        SerialPort,
+        TicketLock<SerialPort>,
+        MAX_LEVEL_FILTERS,
+        MAX_RENAME_MAPPINGS,
+    >,
+> = None;
 
 /// initializes the logger piping all [log::log] calls into the first serial port.
 ///
@@ -36,7 +44,7 @@ pub unsafe fn init() {
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
         .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
         .with_module_rename("wasabi_kernel::", "::")
-        // .with_module_rename("wasabi_kernel", "::") // FIXME this tripple faults????
+        .with_module_rename("wasabi_kernel", "::")
         // comment to move ; to separate line - easy uncomment of module log levels
             ;
 
