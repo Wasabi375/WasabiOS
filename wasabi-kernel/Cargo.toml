@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 no-color = ["colored/no-color"]
+no-unicode-log = []
 
 [dependencies]
 shared = { path = "../shared" }

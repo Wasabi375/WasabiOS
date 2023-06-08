@@ -24,6 +24,7 @@ pub mod mem;
 pub mod panic;
 pub mod prelude;
 pub mod serial;
+pub mod time;
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
@@ -31,6 +32,7 @@ use log::{debug, info, trace, warn};
 use crate::{
     core_local::core_boot,
     cpu::{apic, cpuid, gdt, interrupts},
+    time::Duration,
 };
 use bootloader_api::{config::Mapping, BootInfo};
 use core::ptr::null_mut;
