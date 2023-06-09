@@ -274,6 +274,7 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
                     write
                         .write_fmt(format_args!(" [{}{}]", new_name, rest))
                         .expect("Failed to write to serial port!");
+                    break;
                 }
             }
             if !target_renamed {
