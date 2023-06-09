@@ -65,7 +65,7 @@ macro_rules! int_fn_builder {
             #[macro_export]
             macro_rules! [<panic_ $int_type _with_error>] {
                 ($name:ident) => {
-                    extern "x86-interrupt" fn $name(st: InterruptStackFrame, err: u64) {
+                    extern "x86-interrupt" fn $name(st: InterruptStackFrame, err: u64) -> ! {
                         let _guard = crate::locals!().[<inc_ $int_type>]();
                         panic!("$name \nerr: {err:?}\n{st:#?}");
                     }

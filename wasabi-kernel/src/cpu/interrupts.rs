@@ -1,18 +1,16 @@
 //! kernel utilities/handlers for interrupts
 
-use interrupt_fn_builder::{exception_fn, exception_page_fault_fn, exception_with_error_fn};
-use log::{debug, info, warn};
+#[allow(unused_imports)]
+use log::{debug, error, info, warn};
+
+use crate::{cpu::gdt::DOUBLE_FAULT_IST_INDEX, locals};
+use interrupt_fn_builder::{exception_fn, exception_page_fault_fn, panic_exception_with_error};
+use lazy_static::lazy_static;
 use shared::sizes::KiB;
 use x86_64::{
     registers::control::Cr2,
     structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode},
 };
-
-use crate::{
-    cpu::{gdt::DOUBLE_FAULT_IST_INDEX, halt},
-    locals,
-};
-use lazy_static::lazy_static;
 
 lazy_static! {
     /// The interrupt descriptor table used by this kernel
@@ -54,15 +52,12 @@ exception_fn!(breakpoint_handler, stack_frame, {
 /// DF uses a separate stack, in case DF was caused by a stack overflow
 pub const DOUBLE_FAULT_STACK_SIZE: usize = KiB(4 * 5);
 
-exception_with_error_fn!(double_fault_handler, stack_frame, err, {
-    panic!("DOUBLE FAULT({err})\n{stack_frame:#?}")
-});
+panic_exception_with_error!(double_fault_handler);
 
 exception_page_fault_fn!(page_fault_handler, stack_frame, page_fault, {
-    warn!(
+    panic!(
         "PAGE FAULT:\nAccessed Address: {:p}\nError code: {page_fault:?}\n{stack_frame:#?}",
         Cr2::read()
     );
     // TODO
-    halt();
 });
