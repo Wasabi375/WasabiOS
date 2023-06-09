@@ -32,7 +32,6 @@ use log::{debug, info, trace, warn};
 use crate::{
     core_local::core_boot,
     cpu::{apic, cpuid, gdt, interrupts},
-    time::Duration,
 };
 use bootloader_api::{config::Mapping, BootInfo};
 use core::ptr::null_mut;
@@ -64,6 +63,8 @@ fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
 
     if core_id.is_bsc() {
         unsafe {
+            time::calibrate_tsc();
+
             // Safety: bsp during `init`
             logger::init();
 
@@ -96,6 +97,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if let Err(err) = init(boot_info) {
         panic!("Kernel init failed: {err:?}");
     }
+
+    let startup_time = time::time_since_startup().to_millis();
+    info!("tsc clock rate {}MHz", time::tsc_tickrate());
+    info!("kernel boot took {:?} - {}", startup_time, startup_time);
 
     // warn!("Causing fault");
     // let ptr = (0xdeadbeafu64 + 0x8000000000u64) as *mut u8;

@@ -2,12 +2,16 @@
 
 use core::{
     arch::x86_64::{_mm_lfence, _mm_mfence, _rdtsc},
-    fmt::Display,
+    fmt::{Display, Write},
+    sync::atomic::{AtomicU64, Ordering},
 };
+
+use bit_field::BitField;
+use x86_64::instructions::port::{Port, PortWriteOnly};
 
 /// read the time stamp counter
 ///
-/// The RDTSC instruction is not a serializing instruction. It does not
+/// The RDTSC instruction is not a  serializing instruction. It does not
 /// necessarily wait until all previous instructions have been executed before
 /// reading the counter. Similarly, subsequent instructions may begin execution
 /// before the read operation is performed.
@@ -29,7 +33,7 @@ pub fn read_tsc() -> u64 {
 /// This is the same as
 /// ```no_run
 /// _mm_lfence();
-/// _mm_mfence();
+// _mm_mfence();
 /// let tsc = _rdtsc();
 /// _mm_lfence();
 /// tsc
@@ -44,6 +48,115 @@ pub fn read_tsc_fenced() -> u64 {
         _mm_lfence();
         tsc
     }
+}
+
+/// the value of rdtsc at the start of the kernels execution.
+///
+/// More preciesely this is the value of rdtsc at the time [calibrate_tsc]
+/// was executed.
+static STARTUP_TSC_TIME: AtomicU64 = AtomicU64::new(0);
+
+/// the tsc tick rate in mhz
+static TSC_MHZ: AtomicU64 = AtomicU64::new(3_000);
+
+/// returns the value of rdtsc at startup
+#[inline]
+pub fn tsc_startup() -> u64 {
+    STARTUP_TSC_TIME.load(Ordering::Relaxed)
+}
+
+/// returns the number of tsc ticks since startup
+#[inline]
+pub fn tsc_ticks_since_startup() -> u64 {
+    read_tsc() - tsc_startup()
+}
+
+/// returns the time since startup
+#[inline]
+pub fn time_since_startup() -> Duration {
+    Duration::new_micros((tsc_ticks_since_startup() as f64 / tsc_tickrate() as f64) as u64)
+}
+
+/// returns the tsc tick rate in MHz
+#[inline]
+pub fn tsc_tickrate() -> u64 {
+    TSC_MHZ.load(Ordering::Relaxed)
+}
+
+/// calculates the time between 2 time stamps
+#[inline]
+pub fn time_between_tsc(start: u64, end: u64) -> Duration {
+    Duration::new_micros(((end - start) as f64 / tsc_tickrate() as f64) as u64)
+}
+
+/// calculates the time betwee a timestamp and now
+///
+/// this assumes that `start` is a tsc before now. To calculate a duration
+/// to a future time stamp use `time_between_tsc(read_tsc(), time_stamp)`
+#[inline]
+pub fn time_since_tsc(start: u64) -> Duration {
+    Duration::new_micros(((read_tsc() - start) as f64 / tsc_tickrate() as f64) as u64)
+}
+
+/// using the pit, runs a "calibration tick" (One PIT channel 1 cycle).
+///
+/// This returns the time in seconds of the calibration tick.
+///
+/// This can be used to calibrate other timers.
+/// ```no_run
+/// # fn other_timer() -> u64 { todo!() }
+/// let start = other_timer();
+/// calibrate_tick();
+/// let end = other_timer();
+/// let rate_mhz = ((end - start) as f64) / elapsed_seconds / 1_000_000.0;
+/// ```
+///
+/// TODO on systems with a known tsc tick rate (see cpuid 0x15) we can use that instead
+///     as it is probably more acurate and definitely not less.
+///     Not sure that I care, because my PC does not have that set
+#[inline(always)]
+pub fn calibration_tick() -> f64 {
+    let mut pit_ctrl = PortWriteOnly::<u8>::new(0x43);
+    let mut pit_data = Port::<u8>::new(0x40);
+
+    unsafe {
+        // https://wiki.osdev.org/Pit
+        // set pit channel 1 to mode 0
+        pit_ctrl.write(0b00110000);
+        // set reload count to 65535
+        // the write to the most significant byte starts the countdown.
+        pit_data.write(0xff); // least significant
+        pit_data.write(0xff); // most significant
+
+        loop {
+            // issue readback command so we can read the timer
+            pit_ctrl.write(0b11100010);
+
+            // break if the pit output pin is set
+            if pit_data.read().get_bit(7) {
+                break;
+            }
+        }
+    }
+    // compute the elapsed time in seconds. This is the number of ticks / (ticks / s)
+    65535f64 / 1_193_182f64
+}
+
+/// calibrate the tsc tick rate and store it. It can be accessed by [tsc_tickrate]
+pub fn calibrate_tsc() {
+    STARTUP_TSC_TIME.store(read_tsc(), Ordering::Relaxed);
+
+    let start = read_tsc_fenced();
+    let elapsed_seconds = calibration_tick();
+    let end = read_tsc_fenced();
+
+    // calculate the tsc rate in mhz
+    let rate_mhz = ((end - start) as f64) / elapsed_seconds / 1_000_000.0;
+
+    // round to the nearest 100 Mhz, pit isn't precise enough for anything else
+    let rate_mhz = (((rate_mhz / 100.0) + 0.5) as u64) * 100;
+
+    TSC_MHZ.store(rate_mhz, Ordering::Relaxed);
 }
 
 /// an enum represention a timed duration
@@ -117,10 +230,13 @@ impl Duration {
     #[inline]
     const fn multiplier_name(&self) -> &'static str {
         match self {
-            #[cfg(not(feature = "no-unicode-log"))]
-            Duration::Micros(_) => "\u{03bc}s", // μs
-            #[cfg(feature = "no-unicode-log")]
-            Duration::Micros(_) => "mys",
+            Duration::Micros(_) => {
+                if cfg!(feature = "no-unicode-log") {
+                    "mys"
+                } else {
+                    "\u{03bc}s" // μs
+                }
+            }
             Duration::Millis(_) => "ms",
             Duration::Seconds(_) => "s",
             Duration::Minutes(_) => "m",
@@ -163,32 +279,32 @@ impl Duration {
 
     /// converts duration into micro seconds
     #[inline]
-    pub const fn to_micros(&self) -> u64 {
-        self.as_u64() * self.multiplier() / Duration::MICROS_MUL
+    pub const fn to_micros(&self) -> Duration {
+        Duration::new_micros(self.as_u64() * self.multiplier() / Duration::MICROS_MUL)
     }
 
     /// converts duration into milli seconds
     #[inline]
-    pub const fn to_millis(&self) -> u64 {
-        self.as_u64() * self.multiplier() / Duration::MILLIS_MUL
+    pub const fn to_millis(&self) -> Duration {
+        Duration::new_millis(self.as_u64() * self.multiplier() / Duration::MILLIS_MUL)
     }
 
     /// converts duration into seconds
     #[inline]
-    pub const fn to_seconds(&self) -> u64 {
-        self.as_u64() * self.multiplier() / Duration::SECONDS_MUL
+    pub const fn to_seconds(&self) -> Duration {
+        Duration::new_seconds(self.as_u64() * self.multiplier() / Duration::SECONDS_MUL)
     }
 
     /// converts duration into minutes.
     #[inline]
-    pub const fn to_minutes(&self) -> u64 {
-        self.as_u64() * self.multiplier() / Duration::MINUTES_MUL
+    pub const fn to_minutes(&self) -> Duration {
+        Duration::new_minutes(self.as_u64() * self.multiplier() / Duration::MINUTES_MUL)
     }
 
     /// converts duration into hours
     #[inline]
-    pub const fn to_hours(&self) -> u64 {
-        self.as_u64() * self.multiplier() / Duration::HOURS_MUL
+    pub const fn to_hours(&self) -> Duration {
+        Duration::new_hours(self.as_u64() * self.multiplier() / Duration::HOURS_MUL)
     }
 }
 
@@ -240,11 +356,14 @@ impl Display for Duration {
 
         let mut write_rest = false;
 
+        let mut unit_type = None;
+
         if scaled >= Duration::HOURS_MUL {
             let hours = scaled / Duration::HOURS_MUL;
             f.write_fmt(format_args!("{:0>2}:", hours))?;
             scaled -= hours * Duration::HOURS_MUL;
             write_rest = true;
+            unit_type = Some(Duration::new_hours(0).multiplier_name());
         }
 
         if scaled >= Duration::MINUTES_MUL || write_rest {
@@ -252,6 +371,7 @@ impl Display for Duration {
             f.write_fmt(format_args!("{:0>2}:", minutes))?;
             scaled -= minutes * Duration::MINUTES_MUL;
             write_rest = true;
+            unit_type = unit_type.or(Some(Duration::new_minutes(0).multiplier_name()));
         }
 
         if scaled >= Duration::SECONDS_MUL || write_rest {
@@ -259,19 +379,30 @@ impl Display for Duration {
             f.write_fmt(format_args!("{:0>2}.", seconds))?;
             scaled -= seconds * Duration::SECONDS_MUL;
             write_rest = true;
+            unit_type = unit_type.or(Some(Duration::new_seconds(0).multiplier_name()));
         }
 
-        if scaled > 0 && (scaled >= Duration::MILLIS_MUL || write_rest) {
+        if (scaled > 0 && scaled >= Duration::MILLIS_MUL) || write_rest {
             let millis = scaled / Duration::MILLIS_MUL;
-            f.write_fmt(format_args!("{:0>3}_", millis))?;
+            f.write_fmt(format_args!("{:0>3}", millis))?;
             scaled -= millis * Duration::MILLIS_MUL;
+
+            unit_type = unit_type.or(Some(Duration::new_millis(0).multiplier_name()));
+
+            if scaled > 0 {
+                f.write_char('_')?;
+            }
         }
 
         if scaled > 0 {
             let micros = scaled / Duration::MICROS_MUL;
-            f.write_fmt(format_args!("{:0>3}_", micros))?;
+            f.write_fmt(format_args!("{:0>3}", micros))?;
             scaled -= micros * Duration::MICROS_MUL;
+
+            unit_type = unit_type.or(Some(Duration::new_micros(0).multiplier_name()));
         }
+
+        f.write_str(unit_type.expect("There must be a unit type, because value is not 0"))?;
 
         assert!(scaled == 0);
 
