@@ -237,59 +237,61 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
     }
 
     fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            let mut write = self.writer.lock();
+        if !self.enabled(record.metadata()) {
+            return;
+        }
 
-            let level = record.level();
-            let write_result = if cfg!(feature = "color") {
-                let color = self.level_colors[level as usize];
-                let mut level_str: StaticString<6> = StaticString::new();
-                write!(level_str, "{:<5}", level.as_str())
-                    .expect("StaticString of size 6 should be enough for the level");
-                let level: ColoredString<50> = level_str
-                    .as_str()
-                    .color(color)
-                    .expect("StaticString of size 50 should be enough for the level + color");
+        let mut write = self.writer.lock();
 
-                write.write_fmt(format_args!("{}", level))
-            } else {
-                write.write_fmt(format_args!("{:<5}", level))
-            };
-            if write_result.is_err() {
-                drop(write);
-                panic!("Failed to write to serial port!");
-            }
+        let level = record.level();
+        let write_result = if cfg!(feature = "color") {
+            let color = self.level_colors[level as usize];
+            let mut level_str: StaticString<6> = StaticString::new();
+            write!(level_str, "{:<5}", level.as_str())
+                .expect("StaticString of size 6 should be enough for the level");
+            let level: ColoredString<50> = level_str
+                .as_str()
+                .color(color)
+                .expect("StaticString of size 50 should be enough for the level + color");
 
-            let target = if !record.target().is_empty() {
-                record.target()
-            } else {
-                record.module_path().unwrap_or_default()
-            };
+            write.write_fmt(format_args!("{}", level))
+        } else {
+            write.write_fmt(format_args!("{:<5}", level))
+        };
+        if write_result.is_err() {
+            drop(write);
+            panic!("Failed to write to serial port!");
+        }
 
-            let mut target_renamed = false;
-            for (old_name, new_name) in &self.module_rename_mapping {
-                if target.starts_with(old_name) {
-                    target_renamed = true;
-                    let rest = &target[old_name.len()..];
-                    write
-                        .write_fmt(format_args!(" [{}{}]", new_name, rest))
-                        .expect("Failed to write to serial port!");
-                    break;
-                }
-            }
-            if !target_renamed {
+        let target = if !record.target().is_empty() {
+            record.target()
+        } else {
+            record.module_path().unwrap_or_default()
+        };
+
+        let mut target_renamed = false;
+        for (old_name, new_name) in &self.module_rename_mapping {
+            if target.starts_with(old_name) {
+                target_renamed = true;
+                let rest = &target[old_name.len()..];
                 write
-                    .write_fmt(format_args!(" [{target}]"))
+                    .write_fmt(format_args!(" [{}{}]", new_name, rest))
                     .expect("Failed to write to serial port!");
+                break;
             }
+        }
+        if !target_renamed {
+            write
+                .write_fmt(format_args!(" [{target}]"))
+                .expect("Failed to write to serial port!");
+        }
 
-            if write
-                .write_fmt(format_args!(" {}\n", record.args()))
-                .is_err()
-            {
-                drop(write);
-                panic!("Failed to write to serial port!");
-            }
+        if write
+            .write_fmt(format_args!(" {}\n", record.args()))
+            .is_err()
+        {
+            drop(write);
+            panic!("Failed to write to serial port!");
         }
     }
 

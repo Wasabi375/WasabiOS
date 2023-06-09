@@ -57,6 +57,12 @@ pub trait LockCellInternal<T> {
     ///
     /// the caller ensures that there is no active guard
     unsafe fn force_unlock(&self);
+
+    /// returns `true` if the LockCell is currently unlocked.
+    ///
+    /// However the caller can't relly on this fact, since some other core/interrupt etc
+    /// could take the lock during or right after this call finishes.
+    fn is_unlocked(&self) -> bool;
 }
 
 /// A guard structure that is used to guard a lock.
@@ -226,8 +232,14 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
         self.owner.store(!0, Ordering::Release);
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
         if self.preemtable {
+            // Safety: this will restore the interrupt state from when we called
+            // enter_lock, so this is safe
             I::exit_lock();
         }
+    }
+
+    fn is_unlocked(&self) -> bool {
+        self.owner.load(Ordering::Acquire) == !0
     }
 }
 
@@ -353,6 +365,10 @@ impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T, L> {
     unsafe fn force_unlock(&self) {
         self.lockcell.force_unlock();
     }
+
+    fn is_unlocked(&self) -> bool {
+        self.lockcell.is_unlocked()
+    }
 }
 
 impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for UnwrapLock<T, L> {
@@ -370,6 +386,10 @@ impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for Unwrap
 
     unsafe fn force_unlock(&self) {
         self.lockcell.force_unlock();
+    }
+
+    fn is_unlocked(&self) -> bool {
+        self.lockcell.is_unlocked()
     }
 }
 
