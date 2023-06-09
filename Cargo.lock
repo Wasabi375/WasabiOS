@@ -437,6 +437,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "interrupt-fn-builder"
+version = "0.1.0"
+dependencies = [
+ "paste",
+]
+
+[[package]]
 name = "io-lifetimes"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -887,6 +894,7 @@ dependencies = [
  "bit_field",
  "bootloader_api",
  "colored",
+ "interrupt-fn-builder",
  "lazy_static",
  "linked_list_allocator",
  "log",

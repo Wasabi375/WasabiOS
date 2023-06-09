@@ -27,7 +27,8 @@ members = [
     "shared",
     "logger",
     "staticvec",
-    "colored"
+    "colored",
+    "interrupt-fn-builder",
 ]
 
 [workspace.dependencies]

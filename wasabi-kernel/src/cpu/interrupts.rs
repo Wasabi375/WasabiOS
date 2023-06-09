@@ -1,5 +1,6 @@
 //! kernel utilities/handlers for interrupts
 
+use interrupt_fn_builder::{exception_fn, exception_page_fault_fn, exception_with_error_fn};
 use log::{debug, info, warn};
 use shared::sizes::KiB;
 use x86_64::{
@@ -29,7 +30,7 @@ lazy_static! {
     };
 }
 
-/// setup idt
+/// setup idt and enable interrupts
 pub fn init() {
     info!("Load IDT");
     IDT.load();
@@ -39,76 +40,10 @@ pub fn init() {
         // safety: this enables interrupts for the kernel after necessary
         // setup is finished
         locals!().enable_interrupts();
+
+        assert!(locals!().interrupts_enabled());
     }
 }
-
-use paste::paste;
-
-#[doc(hidden)]
-macro_rules! int_fn_builder {
-    ($int_type:ident) => {
-        paste! {
-            /// creates a handler function for an $int_type
-            #[allow(unused_macros)]
-            macro_rules! [<$int_type _fn>]  {
-                ($name:ident, $ist_name:ident, $block:tt) => {
-                    extern "x86-interrupt" fn $name($ist_name: InterruptStackFrame) {
-                        let _guard = $crate::locals!().[<inc_ $int_type>]();
-                        $block
-                    }
-                };
-            }
-
-            /// creats a handler function for an $int_type which will panic
-            #[allow(unused_macros)]
-            macro_rules! [<panic_ $int_type>]  {
-                ($name:ident, $ist_name:ident) => {
-                    extern "x86-interrupt" fn $name($ist_name: InterruptStackFrame) {
-                        let _guard = $crate::locals!().[<inc_ $int_type>]();
-                        panic!("$name \n{st:#?}");
-                    }
-                };
-            }
-
-
-            /// creates a handler function for an $int_type
-            #[allow(unused_macros)]
-            macro_rules! [<$int_type _with_error_fn>] {
-                ($name:ident, $ist_name:ident, $err_name:ident, $block:tt) => {
-                    extern "x86-interrupt" fn $name($ist_name: InterruptStackFrame, $err_name: u64) -> !  {
-                        let _guard = $crate::locals!().[<inc_ $int_type>]();
-                        $block
-                    }
-                };
-            }
-
-            /// creats a handler function for an $int_type which will panic
-            #[allow(unused_macros)]
-            macro_rules! [<panic_ $int_type _with_error>] {
-                ($name:ident) => {
-                    extern "x86-interrupt" fn $name(st: InterruptStackFrame, err: u64) {
-                        let _guard = $crate::locals!().[<inc_ $int_type>]();
-                        panic!("$name \nerr: {err:?}\n{st:#?}");
-                    }
-                };
-            }
-
-            /// creates a page fault $int_type handler
-            #[allow(unused_macros)]
-            macro_rules! [<$int_type _page_fault_fn>] {
-                ($name:ident, $ist_name:ident, $err_name:ident, $block:tt) => {
-                    extern "x86-interrupt" fn $name($ist_name: InterruptStackFrame, $err_name: PageFaultErrorCode) {
-                        let _guard = $crate::locals!().[<inc_ $int_type>]();
-                        $block
-                    }
-                };
-            }
-        }
-    };
-}
-
-int_fn_builder!(interrupt);
-int_fn_builder!(exception);
 
 exception_fn!(breakpoint_handler, stack_frame, {
     warn!("breakpoint hit at\n{stack_frame:#?}");
