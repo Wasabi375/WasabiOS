@@ -180,17 +180,6 @@ impl CoreLocals {
         }
     }
 
-    /// returns `true` if interrupts are currently enabled
-    ///
-    /// this can break if [`cpu::disable_interrups`] is used instead of
-    /// the core local [`CoreLocals::disable_interrupts`].
-    ///
-    /// This function uses a relaxed load, and should therefor only be used
-    /// for diagnostics.
-    pub fn interrupts_enabled(&self) -> bool {
-        self.interrupts_disable_count.load(Ordering::Relaxed) == 0
-    }
-
     /// Disable interrupts and increment [Self::interrupt_count]
     ///
     /// # Safety:
@@ -202,6 +191,17 @@ impl CoreLocals {
             // Safety: see function safety definition
             cpu::disable_interrupts();
         }
+    }
+
+    /// returns `true` if interrupts are currently enabled
+    ///
+    /// this can break if [`cpu::disable_interrupts`] is used instead of
+    /// the core local [`CoreLocals::disable_interrupts`].
+    ///
+    /// This function uses a relaxed load, and should therefor only be used
+    /// for diagnostics.
+    pub fn interrupts_enabled(&self) -> bool {
+        self.interrupts_disable_count.load(Ordering::Relaxed) == 0
     }
 }
 
