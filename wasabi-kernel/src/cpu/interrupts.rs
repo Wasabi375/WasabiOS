@@ -66,6 +66,8 @@ pub enum InterruptRegistrationError {
     InterruptVectorInUse(u8),
     #[error("Interrupt vector({0}) was never registered")]
     InterruptVectorNotRegistered(u8),
+    #[error("No Interrupt vector registered")]
+    NoRegisteredVector,
 }
 
 /// registers a new `handler` for the interrupt `vector`.

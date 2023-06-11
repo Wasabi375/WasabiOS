@@ -43,7 +43,8 @@ fn main() {
     cmd.arg("-serial").arg("stdio");
 
     if host_arch.is_windows() {
-        // cmd.arg("-accel").arg("whpx");
+        cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
+        cmd.arg("-cpu").arg("max,vmx=off");
     } else {
         cmd.arg("-enable-kvm");
     }

@@ -28,14 +28,18 @@ pub mod time;
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
+use shared::lockcell::LockCell;
+use x86_64::structures::idt::InterruptStackFrame;
 
 use crate::{
     core_local::core_boot,
-    cpu::{apic, cpuid, gdt, interrupts},
+    cpu::{
+        apic::{self, TimerConfig},
+        cpuid, gdt, interrupts,
+    },
 };
 use bootloader_api::{config::Mapping, BootInfo};
 use core::ptr::null_mut;
-use mem::MemError;
 
 extern crate alloc;
 
@@ -50,7 +54,7 @@ pub fn boot_info() -> &'static mut BootInfo {
 }
 
 /// initializes the kernel.
-fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
+fn init(boot_info: &'static mut BootInfo) {
     // Safety: TODO: boot info handling not really save, but it's fine for now
     // we are still single core and don't really care
     unsafe {
@@ -87,20 +91,37 @@ fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
     gdt::init();
     interrupts::init();
 
-    apic::init()?;
+    apic::init().unwrap();
 
+    assert!(locals!().interrupts_enabled());
+}
+
+fn timer_int_handler(_vec: u8, _isf: InterruptStackFrame) -> Result<(), ()> {
+    info!("hi");
     Ok(())
 }
 
 /// the main entry point for the kernel. Called by the bootloader.
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    if let Err(err) = init(boot_info) {
-        panic!("Kernel init failed: {err:?}");
-    }
+    init(boot_info);
 
     let startup_time = time::time_since_startup().to_millis();
     info!("tsc clock rate {}MHz", time::tsc_tickrate());
     info!("kernel boot took {:?} - {}", startup_time, startup_time);
+
+    let mut apic_guard = locals!().apic.lock();
+    let apic = apic_guard.as_mut().unwrap();
+    apic.timer().calibrate();
+    info!("apic timer: {:#?}", apic.timer());
+
+    apic.timer()
+        .register_interrupt_handler(55, timer_int_handler)
+        .unwrap();
+    let apic_rate = apic.timer().rate_mhz() as u32;
+    apic.timer().start(apic::TimerMode::Periodic(TimerConfig {
+        divider: apic::TimerDivider::DivBy2,
+        duration: apic_rate * 1_000_000 / 2,
+    }));
 
     // warn!("Causing fault");
     // let ptr = (0xdeadbeafu64 + 0x8000000000u64) as *mut u8;

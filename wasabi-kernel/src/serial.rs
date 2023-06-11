@@ -14,7 +14,7 @@ lazy_static! {
         // Safety: COM1_IO_PORT is a valid Serial port
         let mut port = unsafe { SerialPort::new(COM1_IO_PORT) };
         port.init();
-        TicketLock::new(port)
+        TicketLock::new_preemtable(port)
     };
 }
 

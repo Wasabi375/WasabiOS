@@ -306,6 +306,13 @@ impl Duration {
     pub const fn to_hours(&self) -> Duration {
         Duration::new_hours(self.as_u64() * self.multiplier() / Duration::HOURS_MUL)
     }
+
+    /// converts duration into seconds, returning a [f64].
+    /// Unlike the [Duration::to_seconds] this will keep fractional seconds
+    #[inline]
+    pub fn as_seconds(&self) -> f64 {
+        ((self.as_u64() as f64) * self.multiplier() as f64) / (Duration::SECONDS_MUL as f64)
+    }
 }
 
 impl PartialEq for Duration {

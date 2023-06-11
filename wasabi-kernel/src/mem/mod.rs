@@ -13,10 +13,16 @@ use bootloader_api::{
     info::{FrameBuffer, MemoryRegionKind},
     BootInfo,
 };
-use core::ptr::NonNull;
+use core::{
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+};
 use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use thiserror::Error;
-use volatile::{access::ReadOnly, Volatile};
+use volatile::{
+    access::{ReadOnly, Readable, Writable},
+    Volatile,
+};
 use x86_64::{
     registers::{control::Cr3, read_rip},
     structures::paging::{PageTable, RecursivePageTable, Translate},
@@ -116,6 +122,7 @@ pub unsafe fn init() {
 /// map_page!(page, Size4KiB, PageTableFlags::WRITABLE);
 /// map_page!(page, Size4KiB, PageTableFlags::WRITABLE, phys_frame);
 /// map_page!(page, Size4KiB, PageTableFlags::WRITABLE, phys_frame, frame_allocator);
+/// map_page!(Size4KiB, PageTableFlags::WRITABLE, phys_frame);
 /// # }
 /// ```
 #[macro_export]
@@ -173,12 +180,14 @@ macro_rules! map_page {
             .map(|frame| map_page!($page, $size, $flags, frame, frame_alloc))
             .flatten()
     }};
+
     ($page: expr, $size: ident, $flags: expr, $frame: expr) => {{
         use $crate::mem::frame_allocator::WasabiFrameAllocator;
         let frame_alloc: &mut WasabiFrameAllocator<$size> =
-            &mut WasabiFrameAllocator::get_for_kernel().lock();
+            &mut WasabiFrameAllocator::<$size>::get_for_kernel().lock();
         map_page!($page, $size, $flags, $frame, frame_alloc)
     }};
+
     ($page: expr, $size: ident, $flags: expr, $frame: expr, $frame_alloc: expr) => {{
         use x86_64::structures::paging::{mapper::RecursivePageTable, Page, PhysFrame};
         use $crate::mem::page_table::{PageTableMapError, KERNEL_PAGE_TABLE};
@@ -218,6 +227,35 @@ impl VirtAddrExt for VirtAddr {
     unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T> {
         let r: &mut T = &mut *self.as_mut_ptr();
         Volatile::new(r)
+    }
+}
+
+pub trait VolatileExt<R, T, A>
+where
+    R: Deref<Target = T>,
+    T: Copy,
+{
+    fn update<F>(&mut self, update: F)
+    where
+        A: Writable + Readable,
+        R: DerefMut,
+        F: FnOnce(T) -> T;
+}
+
+impl<R, T, A> VolatileExt<R, T, A> for Volatile<R, A>
+where
+    R: Deref<Target = T>,
+    T: Copy,
+{
+    fn update<F>(&mut self, update: F)
+    where
+        A: Writable + Readable,
+        R: DerefMut,
+        F: FnOnce(T) -> T,
+    {
+        let value = self.read();
+        let updated = update(value);
+        self.write(updated);
     }
 }
 
