@@ -220,6 +220,61 @@ macro_rules! sortedstaticvec {
   };};
 }
 
+/// Creates a [StaticString] using interpolation of runtime expression.
+///
+/// The first argument `format_static!` receives is a format string. This must be a string
+/// literal. The power of the formatting string is in the `{}`s contained.
+///
+/// Additional parameters passed to `format_static!` replace the `{}`s within the
+/// formatting string in the order given unless named or positional parameters
+/// are used; see [`core::fmt`] for more information.
+///
+/// A common use for `format_static!` is concatenation and interpolation of strings.
+/// The same convention is used with `print!` and [`write!`] macros,
+/// depending on the intended destination of the string.
+///
+/// To convert a single value to a string, use the [`from_str`] method. This
+/// will use the [`Display`] formatting trait.
+///
+/// [`core::fmt`]: https://doc.rust-lang.org/core/fmt/index.html
+/// [`write!`]: core::write
+/// [StaticString]: crate::string::StaticString
+/// [`from_str`]: crate::string::StaticString::from_str
+/// [`Display`]: core::fmt::Display
+///
+/// # Panics
+///
+/// `format!` panics if a formatting trait implementation returns an error.
+/// This indicates an incorrect implementation
+/// since `fmt::Write for String` never returns an error itself.
+///
+/// # Examples
+///
+/// ```
+/// format_static!("test");
+/// format_static!("hello {}", "world!");
+/// format_static!("x = {}, y = {y}", 10, y = 30);
+/// let (x, y) = (1, 2);
+/// format_static!("{x} + {y} = 3");
+/// ```
+#[macro_export]
+macro_rules! format_static {
+    ($len:literal, $($arg:tt)*) => {{
+        use core::fmt::Arguments;
+        use core::fmt::Write;
+        use $crate::StaticString;
+
+        fn format_inner(args: Arguments<'_>) -> StaticString<$len> {
+            let mut string = StaticString::new();
+            string.write_fmt(args).unwrap();
+            string
+        }
+
+        let res = format_inner(format_args!($($arg)*));
+        res
+    }};
+}
+
 macro_rules! impl_extend_ex {
     ($var_a:tt, $var_b:tt) => {
         /// Appends all elements, if any, from `iter` to the StaticVec. If `iter` has a size greater
