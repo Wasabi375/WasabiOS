@@ -171,7 +171,7 @@ impl CoreLocals {
         // may attempt to re-enable interrupts. Thus, we never allow enabling
         // interrupts from an interrupt handler. This means interrupts will
         // correctly get re-enabled in this case when the IRET loads the old
-        // interrupt flag.
+        // interrupt flag as part of the EFLAGS register.
         if old_disable_count == 1 && !self.in_interrupt() {
             // Safety: Not currently in an interrupt and outstanding interrupt count
             // is 0
@@ -203,6 +203,11 @@ impl CoreLocals {
     /// for diagnostics.
     pub fn interrupts_enabled(&self) -> bool {
         self.interrupts_disable_count.load(Ordering::Relaxed) == 0
+    }
+
+    /// returns `true` if this core is used as the bootstrap processor
+    pub fn is_bsp(&self) -> bool {
+        self.core_id.is_bsp()
     }
 }
 

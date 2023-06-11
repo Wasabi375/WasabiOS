@@ -9,8 +9,10 @@ pub use instructions::*;
 
 #[allow(unsafe_op_in_unsafe_fn)]
 mod instructions {
-    use core::arch::asm;
-    use x86_64::{instructions, registers::model_specific::Msr};
+    use x86_64::{
+        instructions::{self, interrupts},
+        registers::model_specific::Msr,
+    };
 
     /// MSR for active FS base
     static mut IA32_FS_BASE: Msr = Msr::new(0xc0000100);
@@ -34,7 +36,7 @@ mod instructions {
 
     /// Disbales interrupts.
     ///
-    /// When possibel `locals!().disbale_interrupts()` should be used instead.
+    /// When possible `locals!().disbale_interrupts()` should be used instead.
     ///
     /// ## See:
     /// [crate::core_local::CoreLocals]  
@@ -43,17 +45,21 @@ mod instructions {
     /// # Safety:
     ///
     /// caller must ensure that disbaled interrupts don't violate any safety guarantees
+    #[inline(always)]
     pub unsafe fn disable_interrupts() {
-        asm! {
-            "cli"
-        }
+        interrupts::disable();
     }
 
     /// # Safety: caller must ensure that interrupts don't violate any safety guarantees
+    ///
+    /// When possible `locals!().disbale_interrupts()` should be used instead.
+    ///
+    /// ## See:
+    /// [crate::core_local::CoreLocals]  
+    /// [crate::locals]
+    #[inline(always)]
     pub unsafe fn enable_interrupts() {
-        asm! {
-            "sti"
-        }
+        interrupts::enable();
     }
 
     /// Get the GS base

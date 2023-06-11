@@ -19,9 +19,9 @@ pub mod types {
     pub struct CoreId(pub u8);
 
     impl CoreId {
-        /// Whether this core is the bootstrap core used for initialization of
+        /// Whether this core is used as the bootstrap processor used for initialization of
         /// global systems
-        pub fn is_bsc(&self) -> bool {
+        pub fn is_bsp(&self) -> bool {
             self.0 == 0
         }
     }

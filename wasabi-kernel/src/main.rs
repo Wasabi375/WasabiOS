@@ -61,7 +61,7 @@ fn init(boot_info: &'static mut BootInfo) -> Result<(), MemError> {
     // `init` is only called once per core and `core_boot`
     let core_id = unsafe { core_boot() };
 
-    if core_id.is_bsc() {
+    if core_id.is_bsp() {
         unsafe {
             time::calibrate_tsc();
 
