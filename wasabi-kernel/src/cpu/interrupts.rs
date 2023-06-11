@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, warn};
 
+use super::apic::Apic;
 use crate::{cpu::gdt::DOUBLE_FAULT_IST_INDEX, locals, prelude::ReadWriteCell};
 use interrupt_fn_builder::exception_fn;
 use lazy_static::lazy_static;
@@ -147,7 +148,14 @@ fn interrupt_handler(interrupt_vector: u8, int_stack_frame: InterruptStackFrame)
 
     if let Some(handler) = handler {
         match handler(interrupt_vector, int_stack_frame) {
-            Ok(_) => {}
+            Ok(_) => unsafe {
+                // TODO only eoi on fixed delivery mode.
+                // if the delivery mode is  NMI, SMI, INIT, ExtINT, the start-up, or INIT-Deassert
+                // we shouldn't eoi. Not sure if we ever handle those types of interrupts
+
+                // Safety: we sucessfully handled an interrupt, so we can eoi
+                Apic::eoi();
+            },
             Err(err) => {
                 panic!("interrupt handler for {interrupt_vector} failed with {err:?}");
             }
