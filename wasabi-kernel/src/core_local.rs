@@ -106,6 +106,7 @@ pub struct CoreLocals {
 
     /// A lock holding the local apic. This can be [None] if the apic has not been
     /// initialized.
+    // TODO change to UnwrapLock
     pub apic: TicketLock<Option<Apic>>,
 }
 
