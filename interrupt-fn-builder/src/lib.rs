@@ -30,8 +30,8 @@ macro_rules! int_fn_builder {
             /// creates a handler function for an $int_type
             #[macro_export]
             macro_rules! [<$int_type _fn>]  {
-                ($name:ident, $ist_name:ident, $block:tt) => {
-                    extern "x86-interrupt" fn $name($ist_name: InterruptStackFrame) {
+                ($pub:vis $name:ident, $ist_name:ident, $block:tt) => {
+                    $pub extern "x86-interrupt" fn $name($ist_name: x86_64::structures::idt::InterruptStackFrame) {
                         let _guard = crate::locals!().[<inc_ $int_type>]();
                         $block
                     }
@@ -41,10 +41,10 @@ macro_rules! int_fn_builder {
             /// creats a handler function for an $int_type which will panic
             #[macro_export]
             macro_rules! [<panic_ $int_type>]  {
-                ($name:ident, $ist_name:ident) => {
-                    extern "x86-interrupt" fn $name($ist_name: InterruptStackFrame) {
+                ($pub:vis $name:ident) => {
+                    $pub extern "x86-interrupt" fn $name(isf: x86_64::structures::idt::InterruptStackFrame) {
                         let _guard = crate::locals!().[<inc_ $int_type>]();
-                        panic!("$name \n{st:#?}");
+                        panic!("[[<$int_type>]] $name \n{isf:#?}");
                     }
                 };
             }
@@ -53,8 +53,8 @@ macro_rules! int_fn_builder {
             /// creates a handler function for an $int_type
             #[macro_export]
             macro_rules! [<$int_type _with_error_fn>] {
-                ($name:ident, $ist_name:ident, $err_name:ident, $block:tt) => {
-                    extern "x86-interrupt" fn $name($ist_name: InterruptStackFrame, $err_name: u64) -> !  {
+                ($pub:vis $name:ident, $ist_name:ident, $err_name:ident, $block:tt) => {
+                    $pub extern "x86-interrupt" fn $name($ist_name: x86_64::structures::idt::InterruptStackFrame, $err_name: u64) -> !  {
                         let _guard = crate::locals!().[<inc_ $int_type>]();
                         $block
                     }
@@ -64,15 +64,13 @@ macro_rules! int_fn_builder {
             /// creats a handler function for an $int_type which will panic
             #[macro_export]
             macro_rules! [<panic_ $int_type _with_error>] {
-                ($name:ident) => {
-                    extern "x86-interrupt" fn $name(st: InterruptStackFrame, err: u64) -> ! {
+                ($pub:vis $name:ident) => {
+                    $pub extern "x86-interrupt" fn $name(st: x86_64::structures::idt::InterruptStackFrame, err: u64) {
                         let _guard = crate::locals!().[<inc_ $int_type>]();
                         panic!("$name \nerr: {err:?}\n{st:#?}");
                     }
                 };
             }
-
-
         }
     };
 }
