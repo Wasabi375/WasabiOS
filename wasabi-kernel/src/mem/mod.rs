@@ -139,6 +139,26 @@ macro_rules! map_page {
             Err(err) => Err(err),
         }
     }};
+    ($size: ident, $flags: expr, $frame: expr) => {{
+        use x86_64::structures::paging::{Page, PhysFrame};
+        use $crate::mem::page_allocator::PageAllocator;
+        use $crate::mem::MemError;
+
+        let page: Result<Page<$size>, MemError> = PageAllocator::get_kernel_allocator()
+            .lock()
+            .allocate_page::<$size>();
+
+        let frame: PhysFrame<$size> = $frame;
+
+        match page {
+            Ok(page) => match map_page!(page, $size, $flags, frame) {
+                Ok(_) => Ok(page),
+                Err(err) => Err(MemError::PageTableMap(err)),
+            },
+            Err(err) => Err(err),
+        }
+    }};
+
     ($page: expr, $size: ident, $flags: expr) => {{
         use x86_64::structures::paging::PhysFrame;
         use $crate::mem::frame_allocator::WasabiFrameAllocator;

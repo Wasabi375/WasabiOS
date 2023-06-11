@@ -92,15 +92,19 @@ impl Apic {
 
         let phys_base = PhysAddr::new(base_addr as u64);
         let phys_frame = PhysFrame::<Size4KiB>::containing_address(phys_base);
-
-        assert_eq!(phys_base, phys_frame.start_address());
+        let phys_frame = PhysFrame::<Size4KiB>::from_start_address(phys_base)
+            .map_err(|_e| ApicCreationError::InvalidBase(phys_base))?;
 
         let apic_table_flags: PageTableFlags = PageTableFlags::PRESENT
             | PageTableFlags::WRITABLE
             | PageTableFlags::NO_EXECUTE
             | PageTableFlags::NO_CACHE;
 
-        let page = map_page!(Size4KiB, apic_table_flags)?;
+        let page = unsafe {
+            // Safety: new page with apic frame (only used here) and is therefor safe
+            map_page!(Size4KiB, apic_table_flags, phys_frame)
+                .map_err(|e| ApicCreationError::Mem(e))?
+        };
 
         let virt_base = page.start_address();
         debug!("Create apic base at addr: Phys {phys_base:p}, Virt {virt_base:p}");
