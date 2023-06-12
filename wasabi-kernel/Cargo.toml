@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 no-color = ["colored/no-color"]
 no-unicode-log = []
+test = ["dep:testing"]
 
 [dependencies]
 shared = { path = "../shared" }
@@ -14,6 +15,7 @@ logger = { path = "../logger" }
 staticvec = { path = "../staticvec" }
 colored = { path = "../colored" }
 interrupt-fn-builder =  { path = "../interrupt-fn-builder" }
+testing = { path = "../testing", optional = true }
 
 bootloader_api = { version = "0.11.3", path = "../../bootloader/api" }
 lazy_static.workspace = true

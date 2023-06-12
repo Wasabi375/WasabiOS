@@ -5,9 +5,12 @@ use core::str::from_utf8_unchecked;
 /// Unsafely marks a branch as unreachable.
 #[inline(always)]
 #[allow(unused_variables)]
+#[allow(unreachable_code)]
 pub(crate) unsafe fn never(s: &str) -> ! {
     #[cfg(debug_assertions)]
     core::panic!("{}", s);
+
+    unreachable!();
 }
 
 // UTF-8 ranges and tags for encoding characters.

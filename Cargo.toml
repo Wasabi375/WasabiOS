@@ -16,6 +16,11 @@ artifact = "bin"
 target = "x86_64-unknown-none"
 features = ["no-unicode-log"]
 
+[build-dependencies.wasabi-test]
+path = "wasabi-test"
+artifact = "bin"
+target = "x86_64-unknown-none"
+
 [dependencies]
 # used for UEFI booting in QEMU
 ovmf-prebuilt = "0.1.0-alpha.1"
@@ -29,6 +34,7 @@ members = [
     "staticvec",
     "colored",
     "interrupt-fn-builder",
+    "testing"
 ]
 
 [workspace.dependencies]
@@ -38,9 +44,18 @@ x86_64 = "0.14.10"
 log = "0.4.17"
 bit_field = "0.10.2"
 paste = "1.0.12"
+linkme = "0.3.10"
+
+
+[[test]]
+name = "run-qemu"
+path = "tests/run-qemu.rs"
+edition = "2021"
 
 [profile.dev]
 panic = "abort"
+lto = "fat"
 
 [profile.release]
 panic = "abort"
+lto = "fat"

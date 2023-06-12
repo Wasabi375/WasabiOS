@@ -482,6 +482,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9afa463f5405ee81cdb9cc2baf37e08ec7e4c8209442b5d72c04cfb2cd6e6286"
 
 [[package]]
+name = "linkme"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97f3302efc6ebb7b5f0810a1096dbbb44a536711a4576bc89264a8f9a1d634d8"
+dependencies = [
+ "linkme-impl",
+]
+
+[[package]]
+name = "linkme-impl"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "279a77bf40c85a08513aca203635b96610ebf0e37a92cb0cee76e04da100a426"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.18",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -810,6 +830,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "testing"
+version = "0.1.0"
+dependencies = [
+ "linkme",
+ "log",
+ "thiserror-core",
+ "x86_64",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -903,9 +933,23 @@ dependencies = [
  "shared",
  "shared-derive",
  "staticvec",
+ "testing",
  "thiserror-core",
  "uart_16550",
  "volatile",
+ "x86_64",
+]
+
+[[package]]
+name = "wasabi-test"
+version = "0.1.0"
+dependencies = [
+ "bootloader_api",
+ "linkme",
+ "log",
+ "shared",
+ "testing",
+ "wasabi-kernel",
  "x86_64",
 ]
 
@@ -916,6 +960,7 @@ dependencies = [
  "bootloader",
  "ovmf-prebuilt",
  "wasabi-kernel",
+ "wasabi-test",
 ]
 
 [[package]]
