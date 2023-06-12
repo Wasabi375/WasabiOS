@@ -230,11 +230,19 @@ impl VirtAddrExt for VirtAddr {
     }
 }
 
+/// extension trait for [Volatile]
 pub trait VolatileExt<R, T, A>
 where
     R: Deref<Target = T>,
     T: Copy,
 {
+    /// reads the value, calls the `update` function and wirtes back the result.
+    ///
+    /// This is the same as calling
+    /// ```no_run
+    /// let value = volatile.read();
+    /// volatile.write(update(value));
+    /// ```
     fn update<F>(&mut self, update: F)
     where
         A: Writable + Readable,
