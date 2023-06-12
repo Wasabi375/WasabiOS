@@ -3,6 +3,7 @@
 use core::{
     arch::x86_64::{_mm_lfence, _mm_mfence, _rdtsc},
     fmt::{Display, Write},
+    hint::spin_loop,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -50,6 +51,17 @@ pub fn read_tsc_fenced() -> u64 {
     }
 }
 
+/// Spin loop until `duration` time has passed
+///
+/// The actual time spent might vary, if the tickrate is not constant.
+pub fn sleep_tsc(duration: Duration) {
+    let start = read_tsc();
+    let end = start + ticks_in(duration);
+    while read_tsc() < end {
+        spin_loop();
+    }
+}
+
 /// the value of rdtsc at the start of the kernels execution.
 ///
 /// More preciesely this is the value of rdtsc at the time [calibrate_tsc]
@@ -60,40 +72,56 @@ static STARTUP_TSC_TIME: AtomicU64 = AtomicU64::new(0);
 static TSC_MHZ: AtomicU64 = AtomicU64::new(3_000);
 
 /// returns the value of rdtsc at startup
-#[inline]
+#[inline(always)]
 pub fn tsc_startup() -> u64 {
     STARTUP_TSC_TIME.load(Ordering::Relaxed)
 }
 
 /// returns the number of tsc ticks since startup
-#[inline]
+#[inline(always)]
 pub fn tsc_ticks_since_startup() -> u64 {
     read_tsc() - tsc_startup()
 }
 
 /// returns the time since startup
-#[inline]
+#[inline(always)]
 pub fn time_since_startup() -> Duration {
     Duration::new_micros((tsc_ticks_since_startup() as f64 / tsc_tickrate() as f64) as u64)
 }
 
 /// returns the tsc tick rate in MHz
-#[inline]
+#[inline(always)]
 pub fn tsc_tickrate() -> u64 {
     TSC_MHZ.load(Ordering::Relaxed)
 }
 
 /// calculates the time between 2 time stamps
-#[inline]
+///
+/// This might not be accurate, if the tick rate is not constant.
+#[inline(always)]
 pub fn time_between_tsc(start: u64, end: u64) -> Duration {
     Duration::new_micros(((end - start) as f64 / tsc_tickrate() as f64) as u64)
+}
+
+/// the expected number of tsc ticks, in `duration` time
+#[inline(always)]
+pub fn ticks_in(duration: Duration) -> u64 {
+    duration.to_micros().as_u64() * tsc_tickrate()
+}
+
+/// calculates the expected time stamp counter in `duration` time form now.
+///
+/// This might not be accurate, if the tick rate is not constant.
+#[inline(always)]
+pub fn tsc_from_now(duration: Duration) -> u64 {
+    read_tsc() + ticks_in(duration)
 }
 
 /// calculates the time betwee a timestamp and now
 ///
 /// this assumes that `start` is a tsc before now. To calculate a duration
 /// to a future time stamp use `time_between_tsc(read_tsc(), time_stamp)`
-#[inline]
+#[inline(always)]
 pub fn time_since_tsc(start: u64) -> Duration {
     Duration::new_micros(((read_tsc() - start) as f64 / tsc_tickrate() as f64) as u64)
 }
