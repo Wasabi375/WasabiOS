@@ -6,7 +6,7 @@ use core::ops::RangeInclusive;
 use crate::{
     cpu::cpuid::cpuid,
     locals, map_page,
-    mem::{page_table::KERNEL_PAGE_TABLE, MemError, VirtAddrExt},
+    mem::{MemError, VirtAddrExt},
     time::{calibration_tick, read_tsc},
 };
 use bit_field::BitField;
@@ -335,10 +335,6 @@ impl Timer<'_> {
                     });
                 apic.offset_mut(Offset::TimerInitialCount)
                     .write(config.duration);
-
-                let vaddr = self.apic.base + Offset::TimerInitialCount as u64;
-                use x86_64::structures::paging::mapper::Translate;
-                let paddr = KERNEL_PAGE_TABLE.lock().translate_addr(vaddr).unwrap();
             }
             TimerMode::TscDeadline => {
                 assert!(

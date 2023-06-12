@@ -109,19 +109,21 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     info!("tsc clock rate {}MHz", time::tsc_tickrate());
     info!("kernel boot took {:?} - {}", startup_time, startup_time);
 
-    let mut apic_guard = locals!().apic.lock();
-    let apic = apic_guard.as_mut().unwrap();
-    apic.timer().calibrate();
-    info!("apic timer: {:#?}", apic.timer());
+    {
+        let mut apic_guard = locals!().apic.lock();
+        let apic = apic_guard.as_mut().unwrap();
+        apic.timer().calibrate();
+        info!("apic timer: {:#?}", apic.timer());
 
-    apic.timer()
-        .register_interrupt_handler(55, timer_int_handler)
-        .unwrap();
-    let apic_rate = apic.timer().rate_mhz() as u32;
-    apic.timer().start(apic::TimerMode::Periodic(TimerConfig {
-        divider: apic::TimerDivider::DivBy2,
-        duration: apic_rate * 1_000_000 / 2,
-    }));
+        apic.timer()
+            .register_interrupt_handler(55, timer_int_handler)
+            .unwrap();
+        let apic_rate = apic.timer().rate_mhz() as u32;
+        apic.timer().start(apic::TimerMode::Periodic(TimerConfig {
+            divider: apic::TimerDivider::DivBy2,
+            duration: apic_rate * 1_000_000 / 2,
+        }));
+    }
 
     // warn!("Causing fault");
     // let ptr = (0xdeadbeafu64 + 0x8000000000u64) as *mut u8;
