@@ -106,7 +106,7 @@ pub struct CoreLocals {
 
     /// A lock holding the local apic. This can be [None] if the apic has not been
     /// initialized.
-    // TODO change to UnwrapLock
+    // FIXME change to UnwrapLock
     pub apic: TicketLock<Option<Apic>>,
 }
 
@@ -124,7 +124,7 @@ impl CoreLocals {
             // for interrupts, after all we have not initialized them.
             interrupts_disable_count: AtomicU64::new(1),
 
-            apic: TicketLock::new(None),
+            apic: TicketLock::new_preemtable(None),
         }
     }
 
@@ -267,10 +267,11 @@ pub unsafe fn init(core_id: CoreId) {
         interrupt_count: AutoRefCounter::new(0),
         exception_count: AutoRefCounter::new(0),
         interrupts_disable_count: AtomicU64::new(1),
-        apic: TicketLock::new(None),
+        apic: TicketLock::new_preemtable(None),
     });
 
     core_local.virt_addr = VirtAddr::from_ptr(core_local.as_ref());
+    assert!(core_local.apic.preemtable);
     debug!(
         "Core {}: Core Locals initialized from boot locals",
         core_id.0

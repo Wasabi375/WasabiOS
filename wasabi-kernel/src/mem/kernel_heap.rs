@@ -276,6 +276,8 @@ struct SlabAllocator<'a, A> {
     allocator: MaybeUninit<&'a A>,
 }
 
+unsafe impl<A> Send for SlabAllocator<'_, A> {}
+
 impl<'a, A: Allocator> SlabAllocator<'a, A> {
     /// utility to verify size of self is valid
     #[inline]
@@ -612,7 +614,7 @@ struct LockedAllocator<A> {
     allocator: TicketLock<A>,
 }
 
-impl<A: MutAllocator> Allocator for LockedAllocator<A> {
+impl<A: MutAllocator + Send> Allocator for LockedAllocator<A> {
     fn alloc(&self, layout: Layout) -> Result<NonNull<u8>> {
         self.allocator.lock().alloc(layout)
     }

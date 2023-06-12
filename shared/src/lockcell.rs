@@ -82,6 +82,12 @@ pub trait LockCellInternal<T> {
     /// core/interrupt etc could take the lock during or right after this call
     /// finishes.
     fn is_unlocked(&self) -> bool;
+
+    /// returns `true` if the lock is preemtable.
+    ///
+    /// In that case the lock is useable within interrupts, but must disable
+    /// additional interrupts while being held.
+    fn is_preemtable(&self) -> bool;
 }
 
 /// A guard structure that is used to guard a lock.
@@ -247,13 +253,13 @@ pub struct TicketLock<T, I> {
     /// the current core holding the lock
     owner: AtomicU16,
     /// set if the lock is usable in interrupts
-    preemtable: bool,
+    pub preemtable: bool,
     /// phantom access to the cores interrupt state
     _interrupt_state: PhantomData<I>,
 }
 
-unsafe impl<T, I: InterruptState> Send for TicketLock<T, I> {}
-unsafe impl<T, I: InterruptState> Sync for TicketLock<T, I> {}
+unsafe impl<T: Send, I: InterruptState> Send for TicketLock<T, I> {}
+unsafe impl<T: Send, I: InterruptState> Sync for TicketLock<T, I> {}
 
 impl<T, I> TicketLock<T, I> {
     /// creates a new [TicketLock]
@@ -284,7 +290,7 @@ impl<T, I> TicketLock<T, I> {
     }
 }
 
-impl<T, I: InterruptState> LockCell<T> for TicketLock<T, I> {
+impl<T: Send, I: InterruptState> LockCell<T> for TicketLock<T, I> {
     #[track_caller]
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         assert!(
@@ -346,6 +352,10 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
     fn is_unlocked(&self) -> bool {
         self.owner.load(Ordering::Acquire) == !0
     }
+
+    fn is_preemtable(&self) -> bool {
+        self.preemtable
+    }
 }
 
 impl<T: Default, I: InterruptState> Default for TicketLock<T, I> {
@@ -373,13 +383,13 @@ pub struct ReadWriteCell<T, I> {
     /// the data guarded by this lock
     data: UnsafeCell<T>,
     /// set if the lock is usable in interrupts
-    preemtable: bool,
+    pub preemtable: bool,
     /// phantom access to the cores interrupt state
     _interrupt_state: PhantomData<I>,
 }
 
-unsafe impl<T, I: InterruptState> Send for ReadWriteCell<T, I> {}
-unsafe impl<T, I: InterruptState> Sync for ReadWriteCell<T, I> {}
+unsafe impl<T: Send, I: InterruptState> Send for ReadWriteCell<T, I> {}
+unsafe impl<T: Send, I: InterruptState> Sync for ReadWriteCell<T, I> {}
 
 impl<T, I> ReadWriteCell<T, I> {
     /// creates a new [ReadWriteCell]
@@ -422,7 +432,7 @@ impl<T: Default, I> ReadWriteCell<T, I> {
     }
 }
 
-impl<T, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
+impl<T: Send, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
     fn read(&self) -> ReadCellGuard<'_, T, Self> {
         assert!(
             self.preemtable || !I::in_interrupt(),
@@ -465,7 +475,7 @@ impl<T, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
     }
 }
 
-impl<T, I: InterruptState> LockCell<T> for ReadWriteCell<T, I> {
+impl<T: Send, I: InterruptState> LockCell<T> for ReadWriteCell<T, I> {
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         assert!(
             self.preemtable || !I::in_interrupt(),
@@ -547,15 +557,19 @@ impl<T, I: InterruptState> LockCellInternal<T> for ReadWriteCell<T, I> {
     fn is_unlocked(&self) -> bool {
         self.access_count.load(Ordering::SeqCst) == 0
     }
+
+    fn is_preemtable(&self) -> bool {
+        self.preemtable
+    }
 }
 
 /// A wrapper for a [`LockCell`] of an `MaybeUninit<T>`.
 ///
 /// unlike a normal [LockCell], [`UnwrapLock::lock`] will return `T`
 /// or panic if the value was not initialized
-pub struct UnwrapLock<T, L: LockCell<MaybeUninit<T>>> {
+pub struct UnwrapLock<T: Send, L: LockCell<MaybeUninit<T>>> {
     /// inner lockcell that holds the `MaybeUninit<T>`
-    lockcell: L,
+    pub lockcell: L,
     _t: PhantomData<T>,
 }
 
@@ -570,7 +584,7 @@ macro_rules! unwrapLockWrapper {
             $(#[$outer])*
             pub type [<Unwrap $lock_type>]<T, I> = UnwrapLock<T, $lock_type<MaybeUninit<T>, I>>;
 
-            impl<T, I: InterruptState> [<Unwrap $lock_type>]<T, I> {
+            impl<T: Send, I: InterruptState> [<Unwrap $lock_type>]<T, I> {
                 /// creates a new [Self] that is uninitialized
                 ///
                 /// # Safety
@@ -598,7 +612,7 @@ unwrapLockWrapper! {
     TicketLock
 }
 
-impl<T, L: LockCell<MaybeUninit<T>>> Drop for UnwrapLock<T, L> {
+impl<T: Send, L: LockCell<MaybeUninit<T>>> Drop for UnwrapLock<T, L> {
     fn drop(&mut self) {
         unsafe {
             self.lock_uninit().assume_init_drop();
@@ -606,7 +620,7 @@ impl<T, L: LockCell<MaybeUninit<T>>> Drop for UnwrapLock<T, L> {
     }
 }
 
-impl<T, L: LockCell<MaybeUninit<T>> + Default> Default for UnwrapLock<T, L> {
+impl<T: Send, L: LockCell<MaybeUninit<T>> + Default> Default for UnwrapLock<T, L> {
     fn default() -> Self {
         Self {
             lockcell: Default::default(),
@@ -615,10 +629,10 @@ impl<T, L: LockCell<MaybeUninit<T>> + Default> Default for UnwrapLock<T, L> {
     }
 }
 
-unsafe impl<T, L: LockCell<MaybeUninit<T>>> Send for UnwrapLock<T, L> {}
-unsafe impl<T, L: LockCell<MaybeUninit<T>>> Sync for UnwrapLock<T, L> {}
+unsafe impl<T: Send, L: LockCell<MaybeUninit<T>>> Send for UnwrapLock<T, L> {}
+unsafe impl<T: Send, L: LockCell<MaybeUninit<T>>> Sync for UnwrapLock<T, L> {}
 
-impl<T, L: LockCell<MaybeUninit<T>>> UnwrapLock<T, L> {
+impl<T: Send, L: LockCell<MaybeUninit<T>>> UnwrapLock<T, L> {
     /// creates a new [UnwrapLock] from the given `inner` [LockCell]
     ///
     /// # Safety:
@@ -642,7 +656,7 @@ impl<T, L: LockCell<MaybeUninit<T>>> UnwrapLock<T, L> {
     }
 }
 
-impl<T, L: LockCell<MaybeUninit<T>>> LockCell<T> for UnwrapLock<T, L> {
+impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCell<T> for UnwrapLock<T, L> {
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         let inner_guard = self.lockcell.lock();
         core::mem::forget(inner_guard);
@@ -650,7 +664,7 @@ impl<T, L: LockCell<MaybeUninit<T>>> LockCell<T> for UnwrapLock<T, L> {
     }
 }
 
-impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T, L> {
+impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T, L> {
     unsafe fn get(&self) -> &T {
         self.lockcell.get().assume_init_ref()
     }
@@ -671,9 +685,13 @@ impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T, L> {
     fn is_unlocked(&self) -> bool {
         self.lockcell.is_unlocked()
     }
+
+    fn is_preemtable(&self) -> bool {
+        self.lockcell.is_preemtable()
+    }
 }
 
-impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for UnwrapLock<T, L> {
+impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for UnwrapLock<T, L> {
     unsafe fn get(&self) -> &MaybeUninit<T> {
         self.lockcell.get()
     }
@@ -693,9 +711,13 @@ impl<T, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for Unwrap
     fn is_unlocked(&self) -> bool {
         self.lockcell.is_unlocked()
     }
+
+    fn is_preemtable(&self) -> bool {
+        self.lockcell.is_preemtable()
+    }
 }
 
-impl<T, L: RWLockCell<MaybeUninit<T>>> RWLockCell<T> for UnwrapLock<T, L> {
+impl<T: Send, L: RWLockCell<MaybeUninit<T>>> RWLockCell<T> for UnwrapLock<T, L> {
     fn read(&self) -> ReadCellGuard<'_, T, Self> {
         let inner_guard = self.lockcell.read();
         core::mem::forget(inner_guard);
@@ -703,7 +725,7 @@ impl<T, L: RWLockCell<MaybeUninit<T>>> RWLockCell<T> for UnwrapLock<T, L> {
     }
 }
 
-impl<T, L: RWLockCell<MaybeUninit<T>>> RWCellInternal<T> for UnwrapLock<T, L> {
+impl<T: Send, L: RWLockCell<MaybeUninit<T>>> RWCellInternal<T> for UnwrapLock<T, L> {
     unsafe fn release_read<'s, 'l: 's>(&'s self, guard: &mut ReadCellGuard<'l, T, Self>) {
         assert!(self as *const _ == guard.rw_cell as *const _);
         self.force_release_read();

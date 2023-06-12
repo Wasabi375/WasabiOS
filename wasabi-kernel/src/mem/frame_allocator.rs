@@ -5,7 +5,7 @@ use log::{debug, error, info, trace, warn};
 
 use crate::prelude::{LockCell, UnwrapTicketLock};
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
-use core::{marker::PhantomData, ptr::null_mut};
+use core::marker::PhantomData;
 use shared::rangeset::{Range, RangeSet};
 use x86_64::{
     structures::paging::{
@@ -120,10 +120,12 @@ struct UnusedFrame {
 pub struct WasabiFrameAllocator<'a, S> {
     /// the phys mem allocator used to allocate new frames, if we run out
     phys_alloc: &'a LockedPhysAlloc,
-    /// a free list of unused frames
-    first_unused_frame: *mut UnusedFrame,
+
     /// the size of frames this allocator uses
     size: PhantomData<S>,
+    // TODO implement free list
+    // /// a free list of unused frames
+    // first_unused_frame: *mut UnusedFrame,
 }
 
 impl WasabiFrameAllocator<'_, Size4KiB> {
@@ -152,7 +154,7 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
     fn new(phys_allocator: &'a LockedPhysAlloc) -> Self {
         WasabiFrameAllocator {
             phys_alloc: phys_allocator,
-            first_unused_frame: null_mut(),
+            // first_unused_frame: null_mut(),
             size: PhantomData::default(),
         }
     }
@@ -169,11 +171,11 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
 
     /// allocate a new frame
     pub fn alloc(&mut self) -> Option<PhysFrame<S>> {
-        if self.first_unused_frame.is_null() {
-            return self.phys_alloc.lock().alloc();
-        }
+        // if self.first_unused_frame.is_null() {
+        return self.phys_alloc.lock().alloc();
+        // }
 
-        todo!()
+        // todo!()
     }
 
     /// Frees a phys frame
