@@ -14,6 +14,7 @@ bootloader_api = { version = "0.11.3", path = "../../bootloader/api" }
 log.workspace = true
 x86_64.workspace = true
 linkme.workspace = true
+itertools.workspace = true
 
 [dependencies.wasabi-kernel]
 path = "../wasabi-kernel"

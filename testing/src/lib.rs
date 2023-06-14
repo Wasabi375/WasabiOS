@@ -5,6 +5,10 @@
 // #![warn(missing_docs, rustdoc::missing_crate_level_docs)] // TODO enable
 #![deny(unsafe_op_in_unsafe_fn)]
 
+use core::fmt::Pointer;
+
+pub use testing_derive::kernel_test;
+
 use linkme::distributed_slice;
 use thiserror::Error;
 
@@ -30,9 +34,12 @@ pub fn exit_qemu(code: QemuExitCode) -> ! {
 }
 
 /// Error type for Kernel-tests
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Clone, Debug, PartialEq, Eq)]
 #[allow(missing_docs)]
-pub enum KernelTestError {}
+pub enum KernelTestError {
+    #[error("test failed")]
+    Fail,
+}
 
 /// Function signature used for kernel test functions
 pub type KernelTestFn = fn() -> Result<(), KernelTestError>;
@@ -42,17 +49,36 @@ pub type KernelTestFn = fn() -> Result<(), KernelTestError>;
 pub enum TestExitState {
     /// The test finishes normaly
     Succeed,
-    /// The test panics
-    Panic,
+    /// The test finishes with the specified [KernelTestError] or any
+    /// [KernelTestError] if `None`
+    Error(Option<KernelTestError>),
+    // /// The test panics
+    // TODO Panic,
     // TODO page_fault, etc? Do I want this?
+}
+
+/// The source code location of a test function
+#[derive(Debug, Clone)]
+pub struct SourceLocation {
+    /// module of the source location
+    pub module: &'static str,
+    /// file of the source location
+    pub file: &'static str,
+    /// line of the source location
+    pub line: u32,
+    /// column of the source location
+    pub column: u32,
+}
+
+impl core::fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_fmt(format_args!("{}:{}:{}", self.file, self.line, self.column))
+    }
 }
 
 /// Description of a single kernel test
 #[derive(Debug, Clone)]
 pub struct KernelTestDescription {
-    /// the module that contains the test
-    pub module: &'static str,
-
     /// the name of the test
     pub name: &'static str,
 
@@ -63,22 +89,12 @@ pub struct KernelTestDescription {
 
     /// the way we expect the test to exit
     pub expected_exit: TestExitState,
+
+    /// the actual test
+    pub test_fn: KernelTestFn,
+
+    pub test_location: SourceLocation,
 }
 
 #[distributed_slice]
 pub static KERNEL_TESTS: [KernelTestDescription] = [..];
-
-#[distributed_slice(KERNEL_TESTS)]
-static FOO: KernelTestDescription = KernelTestDescription {
-    module: "foo",
-    name: "foo",
-    fn_name: "foo",
-    expected_exit: TestExitState::Succeed,
-};
-
-#[inline(never)]
-pub fn access_slice() {
-    for _ in KERNEL_TESTS {
-        todo!();
-    }
-}
