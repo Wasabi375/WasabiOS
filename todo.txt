@@ -5,3 +5,6 @@
     * simplify our code to use &self where possible
 * Page table pages should be NO_EXEC
 * Figure out Emacs Org mode for todo list
+* fix tests in staticvec
+* check tests in other libraries
+* log level for init logging needs a proper concept

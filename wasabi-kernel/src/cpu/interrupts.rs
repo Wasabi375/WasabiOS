@@ -42,7 +42,7 @@ lazy_static! {
 /// handlers for the first 32 interrupts, as those are used as exceptions handlers
 /// by the OS and have a different function signature.
 static INTERRUPT_HANDLERS: ReadWriteCell<[Option<InterruptFn>; 256 - 32]> =
-    ReadWriteCell::new_preemtable([None; 256 - 32]);
+    ReadWriteCell::new_non_preemtable([None; 256 - 32]);
 
 /// setup idt and enable interrupts
 pub fn init() {

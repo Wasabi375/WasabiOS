@@ -1,10 +1,11 @@
 //! LockCell implementations
 //!
 //! [TicketLock] is a [LockCell] implementation, that can be both preemtable or
-//! not depending on how  it is created ([`TicketLock::new_preemtable`] vs [`TicketLock::new`]).
+//! not depending on how it is created ([`TicketLock::new`] vs
+//! [`TicketLock::new_non_preemtable`]).
 //!
-//! [UnwrapLock] is a [LockCell] wrapper that allows accessing a `UnwrapLock<MaybeUninit<T>>` as if it
-//! is an `LockCell<T>`.
+//! [UnwrapLock] is a [LockCell] wrapper that allows accessing a
+//! `UnwrapLock<MaybeUninit<T>>` as if it is an `LockCell<T>`.
 
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 
@@ -70,6 +71,7 @@ pub trait LockCellInternal<T> {
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>);
 
     /// forces the mutex open, without needing access to the guard
+    /// FIXME: yeah this is bullshit. this is just "dropping" a guard without access to it
     ///
     /// # Safety:
     ///
@@ -116,6 +118,19 @@ impl<'l, T, M: ?Sized + LockCellInternal<T>> LockCellGuard<'l, T, M> {
             lockcell,
             _t: PhantomData::default(),
         }
+    }
+
+    /// allows to execute a simple snippet of code in a expression chain.
+    /// Mostly used for debug puropses.
+    ///
+    /// # Example usage
+    /// ```no_run
+    /// # let lock = todo!();
+    /// lock.lock().also(|_| { info!("lock acuired"); } ).something();
+    /// ```
+    pub fn also<F: FnOnce(&mut Self)>(mut self, f: F) -> Self {
+        f(&mut self);
+        self
     }
 }
 
@@ -252,7 +267,7 @@ pub struct TicketLock<T, I> {
     data: UnsafeCell<T>,
     /// the current core holding the lock
     owner: AtomicU16,
-    /// set if the lock is usable in interrupts
+    /// set if the lock is *not* usable in interrupts
     pub preemtable: bool,
     /// phantom access to the cores interrupt state
     _interrupt_state: PhantomData<I>,
@@ -269,24 +284,39 @@ impl<T, I> TicketLock<T, I> {
             next_ticket: AtomicU64::new(0),
             data: UnsafeCell::new(data),
             owner: AtomicU16::new(!0),
-            preemtable: false,
+            preemtable: true,
             _interrupt_state: PhantomData,
         }
     }
 
-    /// creates a new preemtable [TicketLock]
+    /// creates a new non preemtable [TicketLock]
     ///
     /// This assumes that it is save to disable interrupts
     /// while the lock is held.
-    pub const fn new_preemtable(data: T) -> Self {
+    pub const fn new_non_preemtable(data: T) -> Self {
         Self {
             current_ticket: AtomicU64::new(0),
             next_ticket: AtomicU64::new(0),
             data: UnsafeCell::new(data),
             owner: AtomicU16::new(!0),
-            preemtable: true,
+            preemtable: false,
             _interrupt_state: PhantomData,
         }
+    }
+
+    /// write the "current" state of the ticket lock (not including the guarded data)
+    /// to the `writer`.
+    ///
+    /// All internals are accessed with relaxed loads
+    pub fn spew_state<W: core::fmt::Write>(&self, writer: &mut W) {
+        let current = self.current_ticket.load(Ordering::Relaxed);
+        let next = self.next_ticket.load(Ordering::Relaxed);
+        let owner = self.owner.load(Ordering::Relaxed);
+        write!(
+            writer,
+            "[TicketLock(c: {}, n: {}, o: {})]\n",
+            current, next, owner
+        );
     }
 }
 
@@ -294,15 +324,13 @@ impl<T: Send, I: InterruptState> LockCell<T> for TicketLock<T, I> {
     #[track_caller]
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         assert!(
-            self.preemtable || !I::in_interrupt(),
+            !self.preemtable || !I::in_interrupt(),
             "use of non-preemtable lock in interrupt"
         );
 
-        if self.preemtable {
-            unsafe {
-                // Safety: disabling interrupts is ok, for preemtable locks
-                I::enter_lock();
-            }
+        unsafe {
+            // Safety: disabling interrupts is ok, for preemtable locks
+            I::enter_lock(!self.preemtable);
         }
 
         let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
@@ -342,11 +370,9 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
     unsafe fn force_unlock(&self) {
         self.owner.store(!0, Ordering::Release);
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
-        if self.preemtable {
-            // Safety: this will restore the interrupt state from when we called
-            // enter_lock, so this is safe
-            I::exit_lock();
-        }
+        // Safety: this will restore the interrupt state from when we called
+        // enter_lock, so this is safe
+        I::exit_lock(!self.preemtable);
     }
 
     fn is_unlocked(&self) -> bool {
@@ -369,8 +395,8 @@ impl<T: Default, I: InterruptState> TicketLock<T, I> {
     ///
     /// This assumes that it is save to disable interrupts
     /// while the lock is held.
-    pub fn default_preemtable() -> Self {
-        Self::new_preemtable(Default::default())
+    pub fn default_non_preemtable() -> Self {
+        Self::new_non_preemtable(Default::default())
     }
 }
 
@@ -397,7 +423,7 @@ impl<T, I> ReadWriteCell<T, I> {
         Self {
             access_count: AtomicI64::new(0),
             data: UnsafeCell::new(data),
-            preemtable: false,
+            preemtable: true,
             _interrupt_state: PhantomData,
         }
     }
@@ -406,11 +432,11 @@ impl<T, I> ReadWriteCell<T, I> {
     ///
     /// This assumes that it is save to disable interrupts
     /// while the lock is held.
-    pub const fn new_preemtable(data: T) -> Self {
+    pub const fn new_non_preemtable(data: T) -> Self {
         Self {
             access_count: AtomicI64::new(0),
             data: UnsafeCell::new(data),
-            preemtable: true,
+            preemtable: false,
             _interrupt_state: PhantomData,
         }
     }
@@ -427,22 +453,20 @@ impl<T: Default, I> ReadWriteCell<T, I> {
     ///
     /// This assumes that it is save to disable interrupts
     /// while the lock is held.
-    pub fn default_preemtable() -> Self {
-        Self::new_preemtable(Default::default())
+    pub fn default_non_preemtable() -> Self {
+        Self::new_non_preemtable(Default::default())
     }
 }
 
 impl<T: Send, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
     fn read(&self) -> ReadCellGuard<'_, T, Self> {
         assert!(
-            self.preemtable || !I::in_interrupt(),
+            !self.preemtable || !I::in_interrupt(),
             "use onf non-preemtable lock in interrupt"
         );
-        if self.preemtable {
-            unsafe {
-                // Safety: disabling interrupts is ok, for preemtable locks
-                I::enter_lock();
-            }
+        unsafe {
+            // Safety: disabling interrupts is ok, for preemtable locks
+            I::enter_lock(!self.preemtable);
         }
 
         let mut cur_count = self.access_count.load(Ordering::Acquire);
@@ -478,14 +502,12 @@ impl<T: Send, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
 impl<T: Send, I: InterruptState> LockCell<T> for ReadWriteCell<T, I> {
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         assert!(
-            self.preemtable || !I::in_interrupt(),
+            !self.preemtable || !I::in_interrupt(),
             "use onf non-preemtable lock in interrupt"
         );
-        if self.preemtable {
-            unsafe {
-                // Safety: disabling interrupts is ok, for preemtable locks
-                I::enter_lock();
-            }
+        unsafe {
+            // Safety: disabling interrupts is ok, for preemtable locks
+            I::enter_lock(!self.preemtable);
         }
 
         loop {
@@ -518,11 +540,9 @@ impl<T, I: InterruptState> RWCellInternal<T> for ReadWriteCell<T, I> {
     unsafe fn force_release_read(&self) {
         let previous_count = self.access_count.fetch_sub(1, Ordering::SeqCst);
         assert!(previous_count >= 1);
-        if self.preemtable {
-            // Safety: this will restore the interrupt state from when we called
-            // enter_lock, so this is safe
-            I::exit_lock();
-        }
+        // Safety: this will restore the interrupt state from when we called
+        // enter_lock, so this is safe
+        I::exit_lock(!self.preemtable);
     }
 
     fn open_to_read(&self) -> bool {
@@ -547,11 +567,9 @@ impl<T, I: InterruptState> LockCellInternal<T> for ReadWriteCell<T, I> {
 
     unsafe fn force_unlock(&self) {
         self.access_count.store(0, Ordering::SeqCst);
-        if self.preemtable {
-            // Safety: this will restore the interrupt state from when we called
-            // enter_lock, so this is safe
-            I::exit_lock();
-        }
+        // Safety: this will restore the interrupt state from when we called
+        // enter_lock, so this is safe
+        I::exit_lock(!self.preemtable);
     }
 
     fn is_unlocked(&self) -> bool {
@@ -599,8 +617,8 @@ macro_rules! unwrapLockWrapper {
                 /// # Safety
                 ///
                 /// caller ensures that the [UnwrapLock] is initialized before it is accessed
-                pub const unsafe fn new_preemtable_uninit() -> Self {
-                    UnwrapLock::new($lock_type::new_preemtable(MaybeUninit::uninit()))
+                pub const unsafe fn new_non_preemtable_uninit() -> Self {
+                    UnwrapLock::new($lock_type::new_non_preemtable(MaybeUninit::uninit()))
                 }
             }
         }
@@ -739,7 +757,7 @@ impl<T: Send, L: RWLockCell<MaybeUninit<T>>> RWCellInternal<T> for UnwrapLock<T,
 /// Trait that allows access to OS-level constructs defining interrupt state,
 /// exception state, unique core IDs, and enter/exit lock (for interrupt
 /// disabling and enabling) primitives.
-pub trait InterruptState {
+pub trait InterruptState: 'static {
     /// Returns `true` if we're currently in an interrupt
     fn in_interrupt() -> bool;
 
@@ -751,24 +769,32 @@ pub trait InterruptState {
     /// unique to the core.
     fn core_id() -> CoreId;
 
-    /// A lock which does not allow interrupting was taken, and thus interrupts
-    /// must be disabled. It's up to the callee to handle the nesting of the
-    /// interrupt status. Eg. using a refcount of number of interrupt disable
-    /// requests
+    /// Returns `true` if any lock is held. This is only availble during tests
+    #[cfg(feature = "test")]
+    fn in_lock() -> bool;
+
+    /// Signal the kernel that a lock was taken. If `disable_interrupts` the
+    /// lock does not support being interrupted and therefor we must disable
+    /// interrupts. This is also a prequisite for a lock to be taken within an
+    /// interrupt.
     ///
     /// # Safety:
     ///
-    /// caller must ensure that interrupts can be disabled safely
-    unsafe fn enter_lock();
+    /// * Caller must call [InterruptState::exit_lock] exactly once with the
+    ///     same parameter for `enable_interrupts`
+    /// * If `disable_interrupts` caller must ensure that interrupts can be
+    ///     disabled safely
+    unsafe fn enter_lock(disable_interrupts: bool);
 
-    /// A lock which does not allow interrupting was released, and thus
-    /// interrupts can be enabled. It's up to the callee to handle the nesting
-    /// of the interrupt status. Eg. using a refcount of number of interrupt
-    /// disable requests
+    /// Signal the kernel that a lock was released. If `enable_interrupts` the
+    /// kernel will reenable interrupts if possible.
     ///
     /// # Safety:
     ///
     /// * caller must ensure that this function is called exactly once per invocation
-    ///     of [InterruptState::enter_lock]
-    unsafe fn exit_lock();
+    ///     of [InterruptState::enter_lock] with the same parameter.
+    unsafe fn exit_lock(enable_interrupts: bool);
+
+    /// returns the instance of this interrupt state. This should always be a zst.
+    fn instance() -> Self;
 }

@@ -124,7 +124,7 @@ impl CoreLocals {
             // for interrupts, after all we have not initialized them.
             interrupts_disable_count: AtomicU64::new(1),
 
-            apic: TicketLock::new_preemtable(None),
+            apic: TicketLock::new_non_preemtable(None),
         }
     }
 
@@ -267,11 +267,11 @@ pub unsafe fn init(core_id: CoreId) {
         interrupt_count: AutoRefCounter::new(0),
         exception_count: AutoRefCounter::new(0),
         interrupts_disable_count: AtomicU64::new(1),
-        apic: TicketLock::new_preemtable(None),
+        apic: TicketLock::new_non_preemtable(None),
     });
 
     core_local.virt_addr = VirtAddr::from_ptr(core_local.as_ref());
-    assert!(core_local.apic.preemtable);
+    assert!(!core_local.apic.preemtable);
     debug!(
         "Core {}: Core Locals initialized from boot locals",
         core_id.0
@@ -319,18 +319,32 @@ impl InterruptState for CoreInterruptState {
         locals!().core_id
     }
 
-    unsafe fn enter_lock() {
-        unsafe {
-            // safety: disbaling interrupts is ok for locked critical sections
-            locals!().disable_interrupts();
+    #[cfg(feature = "test")]
+    fn in_lock() -> bool {
+    }
+
+    unsafe fn enter_lock(disable_interrupts: bool) {
+
+        if disable_interrupts {
+            unsafe {
+                // safety: disbaling interrupts is ok for locked critical sections
+                locals!().disable_interrupts();
+            }
         }
     }
 
-    unsafe fn exit_lock() {
-        unsafe {
-            // safety: only called once, when a lock-guard is dropped
-            locals!().enable_interrupts();
+    unsafe fn exit_lock(enable_interrupts: bool) {
+
+        if enable_interrupts {
+            unsafe {
+                // safety: only called once, when a lock-guard is dropped
+                locals!().enable_interrupts();
+            }
         }
+    }
+
+    fn instance() -> Self {
+        CoreInterruptState
     }
 }
 

@@ -40,13 +40,18 @@ pub fn init() {
 
     let pages = PageAllocator::get_kernel_allocator()
         .lock()
+        .also(|_| {
+            trace!("page alloc lock aquired");
+        })
         .allocate_pages::<Size4KiB>(KERNEL_HEAP_PAGE_COUNT)
         .expect("Out of pages setting up kernel heap");
 
     {
         let mut page_table = KERNEL_PAGE_TABLE.lock();
+        trace!("page table lock aquired");
 
         let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        trace!("frame alloc lock aquired");
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
         for page in pages.iter() {
