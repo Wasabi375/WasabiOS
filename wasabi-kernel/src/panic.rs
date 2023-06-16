@@ -1,7 +1,6 @@
 //! panic handler implementation
 
 use core::panic::PanicInfo;
-use lazy_static::__Deref;
 use log::error;
 
 use crate::{
@@ -9,10 +8,8 @@ use crate::{
     framebuffer::{clear_frame_buffer, Color},
     locals,
     logger::LOGGER,
-    serial::SERIAL1,
     serial_println,
 };
-use shared::lockcell::LockCellInternal;
 
 /// This function is called on panic.
 #[panic_handler]
@@ -22,10 +19,7 @@ fn panic(info: &PanicInfo) -> ! {
         // done for anyways
         locals!().disable_interrupts();
 
-        // TODO: kill other cores before clobbering the lock
-        // TODO try with timeout first, before clobbering lock
-        // Safety: we panic, and no longer care. We just want to log
-        SERIAL1.deref().force_unlock();
+        // TODO force unlock serial lock
     }
 
     // Saftey: [LOGGER] is only writen to during the boot process.
