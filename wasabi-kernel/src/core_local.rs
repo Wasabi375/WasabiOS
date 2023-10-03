@@ -6,6 +6,9 @@
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
 
+#[cfg(feature = "test")]
+use crate::{test_locals, testing::core_local::TestCoreLocals};
+
 use crate::{
     cpu::{self, apic::Apic, cpuid},
     locals,
@@ -108,6 +111,10 @@ pub struct CoreLocals {
     /// initialized.
     // FIXME change to UnwrapLock
     pub apic: TicketLock<Option<Apic>>,
+
+    /// Core locals used by tests
+    #[cfg(feature = "test")]
+    pub test_local: TestCoreLocals,
 }
 
 impl CoreLocals {
@@ -125,6 +132,9 @@ impl CoreLocals {
             interrupts_disable_count: AtomicU64::new(1),
 
             apic: TicketLock::new_non_preemtable(None),
+
+            #[cfg(feature = "test")]
+            test_local: TestCoreLocals::new(),
         }
     }
 
@@ -227,8 +237,8 @@ pub unsafe fn core_boot() -> CoreId {
 
     unsafe {
         cpu::disable_interrupts();
-        cpu::set_gs_base(boot_core_locals as *const CoreLocals as u64);
     }
+    cpu::set_gs_base(boot_core_locals as *const CoreLocals as u64);
 
     while boot_core_locals.boot_lock.load(Ordering::SeqCst) != core_id.0 {
         spin_loop();
@@ -268,6 +278,9 @@ pub unsafe fn init(core_id: CoreId) {
         exception_count: AutoRefCounter::new(0),
         interrupts_disable_count: AtomicU64::new(1),
         apic: TicketLock::new_non_preemtable(None),
+
+        #[cfg(feature = "test")]
+        test_local: TestCoreLocals::new(),
     });
 
     core_local.virt_addr = VirtAddr::from_ptr(core_local.as_ref());
@@ -319,11 +332,9 @@ impl InterruptState for CoreInterruptState {
         locals!().core_id
     }
 
-    #[cfg(feature = "test")]
-    fn in_lock() -> bool {
-    }
-
     unsafe fn enter_lock(disable_interrupts: bool) {
+        #[cfg(feature = "test")]
+        test_locals!().lock_count.fetch_add(1, Ordering::AcqRel);
 
         if disable_interrupts {
             unsafe {
@@ -334,6 +345,8 @@ impl InterruptState for CoreInterruptState {
     }
 
     unsafe fn exit_lock(enable_interrupts: bool) {
+        #[cfg(feature = "test")]
+        test_locals!().lock_count.fetch_sub(1, Ordering::AcqRel);
 
         if enable_interrupts {
             unsafe {

@@ -44,7 +44,7 @@ macro_rules! int_fn_builder {
                 ($pub:vis $name:ident) => {
                     $pub extern "x86-interrupt" fn $name(isf: x86_64::structures::idt::InterruptStackFrame) {
                         let _guard = crate::locals!().[<inc_ $int_type>]();
-                        panic!("[[<$int_type>]] $name \n{isf:#?}");
+                        panic!("{} {}\n{isf:#?}", stringify!([[<$int_type>]]), stringify!($name));
                     }
                 };
             }
@@ -67,7 +67,7 @@ macro_rules! int_fn_builder {
                 ($pub:vis $name:ident) => {
                     $pub extern "x86-interrupt" fn $name(st: x86_64::structures::idt::InterruptStackFrame, err: u64) {
                         let _guard = crate::locals!().[<inc_ $int_type>]();
-                        panic!("$name \nerr: {err:?}\n{st:#?}");
+                        panic!("{}\nerr: {err:?}\n{st:#?}", stringify!($name));
                     }
                 };
             }
@@ -110,7 +110,7 @@ macro_rules! panic_diverging_exception_with_error {
             err: u64,
         ) -> ! {
             let _guard = crate::locals!().inc_exception();
-            panic!("$name \nerr: {err:?}\n{st:#?}");
+            panic!("{}\nerr: {err:?}\n{st:#?}", stringify!($name));
         }
     };
 }
@@ -132,7 +132,7 @@ macro_rules! panic_diverging_exception {
     ($pub:vis $name:ident) => {
         $pub extern "x86-interrupt" fn $name(st: x86_64::structures::idt::InterruptStackFrame) -> ! {
             let _guard = crate::locals!().inc_exception();
-            panic!("$name \n{st:#?}");
+            panic!("{}\n{st:#?}", stringify!($name));
         }
     };
 }

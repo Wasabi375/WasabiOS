@@ -4,7 +4,11 @@
 use log::{debug, error, info, warn};
 
 use super::apic::Apic;
-use crate::{cpu::gdt::DOUBLE_FAULT_IST_INDEX, locals, prelude::ReadWriteCell};
+use crate::{
+    cpu::gdt::{DOUBLE_FAULT_IST_INDEX, PAGE_FAULT_IST_INDEX},
+    locals,
+    prelude::ReadWriteCell,
+};
 use interrupt_fn_builder::exception_fn;
 use lazy_static::lazy_static;
 use shared::{
@@ -26,11 +30,14 @@ lazy_static! {
         default_handlers::init_all_default_interrupt_handlers(&mut idt);
         idt.breakpoint.set_handler_fn(breakpoint_handler);
         unsafe {
-            // we have to manually set double_fault in order to set the stack index
+            // we have to manually set double_fault and page fault in order to set the stack index
             idt.double_fault
                 .set_handler_fn(default_handlers::double_fault)
-                // safety: [DOUBLE_FAULT_IST_INDEX] is a valid stack index
                 .set_stack_index(DOUBLE_FAULT_IST_INDEX);
+
+            idt.page_fault
+               .set_handler_fn(default_handlers::page_fault_handler)
+               .set_stack_index(PAGE_FAULT_IST_INDEX);
         }
         idt
     };
@@ -135,6 +142,13 @@ fn check_interrupt_vector(vector: u8) {
 }
 
 exception_fn!(breakpoint_handler, stack_frame, {
+    unsafe {
+        // TEMP hack to see if I deadlock
+        use crate::serial::SERIAL1;
+        use core::fmt::Write;
+        use shared::lockcell::LockCellInternal;
+        let _ = write!(SERIAL1.get_mut(), "breakpoint\n");
+    }
     warn!("breakpoint hit at\n{stack_frame:#?}");
 });
 
@@ -142,6 +156,11 @@ exception_fn!(breakpoint_handler, stack_frame, {
 ///
 /// DF uses a separate stack, in case DF was caused by a stack overflow
 pub const DOUBLE_FAULT_STACK_SIZE: usize = KiB(4 * 5);
+
+/// the stack size for the page fault exception stack
+///
+/// PF uses a separate stack, in case PF was caused by a stack overflow
+pub const PAGE_FAULT_STACK_SIZE: usize = KiB(4 * 5);
 
 /// generic interrupt handler, that is called for any interrupt handler with
 /// `interrupt_vector >= 32`.

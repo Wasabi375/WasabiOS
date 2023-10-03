@@ -1,8 +1,11 @@
 use std::{
     ffi::{OsStr, OsString},
-    io,
     os::unix::prelude::OsStrExt,
-    process::{Command, ExitStatus},
+    path::Path,
+    process::{Child, Command, ExitStatus},
+    sync::mpsc::{self, RecvTimeoutError, TryRecvError},
+    thread,
+    time::Duration,
 };
 
 pub enum Arch {
@@ -17,9 +20,9 @@ impl Arch {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Kernel<'a> {
-    pub path: &'a str,
+    pub path: &'a Path,
     pub uefi: bool,
 }
 
@@ -38,14 +41,46 @@ impl Default for QemuConfig<'_> {
     }
 }
 
-pub fn launch_qemu<'a, F>(
+pub fn launch_with_timeout<'a>(
+    timeout: Duration,
     kernel: Kernel<'a>,
     qemu: QemuConfig<'a>,
-    config: F,
-) -> io::Result<ExitStatus>
-where
-    F: FnOnce(&mut Command, &HostArchitecture),
-{
+) -> Result<ExitStatus, RecvTimeoutError> {
+    let (sender, receiver) = mpsc::channel();
+    let (kill_sender, kill_reciver) = mpsc::channel();
+
+    let mut child = launch_qemu(kernel, qemu);
+    let handle = thread::spawn(move || {
+        loop {
+            if let Ok(Some(exit)) = child.try_wait() {
+                match sender.send(exit) {
+                    Ok(_) => return,  // success
+                    Err(_) => return, // reciever dropped, e.g timeout
+                }
+            } else {
+                match kill_reciver.try_recv() {
+                    Ok(_) | Err(TryRecvError::Disconnected) => {
+                        let _ = child.kill();
+                        return;
+                    }
+                    Err(TryRecvError::Empty) => {}
+                }
+                thread::yield_now();
+            }
+        }
+    });
+
+    match receiver.recv_timeout(timeout) {
+        Ok(r) => Ok(r),
+        Err(e) => {
+            let _ = kill_sender.send(());
+            let _ = handle.join();
+            Err(e)
+        }
+    }
+}
+
+pub fn launch_qemu<'a>(kernel: Kernel<'a>, qemu: QemuConfig<'a>) -> Child {
     let host_arch = HostArchitecture::get();
 
     let mut cmd = Command::new(host_arch.qemu(Arch::X86_64));
@@ -72,11 +107,7 @@ where
     if !qemu.devices.is_empty() {
         cmd.arg("-device").arg(qemu.devices);
     }
-
-    config(&mut cmd, &host_arch);
-
-    let mut child = cmd.spawn().unwrap();
-    child.wait()
+    cmd.spawn().unwrap()
 }
 
 fn concat<A: AsRef<OsStr>, B: AsRef<OsStr>>(a: A, b: B) -> OsString {

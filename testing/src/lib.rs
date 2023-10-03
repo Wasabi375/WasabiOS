@@ -2,36 +2,15 @@
 
 #![no_std]
 #![feature(error_in_core)]
-// #![warn(missing_docs, rustdoc::missing_crate_level_docs)] // TODO enable
+#![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use core::fmt::Pointer;
+extern crate alloc;
 
 pub use testing_derive::kernel_test;
 
 use linkme::distributed_slice;
 use thiserror::Error;
-
-/// Exit code for qemu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum QemuExitCode {
-    /// kernel exit successfuly.
-    Success = 0x10,
-    /// an error occured
-    Error = 0x11,
-}
-
-/// stop the kernel and exit qeum
-pub fn exit_qemu(code: QemuExitCode) -> ! {
-    use x86_64::instructions::port::Port;
-
-    unsafe {
-        let mut port = Port::new(0xf4);
-        port.write(code as u32);
-    }
-    unreachable!();
-}
 
 /// Error type for Kernel-tests
 #[derive(Error, Clone, Debug, PartialEq, Eq)]
@@ -41,20 +20,20 @@ pub enum KernelTestError {
     Fail,
 }
 
+// TODO use Termination trait as return type?
 /// Function signature used for kernel test functions
 pub type KernelTestFn = fn() -> Result<(), KernelTestError>;
 
 /// Describes the possible ways a test can exit
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TestExitState {
     /// The test finishes normaly
     Succeed,
     /// The test finishes with the specified [KernelTestError] or any
     /// [KernelTestError] if `None`
     Error(Option<KernelTestError>),
-    // /// The test panics
-    // TODO Panic,
-    // TODO page_fault, etc? Do I want this?
+    /// The test panics
+    Panic,
 }
 
 /// The source code location of a test function
@@ -93,8 +72,17 @@ pub struct KernelTestDescription {
     /// the actual test
     pub test_fn: KernelTestFn,
 
+    /// The source location of the test
     pub test_location: SourceLocation,
+
+    /// If any test has this flag set, only tests with this flag will be executed
+    pub focus: bool,
+
+    /// Tests with this flag will only be executed, if they also have the
+    /// [focus](KernelTestDescription::focus) flag
+    pub ignore: bool,
 }
 
+/// The distributed slice, collecting all kernel testss marked with `#[kernel_test]`
 #[distributed_slice]
 pub static KERNEL_TESTS: [KernelTestDescription] = [..];

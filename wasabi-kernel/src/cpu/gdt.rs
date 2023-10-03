@@ -11,10 +11,13 @@ use x86_64::{
     VirtAddr,
 };
 
-use crate::cpu::interrupts::DOUBLE_FAULT_STACK_SIZE;
+use crate::cpu::interrupts::{DOUBLE_FAULT_STACK_SIZE, PAGE_FAULT_STACK_SIZE};
 
 /// IST INDEX used to access separate stack for double fault exceptions
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
+
+/// IST INDEX used to access sparate stack for page fault exceptions
+pub const PAGE_FAULT_IST_INDEX: u16 = 1;
 
 /// set up gdt
 pub fn init() {
@@ -49,6 +52,14 @@ lazy_static! {
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
             /// double fault stack
             static mut STACK: [u8; DOUBLE_FAULT_STACK_SIZE] = [0; DOUBLE_FAULT_STACK_SIZE];
+
+            // safety: lazy_static initializer is guared by a spin lock
+            let start = VirtAddr::from_ptr(unsafe { &STACK });
+            let end = start + DOUBLE_FAULT_STACK_SIZE;
+            end
+        };
+        tss.interrupt_stack_table[PAGE_FAULT_IST_INDEX as usize] = {
+            static mut STACK: [u8; PAGE_FAULT_STACK_SIZE] = [0; PAGE_FAULT_STACK_SIZE];
 
             // safety: lazy_static initializer is guared by a spin lock
             let start = VirtAddr::from_ptr(unsafe { &STACK });

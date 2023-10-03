@@ -11,9 +11,13 @@
     allocator_api,
     result_flattening,
     maybe_uninit_uninit_array,
-    maybe_uninit_array_assume_init
+    maybe_uninit_array_assume_init,
+    stmt_expr_attributes,
+    panic_info_message,
+    box_into_inner
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
+#![allow(rustdoc::private_intra_doc_links)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod core_local;
@@ -24,6 +28,8 @@ pub mod mem;
 pub mod panic;
 pub mod prelude;
 pub mod serial;
+#[cfg(feature = "test")]
+pub mod testing;
 pub mod time;
 
 extern crate alloc;
@@ -97,4 +103,14 @@ pub const fn bootloader_config_common(
 ) -> bootloader_api::BootloaderConfig {
     config.mappings.page_table_recursive = Some(Mapping::Dynamic);
     config
+}
+
+#[cfg(feature = "test")]
+mod test {
+    use testing::{kernel_test, KernelTestError};
+
+    #[kernel_test]
+    fn test_in_wasabi_kernel() -> Result<(), KernelTestError> {
+        Ok(())
+    }
 }

@@ -625,6 +625,28 @@ impl<const N: usize> StaticString<N> {
         };
     }
 
+    /// Creates a [TruncatingWrite] wrapper for `self`. This is a wrapper around
+    /// [StaticString] where [core::fmt::Write] calls prohibit truncating
+    /// behaviour instead of failing if `self` is full.
+    ///
+    /// # Example usage:
+    /// ```
+    /// # use staticvec::{StaticString, StringError};
+    /// # fn main() -> Result<(), StringError> {
+    /// let mut s = StaticString::<15>::try_from_str("My String")?;
+    /// s.as_truncating().write_str("!123456789 everything after 5 will be truncated");
+    /// assert_eq!(s.as_str(), "My String!12345");
+    /// let mut s = StaticSTring::<20>::new();
+    /// s.as_truncationg().write_str("0".repeate(21).as_strt());
+    /// assert_eq!(s.as_str(), "0".repeate(20).as_str());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline(always)]
+    pub fn as_truncating(&mut self) -> TruncatingWrite<'_, N> {
+        TruncatingWrite { string: self }
+    }
+
     /// Pushes `string` to the StaticString if `self.len() + string.len()` does not exceed
     /// the StaticString's total capacity, or returns a
     /// [`CapacityError`](crate::errors::CapacityError) otherwise.
@@ -1263,5 +1285,19 @@ impl<const N: usize> StaticString<N> {
             let grow: isize = replace_length as isize - replaced as isize;
             unsafe { self.vec.set_len((old_length as isize + grow) as usize) };
         }
+    }
+}
+
+/// A wrapper for a [StaticString] that implements [core::fmt::Write]
+/// but unlike [StaticString] truncates if the string is full instead of
+/// failing.
+pub struct TruncatingWrite<'a, const N: usize> {
+    pub(crate) string: &'a mut StaticString<N>,
+}
+
+impl<const N: usize> core::fmt::Write for TruncatingWrite<'_, N> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.string.push_str_truncating(s);
+        Ok(())
     }
 }

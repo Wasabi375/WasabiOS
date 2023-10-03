@@ -152,6 +152,20 @@ impl<T, M: ?Sized + LockCellInternal<T>> DerefMut for LockCellGuard<'_, T, M> {
     }
 }
 
+impl<T, M: ?Sized + LockCellInternal<T>> AsRef<T> for LockCellGuard<'_, T, M> {
+    fn as_ref(&self) -> &T {
+        // Safety: There can always be only 1 guard for a given mutex so this is safe
+        unsafe { self.lockcell.get() }
+    }
+}
+
+impl<T, M: ?Sized + LockCellInternal<T>> AsMut<T> for LockCellGuard<'_, T, M> {
+    fn as_mut(&mut self) -> &mut T {
+        // Safety: There can always be only 1 guard for a given mutex so this is safe
+        unsafe { self.lockcell.get_mut() }
+    }
+}
+
 impl<T: Display, M: ?Sized + LockCellInternal<T>> Display for LockCellGuard<'_, T, M> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         (**self).fmt(f)
@@ -309,10 +323,10 @@ impl<T, I> TicketLock<T, I> {
     ///
     /// All internals are accessed with relaxed loads
     pub fn spew_state<W: core::fmt::Write>(&self, writer: &mut W) {
-        let current = self.current_ticket.load(Ordering::Relaxed);
-        let next = self.next_ticket.load(Ordering::Relaxed);
-        let owner = self.owner.load(Ordering::Relaxed);
-        write!(
+        let current = self.current_ticket.load(Ordering::SeqCst);
+        let next = self.next_ticket.load(Ordering::SeqCst);
+        let owner = self.owner.load(Ordering::SeqCst);
+        let _ = write!(
             writer,
             "[TicketLock(c: {}, n: {}, o: {})]\n",
             current, next, owner
@@ -768,10 +782,6 @@ pub trait InterruptState: 'static {
     /// Gets the ID of the running core. It's required that this core ID is
     /// unique to the core.
     fn core_id() -> CoreId;
-
-    /// Returns `true` if any lock is held. This is only availble during tests
-    #[cfg(feature = "test")]
-    fn in_lock() -> bool;
 
     /// Signal the kernel that a lock was taken. If `disable_interrupts` the
     /// lock does not support being interrupted and therefor we must disable

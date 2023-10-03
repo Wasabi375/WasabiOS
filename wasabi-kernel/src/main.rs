@@ -48,7 +48,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     {
         let mut apic_guard = locals!().apic.lock();
-        let apic = apic_guard.as_mut().unwrap();
+        let apic = apic_guard.as_mut().as_mut().unwrap();
         apic.timer().calibrate();
         info!("apic timer: {:#?}", apic.timer());
 

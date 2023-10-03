@@ -1,26 +1,23 @@
 //! Kernel tests
-
 #![no_std]
 #![no_main]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![feature(stmt_expr_attributes)]
 
 #[allow(unused_imports)]
 #[macro_use]
 extern crate wasabi_kernel;
 
-use log::error;
 #[allow(unused_imports)]
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
 use itertools::Itertools;
-use linkme::distributed_slice;
 use testing::{
-    kernel_test, KernelTestDescription, KernelTestError, KernelTestFn, QemuExitCode, TestExitState,
-    KERNEL_TESTS,
+    kernel_test, KernelTestDescription, KernelTestError, KernelTestFn, TestExitState, KERNEL_TESTS,
 };
-use wasabi_kernel::{bootloader_config_common, init};
+use wasabi_kernel::{bootloader_config_common, init, testing::qemu};
 
 /// configuration for the bootloader in test mode
 const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
@@ -33,21 +30,28 @@ bootloader_api::entry_point!(kernel_test_main, config = &BOOTLOADER_CONFIG);
 fn kernel_test_main(boot_info: &'static mut BootInfo) -> ! {
     init(boot_info);
 
-    let success = run_tests();
+    unsafe {
+        locals!().disable_interrupts();
+    }
+
+    let success = run_tests_no_panic();
 
     info!("Kernel tests done! cpu::halt()");
 
     if success {
-        testing::exit_qemu(QemuExitCode::Success);
+        qemu::exit(qemu::ExitCode::Success);
     } else {
-        testing::exit_qemu(QemuExitCode::Error);
+        qemu::exit(qemu::ExitCode::Error);
     }
 }
 
-fn run_tests() -> bool {
+fn run_tests_no_panic() -> bool {
     info!("Running kernel tests");
     let mut total_count = 0;
     let mut total_success = 0;
+
+    let focus_only = KERNEL_TESTS.iter().any(|t| t.focus);
+
     for module in &KERNEL_TESTS
         .iter()
         .group_by(|desc| desc.test_location.module)
@@ -57,6 +61,15 @@ fn run_tests() -> bool {
         let mut success = 0;
 
         for test in module.1 {
+            if test.expected_exit == TestExitState::Panic {
+                continue;
+            }
+            if focus_only && !test.focus {
+                continue;
+            }
+            if test.ignore && !test.focus {
+                continue;
+            }
             count += 1;
             if run_test(test) {
                 success += 1;
@@ -97,41 +110,8 @@ fn run_test(test: &KernelTestDescription) -> bool {
     );
 
     let test_fn: KernelTestFn = test.test_fn;
-    let test_result: Result<(), KernelTestError> = test_fn();
-    match &test.expected_exit {
-        TestExitState::Succeed => {
-            if test_result.is_ok() {
-                true
-            } else {
-                error!("TEST {}: failed with {:?}", test.name, test_result);
-                false
-            }
-        }
-        TestExitState::Error(error) => match test_result {
-            Ok(()) => {
-                error!(
-                    "TEST {}: test-function succeeded but it was expected to fail with {:?}",
-                    test.name, error
-                );
-                false
-            }
-            Err(test_result) => {
-                if let Some(error) = error {
-                    if *error == test_result {
-                        true
-                    } else {
-                        error!(
-                            "TEST {}: failed with {:?} but it was expected to fail with {:?}",
-                            test.name, test_result, error
-                        );
-                        false
-                    }
-                } else {
-                    true
-                }
-            }
-        },
-    }
+
+    todo!("run test");
 }
 
 #[kernel_test]
@@ -142,4 +122,9 @@ fn foobar() -> Result<(), KernelTestError> {
 #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
 fn failing() -> Result<(), KernelTestError> {
     Err(KernelTestError::Fail)
+}
+
+#[kernel_test( expected_exit: TestExitState::Panic)]
+fn panicing() -> Result<(), KernelTestError> {
+    panic!("Panic in test");
 }

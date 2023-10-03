@@ -5,10 +5,8 @@ use log::{debug, error, info, trace, warn};
 
 use crate::{
     mem::{
-        frame_allocator::WasabiFrameAllocator,
-        page_allocator::{PageAllocator, Pages},
-        page_table::KERNEL_PAGE_TABLE,
-        MemError, Result,
+        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
+        page_table::KERNEL_PAGE_TABLE, MemError, Result,
     },
     prelude::{LockCell, TicketLock, UnwrapTicketLock},
 };
@@ -25,6 +23,8 @@ use x86_64::{
     structures::paging::{Mapper, PageSize, PageTableFlags, Size4KiB},
     VirtAddr,
 };
+
+use super::structs::{Mapped, Pages};
 
 /// the [KernelHeap]
 // Safety: initialized by [init] before it we use allocated types
@@ -72,7 +72,7 @@ pub fn init() {
     let mut kernel_lock = KERNEL_HEAP.lock_uninit();
     unsafe {
         // Safety: we call init right after we move this to static storage
-        kernel_lock.write(KernelHeap::new(pages));
+        kernel_lock.write(KernelHeap::new(pages.into()));
     }
 
     // Safety: we hold the unit_lock so accessing the heap is valid.
@@ -93,6 +93,7 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
         trace!(target: "GlobalAlloc", "allocate {layout:?}");
         match KernelHeap::get().alloc(layout) {
             Ok(mut mem) => unsafe {
+                trace!(target: "GlobalAlloc", "allocating at {:p}", mem);
                 // Safety: [KernelHeap::alloc] returns a valid pointer
                 // and we still have unique access to it
                 mem.as_mut()
@@ -185,7 +186,8 @@ impl KernelHeap {
     ///
     /// caller ensures that [KernelHeap::init] is the first function called
     /// on this struct. In order to do that, the heap must be moved to static memory
-    unsafe fn new<S: PageSize>(pages: Pages<S>) -> Self {
+    unsafe fn new<S: PageSize>(pages: Mapped<Pages<S>>) -> Self {
+        let pages = pages.0;
         trace!("KernelHeap::new()");
         let heap = LockedAllocator {
             allocator: TicketLock::new(LinkedHeap::empty()),

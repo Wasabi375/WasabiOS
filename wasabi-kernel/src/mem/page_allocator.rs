@@ -3,8 +3,14 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use super::{MemError, Result};
-use crate::{mem::page_table::RecursivePageTableExt, prelude::UnwrapTicketLock};
+use crate::{
+    mem::{
+        page_table::RecursivePageTableExt,
+        structs::{GuardedPages, Pages, Unmapped},
+        MemError, Result,
+    },
+    prelude::UnwrapTicketLock,
+};
 use shared::rangeset::{Range, RangeSet};
 use x86_64::{
     structures::paging::{
@@ -224,6 +230,87 @@ impl PageAllocator {
             .ok_or(MemError::OutOfPages)
     }
 
+    /// allocate multiple consecutive pages, with additional guard pages.
+    ///
+    /// Guard pages are always 4KiB pages. Otherwise there is no difference
+    /// between them and [GuardedPage::pages]. This is just a convenient utility
+    /// to allocate `count` consecutive pages of size `S` with one additional
+    /// 4KiB page at the front and back.
+    pub fn allocate_guarded_pages<S: PageSize>(
+        &mut self,
+        count: usize,
+        head_guard: bool,
+        tail_guard: bool,
+    ) -> Result<GuardedPages<S>> {
+        if !head_guard && !tail_guard {
+            let pages = self.allocate_pages(count)?;
+            return Ok(GuardedPages {
+                head_guard: None,
+                tail_guard: None,
+                pages,
+            });
+        }
+
+        let size = {
+            let mut size = S::SIZE * count as u64;
+            if head_guard {
+                size += Size4KiB::SIZE;
+            }
+            if tail_guard {
+                size += Size4KiB::SIZE;
+            }
+            size
+        };
+        let align = if head_guard {
+            match S::SIZE {
+                Size4KiB::SIZE => S::SIZE,
+                Size2MiB::SIZE | Size1GiB::SIZE => {
+                    // S::SIZE is 4KiB aligned and greater than 4KiB therefor
+                    // SIZE - 4KiB is 4KiB aligned for the gurade page and the
+                    // first page after the guard page is SIZE aligned. tail
+                    // guard is always 4KiB aligned, because SIZE is 4KiB
+                    // aligned
+                    S::SIZE - Size4KiB::SIZE
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            S::SIZE
+        };
+
+        let mut start = self
+            .vaddrs
+            .allocate(size, align)
+            .map(|s| VirtAddr::new(s as u64))
+            .ok_or(MemError::OutOfPages)?;
+
+        let head_guard = if head_guard {
+            let guard = Page::from_start_address(start).expect("head_gurad should be aligned");
+            start += Size4KiB::SIZE;
+            Some(Unmapped(guard))
+        } else {
+            None
+        };
+
+        let first_page = Page::from_start_address(start).expect("first_page should be aligned");
+        start += S::SIZE * count as u64;
+        let pages = Pages { first_page, count };
+
+        let tail_guard = if tail_guard {
+            Some(Unmapped(
+                Page::from_start_address(start).expect("tail guard should be aligned"),
+            ))
+        } else {
+            None
+        };
+
+        Ok(GuardedPages {
+            head_guard,
+            tail_guard,
+            pages,
+        })
+    }
+
     /// allocates a new page of virtual memory with size 4KiB.
     pub fn allocate_page_4k(&mut self) -> Result<Page<Size4KiB>> {
         self.allocate_page()
@@ -255,84 +342,5 @@ impl PageAllocator {
 impl Default for PageAllocator {
     fn default() -> Self {
         PageAllocator::new()
-    }
-}
-
-/// a number of consecutive pages in virtual memory
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Pages<S: PageSize> {
-    /// the first page
-    pub first_page: Page<S>,
-    /// the number of consecutive pages in virtual memory
-    pub count: usize,
-}
-
-impl<S: PageSize> Pages<S> {
-    /// the start addr of the fist page
-    pub fn start_addr(&self) -> VirtAddr {
-        self.first_page.start_address()
-    }
-
-    /// the total size in bytes of all consecutive pages
-    pub fn size(&self) -> u64 {
-        S::SIZE * self.count as u64
-    }
-
-    /// the end addr (inclusive) of the last page
-    pub fn end_addr(&self) -> VirtAddr {
-        (self.first_page + self.count as u64 - 1).start_address() + (S::SIZE - 1)
-    }
-
-    /// iterates over all consecutive pages
-    pub fn iter(&self) -> PagesIter<S> {
-        PagesIter {
-            first_page: self.first_page,
-            count: self.count,
-            index: 0,
-        }
-    }
-}
-
-/// an double ended iterator over consecutive pages
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PagesIter<S: PageSize> {
-    first_page: Page<S>,
-    count: usize,
-    index: isize,
-}
-
-impl<S: PageSize> Iterator for PagesIter<S> {
-    type Item = Page<S>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.count as isize {
-            None
-        } else {
-            let res = Some(self.first_page + self.index as u64);
-            self.index += 1;
-            res
-        }
-    }
-}
-
-impl<S: PageSize> DoubleEndedIterator for PagesIter<S> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if self.index < 0 {
-            None
-        } else {
-            let res = Some(self.first_page + self.index as u64);
-            self.index -= 1;
-            res
-        }
-    }
-}
-
-impl<S: PageSize> PartialOrd for PagesIter<S> {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        if self.first_page != other.first_page {
-            None
-        } else {
-            self.index.partial_cmp(&other.index)
-        }
     }
 }

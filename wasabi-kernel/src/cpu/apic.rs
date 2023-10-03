@@ -5,7 +5,7 @@ use core::ops::RangeInclusive;
 
 use crate::{
     cpu::cpuid::cpuid,
-    locals, map_page,
+    locals, map_frame,
     mem::{MemError, VirtAddrExt},
     time::{calibration_tick, read_tsc},
 };
@@ -20,7 +20,7 @@ use volatile::{
 use x86_64::{
     instructions::port::Port,
     registers::model_specific::Msr,
-    structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB},
+    structures::paging::{PageTableFlags, PhysFrame, Size4KiB},
     PhysAddr, VirtAddr,
 };
 
@@ -200,7 +200,7 @@ impl Apic {
 
         let page = unsafe {
             // Safety: new page with apic frame (only used here) and is therefor safe
-            map_page!(Size4KiB, apic_table_flags, phys_frame)
+            map_frame!(Size4KiB, apic_table_flags, phys_frame)
                 .map_err(|e| ApicCreationError::Mem(e))?
         };
 

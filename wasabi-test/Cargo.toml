@@ -9,6 +9,7 @@ no-color = ["wasabi-kernel/no-color"]
 [dependencies]
 shared = { path = "../shared" }
 testing = { path = "../testing" }
+staticvec = { path = "../staticvec" }
 
 bootloader_api = { version = "0.11.3", path = "../../bootloader/api" }
 log.workspace = true

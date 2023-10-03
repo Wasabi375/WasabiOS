@@ -45,8 +45,10 @@
 #![no_std]
 
 use core::{
-    fmt::{self, Write},
+    any::Any,
+    fmt::{self, Error, Write},
     marker::PhantomData,
+    ops::DerefMut,
 };
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use shared::lockcell::LockCell;
@@ -54,6 +56,8 @@ use staticvec::{StaticString, StaticVec};
 
 #[cfg(feature = "color")]
 use colored::{Color, ColoredString, Colorize};
+
+static mut LOGGER: Option<&dyn WriteLog> = None;
 
 /// Implements [`Log`] and a set of simple builder methods for configuration.
 ///
@@ -197,6 +201,7 @@ where
         self
     }
 }
+
 impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R> {
     /// 'Init' the actual logger, instantiate it and configure it,
     /// this method MUST be called in order for the logger to be effective.
@@ -216,7 +221,75 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<
             .map(|lvl| lvl.max(self.default_level))
             .unwrap_or(self.default_level);
         log::set_max_level(max_level);
+
+        unsafe {
+            LOGGER = Some(self);
+        }
+
         log::set_logger(self)
+    }
+}
+
+pub trait WriteLog {
+    fn write_log(&self, write: &mut dyn Write, record: &Record) -> Result<(), Error>;
+}
+
+impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R> {
+    pub fn write_log<W2: Write + ?Sized>(
+        &self,
+        write: &mut W2,
+        record: &Record,
+    ) -> Result<(), Error> {
+        if !self.enabled(record.metadata()) {
+            return Ok(());
+        }
+
+        let level = record.level();
+        if cfg!(feature = "color") {
+            let color = self.level_colors[level as usize];
+            let mut level_str: StaticString<6> = StaticString::new();
+            write!(level_str, "{:<5}", level.as_str())
+                .expect("StaticString of size 6 should be enough for the level");
+            let level: ColoredString<50> = level_str
+                .as_str()
+                .color(color)
+                .expect("StaticString of size 50 should be enough for the level + color");
+
+            write.write_fmt(format_args!("{}", level))?;
+        } else {
+            write.write_fmt(format_args!("{:<5}", level))?;
+        };
+
+        let target = if !record.target().is_empty() {
+            record.target()
+        } else {
+            record.module_path().unwrap_or_default()
+        };
+
+        let mut target_renamed = false;
+        for (old_name, new_name) in &self.module_rename_mapping {
+            if target.starts_with(old_name) {
+                target_renamed = true;
+                let rest = &target[old_name.len()..];
+                write.write_fmt(format_args!(" [{}{}]", new_name, rest))?;
+                break;
+            }
+        }
+        if !target_renamed {
+            write.write_fmt(format_args!(" [{target}]"))?;
+        }
+
+        write.write_fmt(format_args!(" {}\n", record.args()))?;
+
+        Ok(())
+    }
+}
+
+impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> WriteLog
+    for StaticLogger<'a, W, L, N, R>
+{
+    fn write_log(&self, write: &mut dyn Write, record: &Record) -> Result<(), Error> {
+        self.write_log(write, record)
     }
 }
 
@@ -243,57 +316,124 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
 
         let mut write = self.writer.lock();
 
-        let level = record.level();
-        let write_result = if cfg!(feature = "color") {
-            let color = self.level_colors[level as usize];
-            let mut level_str: StaticString<6> = StaticString::new();
-            write!(level_str, "{:<5}", level.as_str())
-                .expect("StaticString of size 6 should be enough for the level");
-            let level: ColoredString<50> = level_str
-                .as_str()
-                .color(color)
-                .expect("StaticString of size 50 should be enough for the level + color");
-
-            write.write_fmt(format_args!("{}", level))
-        } else {
-            write.write_fmt(format_args!("{:<5}", level))
-        };
-        if write_result.is_err() {
-            drop(write);
-            panic!("Failed to write to serial port!");
-        }
-
-        let target = if !record.target().is_empty() {
-            record.target()
-        } else {
-            record.module_path().unwrap_or_default()
-        };
-
-        let mut target_renamed = false;
-        for (old_name, new_name) in &self.module_rename_mapping {
-            if target.starts_with(old_name) {
-                target_renamed = true;
-                let rest = &target[old_name.len()..];
-                write
-                    .write_fmt(format_args!(" [{}{}]", new_name, rest))
-                    .expect("Failed to write to serial port!");
-                break;
-            }
-        }
-        if !target_renamed {
-            write
-                .write_fmt(format_args!(" [{target}]"))
-                .expect("Failed to write to serial port!");
-        }
-
-        if write
-            .write_fmt(format_args!(" {}\n", record.args()))
-            .is_err()
-        {
-            drop(write);
-            panic!("Failed to write to serial port!");
+        if let Err(e) = self.write_log(write.deref_mut(), record) {
+            panic!("StaticLogger failed to write to output: {e:?}");
         }
     }
 
     fn flush(&self) {}
+}
+
+pub fn __private_log_write<W: Write>(
+    write: &mut W,
+    args: fmt::Arguments,
+    level: Level,
+    target: &str,
+    module: &'static str,
+    file: &'static str,
+    line: u32,
+) {
+    let record = Record::builder()
+        .args(args)
+        .level(level)
+        .target(target)
+        .module_path_static(Some(module))
+        .file_static(Some(file))
+        .line(Some(line))
+        .build();
+
+    let logger = unsafe { LOGGER };
+
+    if logger.is_none() {
+        panic!("log_write! can only be used with WriteLog");
+    }
+    let logger = logger.unwrap();
+
+    // sanity check, that log::logger and LOGGER point to the same object.
+    // The idea of the check here is that when we set LOGGER we also always call
+    // log::set_logger. Therfore, if the types match the references should also match
+    // We can't check the reference directly, because we are dealling with trait objects.
+    assert_eq!(logger.type_id(), log::logger().type_id());
+
+    if let Err(e) = logger.write_log(write, &record) {
+        panic!("Failed to write log: {e:?}");
+    }
+}
+
+#[macro_export]
+macro_rules! log_write {
+    ($write:expr, target: $target:expr, $level:expr, $($arg:tt)+) => {{
+        use log::log_enabled;
+        if log_enabled!(target: $target, $level) {
+            $crate::__private_log_write($write, format_args!($($arg)+),
+                $level, $target, module_path!(), file!(), line!());
+        }
+    }};
+    ($write:expr, $level:expr, $($arg:tt)+) => {{
+        use log::log_enabled;
+        if log_enabled!($level) {
+            $crate::__private_log_write($write, format_args!($($arg)+),
+                $level, module_path!(), module_path!(), file!(), line!());
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! trace_write {
+    ($write:expr, target: $target:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, target: $target, Level::Trace, $($arg)+);
+    }};
+    ($write:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, Level::Trace, $($arg)+);
+    }};
+}
+
+#[macro_export]
+macro_rules! debug_write {
+    ($write:expr, target: $target:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, target: $target, Level::Debug, $($arg)+);
+    }};
+    ($write:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, Level::Debug, $($arg)+);
+    }};
+}
+
+#[macro_export]
+macro_rules! info_write {
+    ($write:expr, target: $target:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, target: $target, Level::Info, $($arg)+);
+    }};
+    ($write:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, Level::Info, $($arg)+);
+    }};
+}
+
+#[macro_export]
+macro_rules! warn_write {
+    ($write:expr, target: $target:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, target: $target, Level::Warn, $($arg)+);
+    }};
+    ($write:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, Level::Warn, $($arg)+);
+    }};
+}
+
+#[macro_export]
+macro_rules! error_write {
+    ($write:expr, target: $target:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, target: $target, Level::Error, $($arg)+);
+    }};
+    ($write:expr, $($arg:tt)+) => {{
+        use log::Level;
+        $crate::log_write!($write, Level::Error, $($arg)+);
+    }};
 }

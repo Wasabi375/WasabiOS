@@ -4,7 +4,6 @@ pub mod apic;
 pub mod cpuid;
 pub mod gdt;
 pub mod interrupts;
-
 pub use instructions::*;
 
 #[allow(unsafe_op_in_unsafe_fn)]

@@ -8,7 +8,7 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
     let fn_name_ident = &test_fn.sig.ident;
     let fn_name = fn_name_ident.to_string();
 
-    let description_name = format_ident!("__KERNEL_TEST_{}", fn_name);
+    let description_name = format_ident!("__KERNEL_TEST_{}", fn_name.to_uppercase());
 
     let name = args
         .name
@@ -28,16 +28,21 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
         }
     };
 
+    let focus = args.focus;
+    let ignore = args.ignore;
+
     quote! {
         #test_fn
 
-        #[distributed_slice(testing::KERNEL_TESTS)]
+        #[linkme::distributed_slice(testing::KERNEL_TESTS)]
         static #description_name: testing::KernelTestDescription = testing::KernelTestDescription {
             name: #name,
             fn_name: #fn_name,
             expected_exit: #expected_exit,
             test_fn: #fn_name_ident,
             test_location: #test_location,
+            focus: #focus,
+            ignore: #ignore
         };
     }
 }

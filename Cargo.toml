@@ -1,34 +1,19 @@
 [package]
 name = "wasabi_os"
-version = "0.1.0"
-edition = "2021"
-
-[features]
-no-color = [ "wasabi-kernel/no-color" ]
-bios-boot = ["bootloader/bios"]
-
-
-[build-dependencies]
-bootloader = { version = "0.11", path = "../bootloader", default-features = false, features = ["uefi"]}
-
-[build-dependencies.wasabi-kernel]
-path = "wasabi-kernel"
-artifact = "bin"
-target = "x86_64-unknown-none"
-features = ["no-unicode-log"]
-
-[build-dependencies.wasabi-test]
-path = "wasabi-test"
-artifact = "bin"
-target = "x86_64-unknown-none"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
+clap = { version = "4.3.4", features = ["derive"] }
 # used for UEFI booting in QEMU
 ovmf-prebuilt = "0.1.0-alpha.1"
+bootloader = { version = "0.11", path = "../bootloader", default-features = false, features = ["uefi"]}
+cargo_toml = "0.15.3"
 
 [workspace]
 members = [
     "wasabi-kernel",
+    "wasabi-test",
     "shared-derive",
     "shared",
     "logger",
@@ -38,6 +23,10 @@ members = [
     "testing",
     "testing/derive",
 ]
+# default-members = [
+#     "wasabi-kernel",
+#     "wasabi-test"
+# ]
 
 [workspace.package]
 version = "0.1.0"
@@ -55,12 +44,6 @@ proc-macro2 = "1.0.58"
 quote = "1.0.27"
 syn = { version = "2.0.16", features = ["full"] }
 itertools = { version = "0.10.5", default-features = false, features = ["use_alloc"] }
-
-
-[[test]]
-name = "run-qemu"
-path = "tests/run-qemu.rs"
-edition = "2021"
 
 [profile.dev]
 panic = "abort"

@@ -47,7 +47,7 @@ pub use crate::heap::{
 pub use crate::iterators::{
     StaticVecDrain, StaticVecIntoIter, StaticVecIterConst, StaticVecIterMut, StaticVecSplice,
 };
-pub use crate::string::{StaticString, StringError};
+pub use crate::string::{StaticString, StringError, TruncatingWrite};
 use crate::utils::{const_min, quicksort_internal, reverse_copy, zst_ptr_add, zst_ptr_add_mut};
 
 mod errors;

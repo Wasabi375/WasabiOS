@@ -8,12 +8,16 @@ use syn::{
 pub struct Args {
     pub name: Option<Expr>,
     pub expected_exit: Option<Expr>,
+    pub focus: bool,
+    pub ignore: bool,
 }
 
 impl Parse for Args {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut name = None;
         let mut expected_exit = None;
+        let mut focus = false;
+        let mut ignore = false;
 
         while !input.is_empty() {
             if input.lookahead1().peek(Ident::peek_any) {
@@ -35,6 +39,20 @@ impl Parse for Args {
                         }
                         let _: Token!(:) = input.parse()?;
                         expected_exit = Some(input.parse()?);
+                    }
+                    "focus" | "x" | "f" => {
+                        if !focus {
+                            focus = true;
+                        } else {
+                            return Err(Error::new_spanned(ident, "focus can only be set once"));
+                        }
+                    }
+                    "ignore" | "i" => {
+                        if !ignore {
+                            ignore = true;
+                        } else {
+                            return Err(Error::new_spanned(ident, "ignore can only be set once"));
+                        }
                     }
                     _ => {
                         return Err(Error::new_spanned(
@@ -62,6 +80,8 @@ impl Parse for Args {
         Ok(Args {
             name,
             expected_exit,
+            focus,
+            ignore,
         })
     }
 }
