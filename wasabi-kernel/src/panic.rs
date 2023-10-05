@@ -3,6 +3,7 @@
 use core::panic::PanicInfo;
 use logger::error_write;
 use shared::lockcell::LockCellInternal;
+use uart_16550::SerialPort;
 
 use crate::{
     boot_info, cpu,
@@ -20,7 +21,7 @@ fn panic(info: &PanicInfo) -> ! {
     #[cfg(feature = "test")]
     crate::testing::panic::test_panic_handler(info);
 
-    let write = unsafe {
+    let write: &mut SerialPort = unsafe {
         // Safety: we are in a panic state, so anything relying on interrupts is
         // done for anyways
         locals!().disable_interrupts();

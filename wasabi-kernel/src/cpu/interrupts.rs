@@ -142,13 +142,6 @@ fn check_interrupt_vector(vector: u8) {
 }
 
 exception_fn!(breakpoint_handler, stack_frame, {
-    unsafe {
-        // TEMP hack to see if I deadlock
-        use crate::serial::SERIAL1;
-        use core::fmt::Write;
-        use shared::lockcell::LockCellInternal;
-        let _ = write!(SERIAL1.get_mut(), "breakpoint\n");
-    }
     warn!("breakpoint hit at\n{stack_frame:#?}");
 });
 

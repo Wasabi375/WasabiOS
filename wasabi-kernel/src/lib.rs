@@ -71,6 +71,9 @@ pub fn init(boot_info: &'static mut BootInfo) {
             time::calibrate_tsc();
 
             // Safety: bsp during `init`
+            serial::init_serial_ports();
+
+            // Safety: bsp during `init`
             logger::init();
 
             // Safety: inherently unsafe and can crash, but if cpuid isn't supported

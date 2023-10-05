@@ -1,10 +1,9 @@
 //! A module containing logging and debug utilities
-use lazy_static::__Deref;
 use log::{info, LevelFilter};
 use logger::StaticLogger;
 use uart_16550::SerialPort;
 
-use crate::{prelude::TicketLock, serial::SERIAL1, serial_println};
+use crate::{prelude::UnwrapTicketLock, serial::SERIAL1, serial_println};
 
 /// number of module filers allowed for the logger
 const MAX_LEVEL_FILTERS: usize = 100;
@@ -17,7 +16,7 @@ pub static mut LOGGER: Option<
     StaticLogger<
         'static,
         SerialPort,
-        TicketLock<SerialPort>,
+        UnwrapTicketLock<SerialPort>,
         MAX_LEVEL_FILTERS,
         MAX_RENAME_MAPPINGS,
     >,
@@ -27,7 +26,8 @@ pub static mut LOGGER: Option<
 ///
 /// # Safety:
 ///
-/// must only ever be called once at the start of the kernel boot proces
+/// must only ever be called once at the start of the kernel boot proces and after
+/// [SERIAL1] is initialized
 pub unsafe fn init() {
     assert!(
         MAX_LEVEL_FILTERS + MAX_RENAME_MAPPINGS <= 253,
@@ -35,7 +35,7 @@ pub unsafe fn init() {
             StaticLogger doesn't fit in 4KiB which causes tripple fault on boot"
     );
 
-    let logger = StaticLogger::new(SERIAL1.deref())
+    let logger = StaticLogger::new(&SERIAL1)
         .with_level(LevelFilter::Debug)
         // .with_level(LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)

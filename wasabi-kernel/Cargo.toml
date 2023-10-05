@@ -20,7 +20,7 @@ testing = { path = "../testing", optional = true }
 bootloader_api = { version = "0.11.3", path = "../../bootloader/api" }
 lazy_static.workspace = true
 thiserror.workspace = true
-uart_16550 = "0.2.18"
+uart_16550.workspace = true
 x86_64.workspace = true
 log.workspace = true
 bit_field.workspace = true

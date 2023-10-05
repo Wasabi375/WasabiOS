@@ -4,6 +4,7 @@
 use log::{debug, error, info, warn};
 #[allow(unused_imports)]
 use logger::{debug_write, error_write, info_write};
+use uart_16550::SerialPort;
 
 use crate::{locals, serial::SERIAL1, testing::qemu};
 use core::panic::PanicInfo;
@@ -11,7 +12,7 @@ use shared::lockcell::LockCellInternal;
 
 /// panic handler used during tests
 pub fn test_panic_handler(info: &PanicInfo) -> ! {
-    let write = unsafe {
+    let write: &mut SerialPort = unsafe {
         // Safety: we are in a panic state, so anything relying on interrupts is
         // done for anyways
         locals!().disable_interrupts();

@@ -13,11 +13,14 @@ extern crate wasabi_kernel;
 use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
+use core::fmt::Write;
 use itertools::Itertools;
+use shared::lockcell::LockCell;
 use testing::{
     kernel_test, KernelTestDescription, KernelTestError, KernelTestFn, TestExitState, KERNEL_TESTS,
 };
-use wasabi_kernel::{bootloader_config_common, init, testing::qemu};
+use uart_16550::SerialPort;
+use wasabi_kernel::{bootloader_config_common, init, serial::SERIAL2, testing::qemu};
 
 /// configuration for the bootloader in test mode
 const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
@@ -25,6 +28,24 @@ const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
     bootloader_config_common(config)
 };
 bootloader_api::entry_point!(kernel_test_main, config = &BOOTLOADER_CONFIG);
+
+fn wait_for_test_ready_handshake(port: &mut SerialPort) {
+    let _ = write!(port, "tests ready");
+
+    const EXPECTED: &[u8] = b"start testing";
+    let mut response_position = 0;
+    loop {
+        let c = port.receive();
+        if c == EXPECTED[response_position] {
+            response_position += 1;
+        } else {
+            response_position = 0;
+        }
+        if response_position == EXPECTED.len() {
+            break;
+        }
+    }
+}
 
 /// the main entry point for the kernel in test mode
 fn kernel_test_main(boot_info: &'static mut BootInfo) -> ! {
@@ -34,11 +55,20 @@ fn kernel_test_main(boot_info: &'static mut BootInfo) -> ! {
         locals!().disable_interrupts();
     }
 
+    // TODO make SERIAL port optional
+    // TODO only run no_panic tests if port doesn't exist
+    // that way we don't have to abstract over windows/linux and can use linux only
+    // and have a good set of tests if serial fails
+    // let mut test_serial = SERIAL2.lock();
+
+    // wait_for_test_ready_handshake(&mut test_serial);
+
     let success = run_tests_no_panic();
 
     info!("Kernel tests done! cpu::halt()");
 
     if success {
+        // let _ = write!(test_serial, "success");
         qemu::exit(qemu::ExitCode::Success);
     } else {
         qemu::exit(qemu::ExitCode::Error);
@@ -71,7 +101,7 @@ fn run_tests_no_panic() -> bool {
                 continue;
             }
             count += 1;
-            if run_test(test) {
+            if run_test_no_panic(test) {
                 success += 1;
             }
         }
@@ -103,15 +133,51 @@ fn run_tests_no_panic() -> bool {
     }
 }
 
-fn run_test(test: &KernelTestDescription) -> bool {
+fn run_test_no_panic(test: &KernelTestDescription) -> bool {
+    assert!(test.expected_exit != TestExitState::Panic);
     info!(
         "TEST: {} \t\t {} @ {}",
         test.name, test.fn_name, test.test_location
     );
 
     let test_fn: KernelTestFn = test.test_fn;
+    let test_result = test_fn();
 
-    todo!("run test");
+    return match test.expected_exit {
+        TestExitState::Succeed => match test_result {
+            Ok(()) => true,
+            Err(error) => {
+                error!("TEST failed with {}", error);
+                false
+            }
+        },
+        TestExitState::Error(None) => match test_result {
+            Ok(()) => {
+                error!("TEST terminated sucessfuly, but an error was expected");
+                false
+            }
+            Err(_error) => true,
+        },
+        TestExitState::Error(Some(ref expected)) => match test_result {
+            Ok(()) => {
+                error!("TEST terminated sucessfuly, but an error was expected");
+                false
+            }
+            Err(error) => {
+                if error == *expected {
+                    true
+                } else {
+                    error!(
+                        "TEST terminated with Err({}) but Err({}) was expected",
+                        error, expected
+                    );
+                    false
+                }
+            }
+        },
+
+        TestExitState::Panic => unreachable!(),
+    };
 }
 
 #[kernel_test]

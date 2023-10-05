@@ -4,11 +4,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+anyhow = "1.0.75"
 clap = { version = "4.3.4", features = ["derive"] }
 # used for UEFI booting in QEMU
 ovmf-prebuilt = "0.1.0-alpha.1"
 bootloader = { version = "0.11", path = "../bootloader", default-features = false, features = ["uefi"]}
 cargo_toml = "0.15.3"
+tokio = { version = "1.32.0", features = ["full"] }
 
 [workspace]
 members = [
@@ -23,16 +25,13 @@ members = [
     "testing",
     "testing/derive",
 ]
-# default-members = [
-#     "wasabi-kernel",
-#     "wasabi-test"
-# ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+# TODO remove lazy_static as a dependency, in order to get rid of the external spin-lock
 lazy_static = { version = "1.4.0", features=["spin_no_std"] }
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
 x86_64 = "0.14.10"
@@ -44,6 +43,7 @@ proc-macro2 = "1.0.58"
 quote = "1.0.27"
 syn = { version = "2.0.16", features = ["full"] }
 itertools = { version = "0.10.5", default-features = false, features = ["use_alloc"] }
+uart_16550 = { version = "0.3.0", path = "../uart_16550" }
 
 [profile.dev]
 panic = "abort"

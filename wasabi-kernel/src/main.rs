@@ -29,12 +29,14 @@ use wasabi_kernel::{
         self,
         apic::{self, TimerConfig},
     },
-    init, time,
+    init,
+    serial::SERIAL2,
+    time::{self, sleep_tsc},
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
 fn timer_int_handler(_vec: u8, _isf: InterruptStackFrame) -> Result<(), ()> {
-    info!("hi");
+    trace!("hi");
     Ok(())
 }
 
@@ -45,6 +47,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let startup_time = time::time_since_startup().to_millis();
     info!("tsc clock rate {}MHz", time::tsc_tickrate());
     info!("kernel boot took {:?} - {}", startup_time, startup_time);
+
+    if SERIAL2.lock().is_some() {
+        info!("SERIAL2 found!");
+    } else {
+        info!("SERIAL2 not found");
+    }
 
     {
         let mut apic_guard = locals!().apic.lock();
@@ -62,14 +70,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }));
     }
 
-    // warn!("Causing fault");
-    // let ptr = (0xdeadbeafu64 + 0x8000000000u64) as *mut u8;
-    // unsafe {
-    //     *ptr = 42;
-    // }
-    // info!("fault done");
-
-    x86_64::instructions::interrupts::int3();
+    if let Some(serial2) = SERIAL2.lock().as_mut() {
+        let mut count: u8 = 0;
+        loop {
+            sleep_tsc(time::Duration::Millis(10));
+            serial2.send_raw(count);
+            if count == u8::MAX {
+                count = 0;
+            } else {
+                count += 1;
+            }
+        }
+    }
 
     info!("OS Done! cpu::halt()");
     cpu::halt();
