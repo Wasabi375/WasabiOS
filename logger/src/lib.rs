@@ -45,7 +45,6 @@
 #![no_std]
 
 use core::{
-    any::Any,
     fmt::{self, Error, Write},
     marker::PhantomData,
     ops::DerefMut,
@@ -324,6 +323,12 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
     fn flush(&self) {}
 }
 
+/// logs using the active logger but changing the targeted writer
+///
+/// used to switch out the writer during panics
+///
+/// This function assumes that [LOGGER] and `std::log::logger()` match.
+/// If not this can lead to some unexpected behaviour.
 pub fn __private_log_write<W: Write>(
     write: &mut W,
     args: fmt::Arguments,
@@ -348,12 +353,6 @@ pub fn __private_log_write<W: Write>(
         panic!("log_write! can only be used with WriteLog");
     }
     let logger = logger.unwrap();
-
-    // sanity check, that log::logger and LOGGER point to the same object.
-    // The idea of the check here is that when we set LOGGER we also always call
-    // log::set_logger. Therfore, if the types match the references should also match
-    // We can't check the reference directly, because we are dealling with trait objects.
-    assert_eq!(logger.type_id(), log::logger().type_id());
 
     if let Err(e) = logger.write_log(write, &record) {
         panic!("Failed to write log: {e:?}");

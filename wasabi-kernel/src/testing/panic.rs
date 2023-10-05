@@ -25,7 +25,7 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
 
     error_write!(write, "TEST PANIC: {info}");
 
-    debug_write!(write, "panic exit qemu");
+    debug_write!(write, "panic! exit qemu");
 
     qemu::exit(qemu::ExitCode::Error);
 }
