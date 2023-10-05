@@ -1,11 +1,14 @@
+use anyhow::{bail, Context, Result};
 use std::{
     ffi::{OsStr, OsString},
     os::unix::prelude::OsStrExt,
     path::Path,
-    process::{Child, Command, ExitStatus},
-    sync::mpsc::{self, RecvTimeoutError, TryRecvError},
-    thread,
+    process::ExitStatus,
     time::Duration,
+};
+use tokio::{
+    process::{Child, Command},
+    time,
 };
 
 pub enum Arch {
@@ -30,6 +33,7 @@ pub struct Kernel<'a> {
 pub struct QemuConfig<'a> {
     pub memory: &'a str,
     pub devices: &'a str,
+    pub serial: Vec<&'a str>,
 }
 
 impl Default for QemuConfig<'_> {
@@ -37,63 +41,59 @@ impl Default for QemuConfig<'_> {
         Self {
             memory: "4G",
             devices: "",
+            serial: vec!["stdio"],
         }
     }
 }
 
-pub fn launch_with_timeout<'a>(
+impl<'a> QemuConfig<'a> {
+    pub fn add_serial(&mut self, serial: &'a str) -> Result<()> {
+        if self.serial.len() >= 4 {
+            bail!("Qemu only supports 4 serial ports");
+        }
+
+        self.serial.push(serial);
+        Ok(())
+    }
+}
+
+pub async fn launch_with_timeout<'a>(
     timeout: Duration,
     kernel: Kernel<'a>,
     qemu: QemuConfig<'a>,
-) -> Result<ExitStatus, RecvTimeoutError> {
-    let (sender, receiver) = mpsc::channel();
-    let (kill_sender, kill_reciver) = mpsc::channel();
+) -> Result<ExitStatus> {
+    let mut child = launch_qemu(kernel, qemu).await?;
 
-    let mut child = launch_qemu(kernel, qemu);
-    let handle = thread::spawn(move || {
-        loop {
-            if let Ok(Some(exit)) = child.try_wait() {
-                match sender.send(exit) {
-                    Ok(_) => return,  // success
-                    Err(_) => return, // reciever dropped, e.g timeout
-                }
-            } else {
-                match kill_reciver.try_recv() {
-                    Ok(_) | Err(TryRecvError::Disconnected) => {
-                        let _ = child.kill();
-                        return;
-                    }
-                    Err(TryRecvError::Empty) => {}
-                }
-                thread::yield_now();
-            }
-        }
-    });
-
-    match receiver.recv_timeout(timeout) {
-        Ok(r) => Ok(r),
-        Err(e) => {
-            let _ = kill_sender.send(());
-            let _ = handle.join();
-            Err(e)
-        }
+    match time::timeout(timeout, child.wait()).await {
+        Ok(result) => result.context("qemu execution"),
+        Err(_) => bail!("qemu execution timed out after {timeout:?}"),
     }
 }
 
-pub fn launch_qemu<'a>(kernel: Kernel<'a>, qemu: QemuConfig<'a>) -> Child {
-    let host_arch = HostArchitecture::get();
+pub async fn launch_qemu<'a>(kernel: Kernel<'a>, qemu: QemuConfig<'a>) -> Result<Child> {
+    let host_arch = HostArchitecture::get().await;
 
-    let mut cmd = Command::new(host_arch.qemu(Arch::X86_64));
+    let mut cmd = Command::new(host_arch.qemu(Arch::X86_64).await);
     if kernel.uefi {
         cmd.arg("-bios")
-            .arg(host_arch.resolve(ovmf_prebuilt::ovmf_pure_efi()));
-        cmd.arg("-drive")
-            .arg(concat("format=raw,file=", host_arch.resolve(kernel.path)));
+            .arg(host_arch.resolve(ovmf_prebuilt::ovmf_pure_efi()).await);
+        cmd.arg("-drive").arg(concat(
+            "format=raw,file=",
+            host_arch.resolve(kernel.path).await,
+        ));
     } else {
-        cmd.arg("-drive")
-            .arg(concat("format=raw,file=", host_arch.resolve(kernel.path)));
+        cmd.arg("-drive").arg(concat(
+            "format=raw,file=",
+            host_arch.resolve(kernel.path).await,
+        ));
     }
-    cmd.arg("-serial").arg("stdio");
+    if qemu.serial.is_empty() {
+        cmd.arg("-serial").arg("none");
+    } else {
+        for serial in qemu.serial {
+            cmd.arg("-serial").arg(serial);
+        }
+    }
 
     if host_arch.is_windows() {
         cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
@@ -107,7 +107,7 @@ pub fn launch_qemu<'a>(kernel: Kernel<'a>, qemu: QemuConfig<'a>) -> Child {
     if !qemu.devices.is_empty() {
         cmd.arg("-device").arg(qemu.devices);
     }
-    cmd.spawn().unwrap()
+    cmd.spawn().context("failed to spawn qemu")
 }
 
 fn concat<A: AsRef<OsStr>, B: AsRef<OsStr>>(a: A, b: B) -> OsString {
@@ -156,21 +156,21 @@ pub enum HostArchitecture {
 }
 
 impl HostArchitecture {
-    pub fn get() -> Self {
+    pub async fn get() -> Self {
         if cfg!(windows) {
             return HostArchitecture::Windows;
         }
 
-        if HostArchitecture::is_wsl() {
+        if HostArchitecture::is_wsl().await {
             return HostArchitecture::Wsl;
         }
 
         return HostArchitecture::Linux;
     }
 
-    pub fn is_wsl() -> bool {
+    pub async fn is_wsl() -> bool {
         let mut cmd = Command::new("wslpath");
-        match cmd.output() {
+        match cmd.output().await {
             Ok(_) => true,
             Err(_) => false,
         }
@@ -183,14 +183,17 @@ impl HostArchitecture {
         }
     }
 
-    pub fn resolve<T: Into<OsString>>(&self, path: T) -> OsString {
+    pub async fn resolve<T: Into<OsString>>(&self, path: T) -> OsString {
         match self {
             HostArchitecture::Linux | HostArchitecture::Windows => path.into(),
             HostArchitecture::Wsl => {
                 let mut cmd = Command::new("wslpath");
                 cmd.arg("-a").arg("-w").arg(path.into());
 
-                let output = cmd.output().expect("could not execute \"wslpath\" command");
+                let output = cmd
+                    .output()
+                    .await
+                    .expect("could not execute \"wslpath\" command");
 
                 if !output.status.success() {
                     panic!(
@@ -203,14 +206,17 @@ impl HostArchitecture {
         }
     }
 
-    pub fn resolve_back<T: Into<OsString>>(&self, path: T) -> OsString {
+    pub async fn resolve_back<T: Into<OsString>>(&self, path: T) -> OsString {
         match self {
             HostArchitecture::Linux | HostArchitecture::Windows => path.into(),
             HostArchitecture::Wsl => {
                 let mut cmd = Command::new("wslpath");
                 cmd.arg("--").arg(path.into());
 
-                let output = cmd.output().expect("could not execute \"wslpath\" command");
+                let output = cmd
+                    .output()
+                    .await
+                    .expect("could not execute \"wslpath\" command");
 
                 if !output.status.success() {
                     panic!(
@@ -223,7 +229,7 @@ impl HostArchitecture {
         }
     }
 
-    pub fn qemu(&self, arch: Arch) -> OsString {
+    pub async fn qemu(&self, arch: Arch) -> OsString {
         let mut qemu = OsString::new();
 
         let mut binary_suffix = if cfg!(windows) { ".exe" } else { "" };
@@ -235,7 +241,10 @@ impl HostArchitecture {
                 cmd.arg("query").arg("HKLM\\Software\\QEMU");
                 cmd.arg("/v").arg("Install_Dir").arg("/t").arg("REG_SZ");
 
-                let output = cmd.output().expect("could not execute \"reg.exe\" command");
+                let output = cmd
+                    .output()
+                    .await
+                    .expect("could not execute \"reg.exe\" command");
 
                 if !output.status.success() {
                     panic!(
@@ -275,6 +284,6 @@ impl HostArchitecture {
 
         qemu.push(binary_suffix);
 
-        self.resolve_back(qemu)
+        self.resolve_back(qemu).await
     }
 }
