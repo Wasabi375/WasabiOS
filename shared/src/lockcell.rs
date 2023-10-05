@@ -626,7 +626,7 @@ macro_rules! unwrapLockWrapper {
                     UnwrapLock::new($lock_type::new(MaybeUninit::uninit()))
                 }
 
-                /// creates a new preemtable [Self] that is uninitialized
+                /// creates a new non preemtable [Self] that is uninitialized
                 ///
                 /// # Safety
                 ///
