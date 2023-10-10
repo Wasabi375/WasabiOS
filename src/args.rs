@@ -19,6 +19,7 @@ pub enum BuildCommand {
     Clean(CleanArgs),
     /// run cargo check on kernel
     Check(CheckArgs),
+    // TODO Docs command for building and opening docs
 }
 
 #[derive(Debug, Subcommand)]
@@ -31,15 +32,22 @@ pub enum RunCommand {
 
 #[derive(Args, Debug)]
 pub struct TestArgs {
-    /// fails qemu tests after `timeout` seconds.
+    /// fails qemu instance after `timeout` seconds.
+    ///
+    /// Depending on the settings, qemu might be started multiple times to finishe testing
     #[arg(long, default_value_t = 10)]
     pub timeout: u64,
 
     /// run each test in it's own instance of qemu
+    ///
+    /// This is can be usefull to isolate global state change introduced by one test
+    /// that might cause other tests to fail, but will drastically increase the time
+    /// it takes to finish testing, because qemu combined with the bootloader and kernel
+    /// startup add up to a not insignificant amount of time.
     #[arg(long, short)]
     pub isolated: bool,
 
-    /// continue testing even if test panics, by restarting qemu
+    /// continue testing even if a test panics, by restarting qemu.
     #[arg(long)]
     pub keep_going: bool,
 
@@ -51,9 +59,10 @@ pub struct TestArgs {
 
     /// the tcp port used to communicate with the kernel.
     ///
-    /// this needs to be an open port. Can also be none, which will disable "keep_going"
-    /// and "isolated" and will set "fast"
-    #[arg(long, default_value_t = String::from("4444"))]
+    /// this needs to be an open port. Can be set to "none", which will disable "keep_going"
+    /// and "isolated" and will set "fast" as those features rely on the communication
+    /// through the tcp port.
+    #[arg(short, long, default_value_t = String::from("4444"))]
     pub tcp_port: String,
 }
 

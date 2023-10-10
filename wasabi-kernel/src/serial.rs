@@ -55,7 +55,6 @@ unsafe fn create_port(port: u16) -> Result<SerialPort, ()> {
 #[inline]
 pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
-    use shared::lockcell::LockCell;
 
     let mut serial = SERIAL1.lock();
 

@@ -1,12 +1,15 @@
 use anyhow::{bail, Context, Result};
 use std::{
     ffi::{OsStr, OsString},
+    net::Ipv4Addr,
     os::unix::prelude::OsStrExt,
     path::Path,
     process::ExitStatus,
     time::Duration,
 };
 use tokio::{
+    fs::File,
+    io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
     time,
 };
@@ -34,6 +37,7 @@ pub struct QemuConfig<'a> {
     pub memory: &'a str,
     pub devices: &'a str,
     pub serial: Vec<&'a str>,
+    pub kill_on_drop: bool,
 }
 
 impl Default for QemuConfig<'_> {
@@ -42,6 +46,7 @@ impl Default for QemuConfig<'_> {
             memory: "4G",
             devices: "",
             serial: vec!["stdio"],
+            kill_on_drop: true,
         }
     }
 }
@@ -59,8 +64,8 @@ impl<'a> QemuConfig<'a> {
 
 pub async fn launch_with_timeout<'a>(
     timeout: Duration,
-    kernel: Kernel<'a>,
-    qemu: QemuConfig<'a>,
+    kernel: &Kernel<'a>,
+    qemu: &QemuConfig<'a>,
 ) -> Result<ExitStatus> {
     let mut child = launch_qemu(kernel, qemu).await?;
 
@@ -70,7 +75,7 @@ pub async fn launch_with_timeout<'a>(
     }
 }
 
-pub async fn launch_qemu<'a>(kernel: Kernel<'a>, qemu: QemuConfig<'a>) -> Result<Child> {
+pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Result<Child> {
     let host_arch = HostArchitecture::get().await;
 
     let mut cmd = Command::new(host_arch.qemu(Arch::X86_64).await);
@@ -90,7 +95,7 @@ pub async fn launch_qemu<'a>(kernel: Kernel<'a>, qemu: QemuConfig<'a>) -> Result
     if qemu.serial.is_empty() {
         cmd.arg("-serial").arg("none");
     } else {
-        for serial in qemu.serial {
+        for serial in qemu.serial.iter() {
             cmd.arg("-serial").arg(serial);
         }
     }
@@ -107,6 +112,7 @@ pub async fn launch_qemu<'a>(kernel: Kernel<'a>, qemu: QemuConfig<'a>) -> Result
     if !qemu.devices.is_empty() {
         cmd.arg("-device").arg(qemu.devices);
     }
+    cmd.kill_on_drop(qemu.kill_on_drop);
     cmd.spawn().context("failed to spawn qemu")
 }
 
@@ -149,6 +155,7 @@ fn trim_u8_slice(string: &[u8]) -> &[u8] {
     &string[start..=end]
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum HostArchitecture {
     Linux,
     Windows,
@@ -285,5 +292,28 @@ impl HostArchitecture {
         qemu.push(binary_suffix);
 
         self.resolve_back(qemu).await
+    }
+
+    pub async fn host_ip_addr(&self) -> Result<Ipv4Addr> {
+        match self {
+            Self::Wsl => {
+                let resolv_file = File::open("/etc/resolv.conf")
+                    .await
+                    .context("could not find \"/etc/resolv.conf\"")?;
+
+                let mut lines = BufReader::new(resolv_file).lines();
+                while let Some(line) = lines.next_line().await? {
+                    if line.starts_with("nameserver ") {
+                        let nameserver = &line[11..];
+                        return Ok(nameserver
+                            .parse()
+                            .context("failed to parse localhost addr")?);
+                    }
+                }
+
+                bail!("failed to find nameserver in resolv.conf");
+            }
+            _ => Ok(Ipv4Addr::new(127, 0, 0, 1)),
+        }
     }
 }

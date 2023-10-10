@@ -14,7 +14,8 @@
     maybe_uninit_array_assume_init,
     stmt_expr_attributes,
     panic_info_message,
-    box_into_inner
+    box_into_inner,
+    never_type
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![allow(rustdoc::private_intra_doc_links)]

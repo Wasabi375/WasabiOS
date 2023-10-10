@@ -36,12 +36,18 @@ pub unsafe fn init() {
     );
 
     let logger = StaticLogger::new(&SERIAL1)
+        // NOTE: apparently with_level has a side-effect on qemu crashing the emulator
+        //  if called more than once, with multiple module levels, if colors are enabled
+
         .with_level(LevelFilter::Debug)
+        // .with_level(LevelFilter::Info)
+
         // .with_level(LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
-        .with_module_level("GlobalAlloc", LevelFilter::Trace)
+        // .with_module_level("GlobalAlloc", LevelFilter::Trace)
+
         .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
         .with_module_rename("wasabi_kernel::", "::")
         .with_module_rename("wasabi_kernel", "::")

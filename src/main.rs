@@ -9,7 +9,9 @@ use anyhow::{Context, Result};
 use args::{Arguments, BuildCommand, LatestArgs, Profile, RunCommand, Target};
 use build::{build, check, clean};
 use clap::Parser;
+use log::LevelFilter;
 use qemu::{launch_qemu, Kernel, QemuConfig};
+use simple_logger::SimpleLogger;
 use std::{
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
@@ -19,6 +21,13 @@ use test::test;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    SimpleLogger::new()
+        .with_level(LevelFilter::Info)
+        .with_module_level("gpt", LevelFilter::Warn)
+        .with_module_level("fatfs", LevelFilter::Warn)
+        .env()
+        .init()
+        .unwrap();
     let args = Arguments::parse();
 
     match args.build {
@@ -47,7 +56,7 @@ pub async fn run(uefi: &Path) -> Result<()> {
 
     let qemu = QemuConfig::default();
 
-    launch_qemu(kernel, qemu)
+    launch_qemu(&kernel, &qemu)
         .await
         .context("start kernel")?
         .wait()
