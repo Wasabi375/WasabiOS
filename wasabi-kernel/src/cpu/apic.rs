@@ -1,6 +1,6 @@
 //! Local Apic implementation
 
-#![allow(missing_docs)] // TODO remove
+// #![allow(missing_docs)] // TODO remove
 use core::ops::RangeInclusive;
 
 use crate::{
@@ -82,11 +82,21 @@ pub struct Apic {
     timer: TimerData,
 }
 
+/// The different modes the apic timer can be in
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TimerMode {
+    /// the timer is not running
     Stopped,
+    /// the timer is running and trigger a single interrupt at the end
+    ///
+    /// This will not automatically set the timer into stopped mode.  The timer
+    /// will still be in OneShot mode but will not trigger a second interrupt.
     OneShot(TimerConfig),
+    /// the timer is running and triggering interrupts on a regular basis
     Periodic(TimerConfig),
+    /// the timer will trigger an interrupt when tsc reaches the deadline.
+    ///
+    /// Not implemented
     TscDeadline,
 }
 
@@ -101,21 +111,58 @@ impl TimerMode {
     }
 }
 
+/// Configuration for the Apic timer.
+///
+/// The time between timer interrupts is
+/// `duration / apic.timer().rate_mhz() * divider`
+///
+/// The divider can be used as a multiplier for duration to exceed the u32 size
+///
+/// # Example
+///
+/// to set the timer to interrupt every second any divider will work. Let's choose
+/// [TimerDivider::DivBy2]. Therefor we have to set the duration to
+/// `apic.timer().rate_mhz()  * 1_000_000 / 2`.
+/// The timer rate is `rate_mhz() * 1_000_000` per second and the divier 2 means
+/// that only every second timer flank causes a timer tick, making the timer take
+/// twice as long. Therefor we divide the number of ticks per interrupt (duration)
+/// by 2 to get back at 1 interrupt per second.
+///
+/// ## See
+/// * [Timer::rate_mhz]
+/// * [TimerDivider]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimerConfig {
+    /// specifies how often the timer ticks.
+    ///
+    /// The tickrate of the timer is `apic.timer().rate_mhz() / divider`
+    /// See [Timer::rate_mhz]
     pub divider: TimerDivider,
+    /// The number of timer ticks, after which the timer interrupt is called.
     pub duration: u32,
 }
 
+/// The divider slows down the clockspeed of the timer.
+/// The base clockspeed can be queryed via [`apic.timer().rate_mhz()`]
+///
+/// [`apic.timer().rate_mhz()`]: Timer::rate_mhz
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimerDivider {
+    /// Clockspeed is unmodified
     DivBy1,
+    /// Clockspeed is halfed
     DivBy2,
+    /// Clockspeed is diveded by a factor of 4
     DivBy4,
+    /// Clockspeed is diveded by a factor of 8
     DivBy8,
+    /// Clockspeed is diveded by a factor of 16
     DivBy16,
+    /// Clockspeed is diveded by a factor of 32
     DivBy32,
+    /// Clockspeed is diveded by a factor of 64
     DivBy64,
+    /// Clockspeed is diveded by a factor of 128
     DivBy128,
 }
 
@@ -140,16 +187,31 @@ impl Default for TimerMode {
     }
 }
 
+/// the current state of the timer
 #[derive(Debug, Clone, Default)]
 struct TimerData {
+    /// `true` if the timer is running at a constant speed
+    ///
+    /// This is hardware dependent
     constant_rate: bool,
+    /// The clockspeed of the timer in mhz
     mhz: u64,
+    /// th interrupt vector triggerd by the timer
     interrupt_vector: Option<u8>,
+    /// the current [TimerMode]
     mode: TimerMode,
+    /// the tsc time, when the timer was calibrated
     startup_tsc_time: u64,
+    /// `true` if the hardware supports deadline mode
     supports_tsc_deadline: bool,
 }
 
+/// A reference to the apic timer
+///
+/// There is always a single ApicTimer. This struct just provides access.
+/// Dropping this does not stop the timer. Use [`stop`] instaed.
+///
+/// [`stop`]: Timer::stop
 pub struct Timer<'a> {
     apic: &'a mut Apic,
 }
@@ -160,7 +222,9 @@ impl core::fmt::Debug for Timer<'_> {
     }
 }
 
+/// The error used for Apic creation
 #[derive(Error, Debug, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub enum ApicCreationError {
     #[error("{0}")]
     Mem(MemError),
@@ -218,19 +282,21 @@ impl Apic {
         Ok(apic)
     }
 
-    /// calculate [VirtAddr] for the given [Offset]
+    /// calculate [Volatile] for the given [Offset]
     fn offset(&self, offset: Offset) -> Volatile<&u32, ReadOnly> {
         let vaddr = self.base + offset as u64;
         // safety: we have read access to apic, so we can read it's registers
         unsafe { vaddr.as_volatile() }
     }
 
+    /// calculate mutable [Volatile] for the given [Offset]
     fn offset_mut(&mut self, offset: Offset) -> Volatile<&mut u32, ReadWrite> {
         let vaddr = self.base + offset as u64;
         // safety: we have mut access to apic, so we can read and write it's registers
         unsafe { vaddr.as_volatile_mut() }
     }
 
+    /// get access to the apic timer
     pub fn timer(&mut self) -> Timer {
         Timer { apic: self }
     }
@@ -266,22 +332,32 @@ impl Timer<'_> {
     const DIVIDER_BITS: RangeInclusive<usize> = 0..=4;
     const VECTOR_BIST: RangeInclusive<usize> = 0..=7;
 
+    /// returns `true` if the timer is running at a constant rate.
+    ///
+    /// This is hardware dependent
     pub fn constant_rate(&self) -> bool {
         self.apic.timer.constant_rate
     }
 
+    /// the clockspeed of the timer in mhz
     pub fn rate_mhz(&self) -> u64 {
         self.apic.timer.mhz
     }
 
+    /// `true` if the timer is running and can cause interrupts
     pub fn is_running(&self) -> bool {
         self.apic.timer.interrupt_vector.is_some()
     }
 
+    /// `true` if the hardware supports tsc-deadline mode
     pub fn supports_tsc_deadline(&self) -> bool {
         self.apic.timer.supports_tsc_deadline
     }
 
+    /// register an interrupt handler for the timer to call.
+    ///
+    /// # Errors
+    /// see [interrupts::register_interrupt_handler]
     pub fn register_interrupt_handler(
         &mut self,
         vector: u8,
@@ -301,6 +377,10 @@ impl Timer<'_> {
         Ok(())
     }
 
+    /// unregister the current interrupt for the timer
+    ///
+    /// # Errors
+    /// see [interrupts::unregister_interrupt_handler]
     pub fn unregister_interrupt_handler(&mut self) -> Result<(), InterruptRegistrationError> {
         let apic = &mut self.apic;
         apic.offset_mut(Offset::TimerLocalVectorTableEntry)
@@ -318,6 +398,7 @@ impl Timer<'_> {
         Ok(())
     }
 
+    /// starts the timer
     pub fn start(&mut self, mode: TimerMode) {
         let apic = &mut self.apic;
         match mode {
@@ -346,6 +427,13 @@ impl Timer<'_> {
         }
     }
 
+    /// restarts the timer.
+    ///
+    /// Resets the timer counter to `reset`. See [TimerConfig::duration]
+    ///
+    /// # Panics
+    ///
+    /// This will panic if the timer is not in Periodic or OneShot mode.
     pub fn restart(&mut self, reset: u32) {
         match self.apic.timer.mode {
             TimerMode::OneShot(_) | TimerMode::Periodic(_) => {
@@ -367,6 +455,13 @@ impl Timer<'_> {
         apic.timer.mode = TimerMode::Stopped;
     }
 
+    /// calibrates the apic timer rate based on the PIT timer.
+    ///
+    /// # Panics
+    /// this will panic if the timer is not stopped or an interrupt vector is set
+    ///
+    /// #See
+    /// [time::calibration_tick]
     pub fn calibrate(&mut self) {
         assert_eq!(self.apic.timer.mode, TimerMode::Stopped);
         assert!(self.apic.timer.interrupt_vector.is_none());

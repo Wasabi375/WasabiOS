@@ -18,6 +18,8 @@
 #[macro_use]
 extern crate wasabi_kernel;
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
 
@@ -35,8 +37,14 @@ use wasabi_kernel::{
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
+static LAST_TIMER_TSC: AtomicU64 = AtomicU64::new(0);
 fn timer_int_handler(_vec: u8, _isf: InterruptStackFrame) -> Result<(), ()> {
-    trace!("hi");
+    let last_tsc = LAST_TIMER_TSC.load(Ordering::Relaxed);
+    let now = time::read_tsc();
+    LAST_TIMER_TSC.store(now, Ordering::Relaxed);
+
+    let duration = time::time_between_tsc(last_tsc, now);
+    info!(target: "Timer", "Duration since last tick: {}", duration);
     Ok(())
 }
 
