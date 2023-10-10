@@ -1,3 +1,6 @@
+//! Runner and Build tool for Wasabi Os
+//!
+//! This simple command line utility can be used to run WasabiOs in Qemu.
 #![feature(exit_status_error)]
 
 mod args;
@@ -38,6 +41,7 @@ async fn main() -> Result<()> {
     }
 }
 
+/// the storage location, containing the last successful build of the os
 pub fn latest_path(bin_name: &OsStr, target: &Target, profile: &Profile) -> PathBuf {
     let mut path = PathBuf::new();
     path.push("latest");
@@ -48,6 +52,7 @@ pub fn latest_path(bin_name: &OsStr, target: &Target, profile: &Profile) -> Path
     path
 }
 
+/// runs the kernel in qemu
 pub async fn run(uefi: &Path) -> Result<()> {
     let kernel = Kernel {
         path: &uefi,
@@ -66,6 +71,7 @@ pub async fn run(uefi: &Path) -> Result<()> {
     Ok(())
 }
 
+/// execute [BuildCommand::Latest]
 pub async fn latests(args: LatestArgs) -> Result<()> {
     let mut bin_name = OsString::from_str(match args.run {
         RunCommand::Run => "wasabi-kernel",

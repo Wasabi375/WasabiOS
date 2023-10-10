@@ -9,6 +9,7 @@ pub struct Arguments {
     pub build: BuildCommand,
 }
 
+/// The different build commands
 #[derive(Debug, Subcommand)]
 pub enum BuildCommand {
     /// rebuild the kernel
@@ -22,6 +23,7 @@ pub enum BuildCommand {
     // TODO Docs command for building and opening docs
 }
 
+/// The different ways to run the kernel
 #[derive(Debug, Subcommand)]
 pub enum RunCommand {
     /// run the kernel in qemu
@@ -30,6 +32,7 @@ pub enum RunCommand {
     Test(TestArgs),
 }
 
+/// The required arguments to run the test kernel
 #[derive(Args, Debug)]
 pub struct TestArgs {
     /// fails qemu instance after `timeout` seconds.
@@ -66,8 +69,10 @@ pub struct TestArgs {
     pub tcp_port: String,
 }
 
+/// Arguments for [BuildCommand::Build]
 #[derive(Args, Debug)]
 pub struct BuildArgs {
+    /// the options used to build the kernel
     #[command(flatten)]
     pub options: BuildOptions,
 
