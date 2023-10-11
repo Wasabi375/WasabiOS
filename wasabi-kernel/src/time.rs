@@ -262,7 +262,7 @@ impl Duration {
                 if cfg!(feature = "no-unicode-log") {
                     "mys"
                 } else {
-                    "\u{03bc}s" // μs
+                    "\u{b5}s" // μs
                 }
             }
             Duration::Millis(_) => "ms",
