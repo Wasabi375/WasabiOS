@@ -511,23 +511,3 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
     );
     false
 }
-
-// TEMP
-mod test {
-    use testing::{kernel_test, KernelTestError, TestExitState};
-
-    #[kernel_test]
-    fn foobar() -> Result<(), KernelTestError> {
-        Ok(())
-    }
-
-    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
-    fn failing() -> Result<(), KernelTestError> {
-        Err(KernelTestError::Fail)
-    }
-
-    #[kernel_test(expected_exit: TestExitState::Panic)]
-    fn panicing() -> Result<(), KernelTestError> {
-        panic!("Panic in test");
-    }
-}

@@ -108,13 +108,3 @@ pub const fn bootloader_config_common(
     config.mappings.page_table_recursive = Some(Mapping::Dynamic);
     config
 }
-
-#[cfg(feature = "test")]
-mod test {
-    use testing::{kernel_test, KernelTestError};
-
-    #[kernel_test]
-    fn test_in_wasabi_kernel() -> Result<(), KernelTestError> {
-        Ok(())
-    }
-}
