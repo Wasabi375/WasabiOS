@@ -109,7 +109,7 @@ pub struct CoreLocals {
 
     /// A lock holding the local apic. This can be [None] if the apic has not been
     /// initialized.
-    // FIXME change to UnwrapLock
+    // TODO change to UnwrapLock
     pub apic: TicketLock<Option<Apic>>,
 
     /// Core locals used by tests
