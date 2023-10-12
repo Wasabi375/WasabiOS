@@ -219,7 +219,9 @@ dependencies = [
 
 [[package]]
 name = "bootloader"
-version = "0.11.3"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e092090f6e2b68cee8dc291ec60e4706f6b0c5cd90b666a5248a20f30591ccb0"
 dependencies = [
  "anyhow",
  "async-process",
@@ -235,14 +237,18 @@ dependencies = [
 
 [[package]]
 name = "bootloader-boot-config"
-version = "0.11.3"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a36c0df7b26b44254828ece99ed72aa01695cc37f007a97afe8aee29feb26e3e"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "bootloader_api"
-version = "0.11.3"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88f843888771a490c3ad246e58bf25e62da70d2c653d74a3eca92acbab599e02"
 
 [[package]]
 name = "byteorder"
@@ -789,6 +795,12 @@ dependencies = [
  "wasi",
  "windows-sys 0.48.0",
 ]
+
+[[package]]
+name = "noto-sans-mono-bitmap"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a27daf9557165efe1d09b52f97393bf6283cadb0a76fbe64a1061e15553a994a"
 
 [[package]]
 name = "num_cpus"
@@ -1369,6 +1381,7 @@ dependencies = [
  "linkme",
  "log",
  "logger",
+ "noto-sans-mono-bitmap",
  "paste",
  "shared",
  "shared-derive",

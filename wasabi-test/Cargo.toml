@@ -1,7 +1,7 @@
 [package]
 name = "wasabi-test"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [features]
 no-color = ["wasabi-kernel/no-color"]
@@ -11,7 +11,7 @@ shared = { path = "../shared" }
 testing = { path = "../testing" }
 staticvec = { path = "../staticvec" }
 
-bootloader_api = { version = "0.11.3", path = "../../bootloader/api" }
+bootloader_api.workspace = true
 log.workspace = true
 x86_64.workspace = true
 linkme.workspace = true
