@@ -6,7 +6,7 @@ use log::error;
 
 use crate::{
     boot_info, cpu,
-    graphics::framebuffer::{clear_frame_buffer, Color},
+    graphics::{framebuffer::clear_frame_buffer, Color},
     locals,
     logger::LOGGER,
     serial_println,

@@ -32,6 +32,7 @@ use wasabi_kernel::{
         apic::{self, TimerConfig},
     },
     init,
+    mem::kernel_heap::KERNEL_HEAP_SIZE,
     serial::SERIAL2,
     time::{self, sleep_tsc},
 };
@@ -78,18 +79,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }));
     }
 
-    if let Some(serial2) = SERIAL2.lock().as_mut() {
-        let mut count: u8 = 0;
-        loop {
-            sleep_tsc(time::Duration::Millis(10));
-            serial2.send_raw(count);
-            if count == u8::MAX {
-                count = 0;
-            } else {
-                count += 1;
-            }
-        }
-    }
+    info!(
+        "framebuffer size: {:?} bytes",
+        wasabi_kernel::boot_info()
+            .framebuffer
+            .as_ref()
+            .map(|b| b.info().byte_len)
+    );
+    info!("kernel heap size: {} bytes", KERNEL_HEAP_SIZE);
 
     info!("OS Done! cpu::halt()");
     cpu::halt();

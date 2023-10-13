@@ -1,40 +1,118 @@
 //! utilites for framebuffer access
 
-use bootloader_api::info::FrameBuffer;
+use core::slice;
 
-/// A simple rgb (u8) Color
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-#[allow(missing_docs)]
-pub struct Color {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
+use crate::graphics::Color;
+use crate::mem::page_allocator;
+use crate::mem::page_allocator::PageAllocator;
+use crate::mem::structs::GuardedPages;
+use crate::mem::structs::Mapped;
+use crate::mem::structs::Unmapped;
+use crate::mem::MemError;
+use bootloader_api::info::FrameBuffer as BootFrameBuffer;
+use bootloader_api::info::FrameBufferInfo;
+use bootloader_api::info::PixelFormat;
+use shared::lockcell::LockCell;
+use x86_64::structures::paging::Size4KiB;
+use x86_64::VirtAddr;
+
+enum FramebufferSource {
+    /// framebuffer is backed by the hardware buffer
+    HardwareBuffer,
+    /// framebuffer is backed by normal mapped memory
+    Owned(Mapped<GuardedPages<Size4KiB>>),
+    /// framebuffer is dropped
+    Dropped,
 }
 
-#[allow(missing_docs)]
-impl Color {
-    pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
-    pub const RED: Color = Color { r: 255, g: 0, b: 0 };
-    pub const GREEN: Color = Color { r: 0, g: 255, b: 0 };
-    pub const BLUE: Color = Color { r: 0, g: 0, b: 255 };
-    pub const PINK: Color = Color {
-        r: 255,
-        g: 0,
-        b: 255,
-    };
+impl FramebufferSource {
+    fn drop(&mut self) -> Option<Mapped<GuardedPages<Size4KiB>>> {
+        match self {
+            FramebufferSource::HardwareBuffer => None,
+            FramebufferSource::Owned(pages) => {
+                self = &mut FramebufferSource::Dropped;
+                Some(pages)
+            }
+            FramebufferSource::Dropped => None,
+        }
+    }
+}
 
-    pub const PANIC: Color = Color::PINK;
+pub struct Framebuffer {
+    /// The start address of the framebuffer
+    start: VirtAddr,
+
+    /// the source of the fb memory
+    source: FramebufferSource,
+
+    pub info: FrameBufferInfo,
+}
+
+impl Framebuffer {
+    pub fn alloc_new(info: FrameBufferInfo) -> Result<Self, MemError> {
+        let page_count = todo!("calculate page count");
+
+        let pages = PageAllocator::get_kernel_allocator()
+            .lock()
+            .allocate_guarded_pages(page_count, true, true)?;
+
+        let pages = Unmapped(pages);
+        let mapped_pages = pages.alloc_and_map()?;
+        let start = mapped_pages.0.start_addr();
+
+        let source = FramebufferSource::Owned(mapped_pages);
+
+        Ok(Framebuffer {
+            start,
+            source,
+            info,
+        })
+    }
+
+    pub fn buffer(&self) -> &[u8] {
+        // Safety: buffer_start + byte_len is memory owned by this framebuffer
+        unsafe { slice::from_raw_parts(self.start.as_ptr(), self.byte_len) }
+    }
+
+    pub fn buffer_mut(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.start.as_mut_ptr(), self.byte_len) }
+    }
+}
+
+impl From<BootFrameBuffer> for Framebuffer {
+    fn from(value: BootFrameBuffer) -> Self {
+        let start = VirtAddr::from_ptr(value.buffer());
+        let info = value.info();
+        Framebuffer {
+            start: (),
+            source: FramebufferSource::HardwareBuffer,
+            info,
+        }
+    }
+}
+
+impl Drop for Framebuffer {
+    fn drop(&mut self) {
+        if let Some(pages) = self.source.drop() {
+            unsafe {
+                // Safety: after drop, there are no ways to access the fb memory
+                pages
+                    .unmap_and_dealloc()
+                    .expect("failed to deallco framebuffer");
+            }
+        }
+    }
 }
 
 /// clears the framebuffer to the given color
 ///
 /// uses [clear_frame_buffer_rgb] internally
-pub fn clear_frame_buffer(fb: &mut FrameBuffer, c: Color) {
+pub fn clear_frame_buffer(fb: &mut BootFrameBuffer, c: Color) {
     clear_frame_buffer_rgb(fb, c.r, c.g, c.b)
 }
 
 /// clears the framebuffer to the given rgb color
-pub fn clear_frame_buffer_rgb(fb: &mut FrameBuffer, r: u8, g: u8, b: u8) {
+pub fn clear_frame_buffer_rgb(fb: &mut BootFrameBuffer, r: u8, g: u8, b: u8) {
     let info = fb.info();
     let buffer = fb.buffer_mut();
 
