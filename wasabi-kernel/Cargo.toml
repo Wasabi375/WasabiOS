@@ -6,7 +6,10 @@ edition.workspace = true
 [features]
 no-color = ["colored/no-color"]
 no-unicode-log = []
-test = ["dep:testing", "shared/test"]
+test = ["dep:testing", "shared/test", "mem-backed-guard-page"]
+mem-backed-guard-page = []
+
+default = ["mem-backed-guard-page"]
 
 [dependencies]
 shared = { path = "../shared" }

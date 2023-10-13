@@ -29,7 +29,6 @@ use x86_64::{
     structures::paging::{PageTable, RecursivePageTable, Translate},
     PhysAddr, VirtAddr,
 };
-
 /// Result type with [MemError]
 pub type Result<T> = core::result::Result<T, MemError>;
 
@@ -59,6 +58,12 @@ pub enum MemError {
     FreeFailed(NonNull<u8>),
     #[error("Page Table map failed: {0:?}")]
     PageTableMap(PageTableMapError),
+}
+
+impl From<PageTableMapError> for MemError {
+    fn from(value: PageTableMapError) -> Self {
+        Self::PageTableMap(value)
+    }
 }
 
 /// initialize memory: phys allocator, page allocator page table as well as
@@ -150,7 +155,9 @@ macro_rules! map_frame {
     }};
 }
 
-/// Macro to map a page
+/// Macro to map a page. Returns `Result<Page, PageTableMapError>`
+///
+/// # Example
 ///
 /// ```no_run
 /// # #[macro_use] extern crate wasabi-kernel;
@@ -161,12 +168,19 @@ macro_rules! map_frame {
 /// let frame_allocator: &mut WasabiFrameAllocator<Size4KiB> = todo!();
 ///
 // TODO document return types
-/// map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT);
-/// map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame);
-/// map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame, frame_allocator);
-/// map_page!(Size4KiB, PageTableFlags::WRITABLE, phys_frame);
+/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT)?;
+/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame)?;
+/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame, frame_allocator)?;
+/// let page = map_page!(Size4KiB, PageTableFlags::WRITABLE | PageTbaleFlags::PRESENT, phys_frame)?;
 /// # }
 /// ```
+///
+/// # See
+///
+/// [Page](x86_64::structures::paging::Page), [PageTableMapError],
+/// [PageSize](x86_64::structures::paging::PageSize),
+/// [PageTableFlags], [PageTableKernelFlags], [PageAllocator],
+/// [WasabiFrameAllocator]
 #[macro_export]
 macro_rules! map_page {
     ($size: ident, $flags: expr) => {{
@@ -204,7 +218,7 @@ macro_rules! map_page {
         let frame: Option<PhysFrame<$size>> = frame_alloc.alloc();
 
         frame
-            .ok_or_else(|| PageTableMapError::FrameAllocationFailed)
+            // .ok_or_else(|| PageTableMapError::FrameAllocationFailed)
             .map(|frame| map_page!($page, $size, $flags, frame, frame_alloc))
             .flatten()
     }};

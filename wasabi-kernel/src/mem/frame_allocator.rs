@@ -126,6 +126,9 @@ pub struct WasabiFrameAllocator<'a, S> {
     // TODO implement free list
     // /// a free list of unused frames
     // first_unused_frame: *mut UnusedFrame,
+    /// memory to back gurad pages
+    #[cfg(config = "mem-backed-gurad-frame")]
+    guard_frame: Option<PhysFrame<S>>,
 }
 
 impl WasabiFrameAllocator<'_, Size4KiB> {
@@ -182,11 +185,38 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
     ///
     /// ## Safety
     ///
-    /// The caller must ensure that the passed frame is unused.
+    /// The caller must ensure that the passed frame is unused and not the
+    /// [guard_frame]
     pub unsafe fn free(&mut self, frame: PhysFrame<S>) {
         // TODO store unused frames in free list
 
         self.phys_alloc.lock().free(frame);
+    }
+
+    /// returns the [PhysFrame] used for guard pages.
+    ///
+    /// if "mem-backed-guard-frame" feature is active, this will be a
+    /// cached allocated frame. Otherwise it will be the frame
+    /// starting at address 0
+    ///
+    /// # Safety:
+    ///
+    /// The Frame should only be used for guard pages and is not guaranteed to be a valid
+    /// phyisical address
+    pub unsafe fn guard_frame(&mut self) -> Option<PhysFrame<S>> {
+        #[cfg(config = "mem-backed-guard-frame")]
+        {
+            if let Some(frame) = self.guard_frame {
+                return Some(frame);
+            }
+            let frame = self.alloc();
+            self.guard_frame = frame;
+            frame
+        }
+        #[cfg(not(config = "mem-backed-guard-frame"))]
+        unsafe {
+            Some(PhysFrame::from_start_address_unchecked(PhysAddr::zero()))
+        }
     }
 }
 

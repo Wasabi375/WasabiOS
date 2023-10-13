@@ -26,6 +26,15 @@ use x86_64::{
 
 use super::structs::{Mapped, Pages};
 
+/// the size of the kernel heap in bytes
+pub const KERNEL_HEAP_SIZE: usize = KernelHeapPageSize::SIZE as usize * KERNEL_HEAP_PAGE_COUNT;
+
+/// the size of a single page in the kernel heap
+type KernelHeapPageSize = Size4KiB;
+
+/// number of memory pages used by the kernel heap
+const KERNEL_HEAP_PAGE_COUNT: usize = 5;
+
 /// the [KernelHeap]
 // Safety: initialized by [init] before it we use allocated types
 static KERNEL_HEAP: UnwrapTicketLock<KernelHeap> = unsafe { UnwrapTicketLock::new_uninit() };
@@ -33,6 +42,10 @@ static KERNEL_HEAP: UnwrapTicketLock<KernelHeap> = unsafe { UnwrapTicketLock::ne
 /// holds ZST for [global_allocator]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: KernelHeapGlobalAllocator = KernelHeapGlobalAllocator;
+
+// TODO I set the wrong parent table flags in map calls
+//      I currently use `map_to` which sets `USER_ACCESSIBLE` which is not actually true
+//      for kernel pages
 
 /// initializes the kernel heap
 pub fn init() {
@@ -43,14 +56,15 @@ pub fn init() {
         .also(|_| {
             trace!("page alloc lock aquired");
         })
-        .allocate_pages::<Size4KiB>(KERNEL_HEAP_PAGE_COUNT)
+        .allocate_pages::<KernelHeapPageSize>(KERNEL_HEAP_PAGE_COUNT)
         .expect("Out of pages setting up kernel heap");
 
     {
         let mut page_table = KERNEL_PAGE_TABLE.lock();
         trace!("page table lock aquired");
 
-        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut frame_allocator =
+            WasabiFrameAllocator::<KernelHeapPageSize>::get_for_kernel().lock();
         trace!("frame alloc lock aquired");
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
@@ -118,9 +132,6 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
         }
     }
 }
-
-/// number of memory pages used by the kernel heap
-const KERNEL_HEAP_PAGE_COUNT: usize = 5;
 
 /// the sizes of the [SlabAllocator]s used by the kernel heap
 const SLAB_ALLOCATOR_SIZES_BYTES: [usize; 5] = [2, 4, 8, 16, 32];

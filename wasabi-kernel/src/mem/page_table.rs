@@ -17,6 +17,14 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
+/// kernel internal page table flags
+pub trait PageTableKernelFlags {
+    /// PageTableFlag denoting a guard page
+    const GUARD: PageTableFlags = PageTableFlags::BIT_9;
+}
+
+impl PageTableKernelFlags for PageTableFlags {}
+
 /// the kernel [RecursivePageTable]
 // Safety: not used before initialized in [init]
 pub static KERNEL_PAGE_TABLE: UnwrapTicketLock<RecursivePageTable> =
