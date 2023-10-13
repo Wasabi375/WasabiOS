@@ -23,7 +23,7 @@
 
 pub mod core_local;
 pub mod cpu;
-pub mod framebuffer;
+pub mod graphics;
 pub mod logger;
 pub mod mem;
 pub mod panic;

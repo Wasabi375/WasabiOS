@@ -1,9 +1,14 @@
 //! A module containing logging and debug utilities
 use log::{info, LevelFilter};
-use logger::StaticLogger;
+use logger::{dispatch::TargetLogger, StaticLogger};
 use uart_16550::SerialPort;
 
-use crate::{prelude::UnwrapTicketLock, serial::SERIAL1, serial_println};
+use crate::{
+    core_local::CoreInterruptState, prelude::UnwrapTicketLock, serial::SERIAL1, serial_println,
+};
+
+/// the max number of target loggers for the main dispatch logger
+const MAX_LOG_DISPATCHES: usize = 2;
 
 /// number of module filers allowed for the logger
 const MAX_LEVEL_FILTERS: usize = 100;
@@ -11,15 +16,23 @@ const MAX_LEVEL_FILTERS: usize = 100;
 /// number of module renames allowed for the logger
 const MAX_RENAME_MAPPINGS: usize = 100;
 
+/// See [logger::DispatchLogger]
+pub type DispatchLogger<'a, const N: usize, const L: usize> =
+    logger::DispatchLogger<'a, CoreInterruptState, N, L>;
+
 /// the static logger used by the [log::log] macro
-pub static mut LOGGER: Option<
-    StaticLogger<
-        'static,
-        SerialPort,
-        UnwrapTicketLock<SerialPort>,
-        MAX_LEVEL_FILTERS,
-        MAX_RENAME_MAPPINGS,
-    >,
+///
+/// After [init] is called, it can be assumed that this is Some.
+///
+/// # Safety:
+/// this should not be modified outside of panics and [init].
+/// Accessing the [DispatchLogger] via shared ref is safe.
+pub static mut LOGGER: Option<DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> =
+    None;
+
+/// the static serial logger.
+static mut SERIAL_LOGGER: Option<
+    StaticLogger<'static, SerialPort, UnwrapTicketLock<SerialPort>, 0, MAX_RENAME_MAPPINGS>,
 > = None;
 
 /// initializes the logger piping all [log::log] calls into the first serial port.
@@ -35,32 +48,43 @@ pub unsafe fn init() {
             StaticLogger doesn't fit in 4KiB which causes tripple fault on boot"
     );
 
-    let logger = StaticLogger::new(&SERIAL1)
-        // NOTE: apparently with_level has a side-effect on qemu crashing the emulator
-        //  if called more than once, with multiple module levels, if colors are enabled
-
+    let mut dispatch_logger = DispatchLogger::new()
         .with_level(LevelFilter::Debug)
         // .with_level(LevelFilter::Info)
-
         // .with_level(LevelFilter::Trace)
         .with_module_level("wasabi_kernel", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
+        // comment to move ; to separate line - easy uncomment of module log levels
+        ;
 
+    let mut serial_logger = StaticLogger::new(&SERIAL1)
         .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
         .with_module_rename("wasabi_kernel::", "::")
-        .with_module_rename("wasabi_kernel", "::")
-        // comment to move ; to separate line - easy uncomment of module log levels
-            ;
+        .with_module_rename("wasabi_kernel", "::");
+    serial_logger.init();
 
     // Safety: this is fine, since we are in the kernel boot and this is only
-    // called once, meaning we ensure rust mutability guarantees
-    if unsafe {
-        LOGGER = Some(logger);
+    // called once, meaning we fullfill rust mutability guarantees
+    unsafe {
+        SERIAL_LOGGER = Some(serial_logger);
+        dispatch_logger.with_logger(TargetLogger::new_primary(
+            "serial",
+            SERIAL_LOGGER.as_ref().unwrap(),
+        ));
+    }
 
-        LOGGER.as_mut().unwrap_unchecked().init()
+    dispatch_logger.init();
+    log::set_max_level(LevelFilter::Trace);
+
+    // Safety: see above
+    if unsafe {
+        LOGGER = Some(dispatch_logger);
+
+        let logger = LOGGER.as_mut().unwrap_unchecked();
+        logger.set_globally()
     }
     .is_err()
     {

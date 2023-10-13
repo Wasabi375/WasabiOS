@@ -1,17 +1,19 @@
 //! Panic handler and recovery for tests
 
 use alloc::boxed::Box;
-use log::trace;
-use logger::{debug_write, error_write, trace_write};
-use uart_16550::SerialPort;
+use log::{debug, error, trace};
 
-use crate::{locals, prelude::TicketLock, serial::SERIAL1, testing::qemu};
+use crate::{
+    panic::{panic_disable_cores, recreate_logger},
+    prelude::TicketLock,
+    testing::qemu,
+};
 use core::{
     marker::PhantomData,
     panic::PanicInfo,
     sync::atomic::{AtomicU8, Ordering},
 };
-use shared::lockcell::{LockCell, LockCellInternal};
+use shared::lockcell::LockCell;
 
 /// Function Type for custom panic handlers
 type CustomPanicHandler = dyn (FnOnce(&PanicInfo) -> !) + Send + 'static;
@@ -19,41 +21,39 @@ type CustomPanicHandler = dyn (FnOnce(&PanicInfo) -> !) + Send + 'static;
 /// holds the custom panic handler if it exists
 static CUSTOM_PANIC: TicketLock<Option<Box<CustomPanicHandler>>> = TicketLock::new(None);
 
-///
+/// marks that we are currently in a panic if this is not 0
 static PANIC_RECURSION_MARKER: AtomicU8 = AtomicU8::new(0);
 
 /// panic handler used during tests
 pub fn test_panic_handler(info: &PanicInfo) -> ! {
     let panic_recursion = PANIC_RECURSION_MARKER.fetch_add(1, Ordering::SeqCst);
-    let write: &mut SerialPort = unsafe {
-        // Safety: we are in a panic state, so anything relying on interrupts is
-        // done for anyways
-        locals!().disable_interrupts();
 
-        // TODO disbale all other cores
+    unsafe {
+        // Safety: we are in a panic handler
+        panic_disable_cores();
 
-        // Safety: interrupts and other cores disabled
-        SERIAL1.get_mut()
+        // Safety: in panic handler after disable cores
+        recreate_logger();
     };
 
     if let Some(custom_panic_handler) = CUSTOM_PANIC.lock().take() {
-        trace_write!(write, "Custom panic handler detected");
+        trace!("Custom panic handler detected");
         if panic_recursion == 0 {
             custom_panic_handler(info);
             // unreachable
         } else {
-            error_write!(write, "Custom Panic Handler paniced: ");
+            error!("Custom Panic Handler paniced: ");
         }
     } else {
         if panic_recursion > 0 {
-            error_write!(write, "main panic handler paniced");
-            debug_write!(write, "panic recursion count: {}", panic_recursion);
+            error!("main panic handler paniced");
+            debug!("panic recursion count: {}", panic_recursion);
         }
     }
 
-    error_write!(write, "TEST PANIC: {info}");
+    error!("TEST PANIC: {info}");
 
-    debug_write!(write, "panic! exit qemu");
+    debug!("panic! exit qemu");
 
     qemu::exit(qemu::ExitCode::Error);
     // unreachable

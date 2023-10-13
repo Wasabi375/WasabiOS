@@ -109,7 +109,7 @@ pub async fn test(uefi: &Path, mut args: TestArgs) -> Result<()> {
     };
     log::log!(
         level,
-        "{}/{} tests succeded",
+        "{}/{} tests succeded\n",
         test_count.success,
         test_count.total
     );

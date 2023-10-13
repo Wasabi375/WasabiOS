@@ -1,18 +1,45 @@
 //! panic handler implementation
 
 use core::panic::PanicInfo;
-use logger::error_write;
-use shared::lockcell::LockCellInternal;
-use uart_16550::SerialPort;
+
+use log::error;
 
 use crate::{
     boot_info, cpu,
-    framebuffer::{clear_frame_buffer, Color},
+    graphics::framebuffer::{clear_frame_buffer, Color},
     locals,
     logger::LOGGER,
-    serial::SERIAL1,
     serial_println,
 };
+
+/// Disables all other cores and interrupts.
+///
+/// # Safety:
+///
+/// This should only be called from panics
+pub unsafe fn panic_disable_cores() {
+    unsafe {
+        // Safety: we are in a panic state, so anything relying on interrupts is
+        // done for anyways
+        locals!().disable_interrupts();
+
+        // TODO disbale all other cores
+    }
+}
+
+/// Ensures logger works during panic
+///
+/// This is done by recreating all resources that loggers depend on
+/// or if that is not possible, disabling that logger
+///
+/// # Safety:
+///
+/// This should onl be called from panics, after all multicore and interrupts are
+/// disabled.
+pub unsafe fn recreate_logger() {
+    // FIXME recreate loggers in panic
+    //      without this logging during panic can deadlock
+}
 
 /// This function is called on panic.
 #[panic_handler]
@@ -21,15 +48,12 @@ fn panic(info: &PanicInfo) -> ! {
     #[cfg(feature = "test")]
     crate::testing::panic::test_panic_handler(info);
 
-    let write: &mut SerialPort = unsafe {
-        // Safety: we are in a panic state, so anything relying on interrupts is
-        // done for anyways
-        locals!().disable_interrupts();
+    unsafe {
+        // Safety: we are in a panic handler
+        panic_disable_cores();
 
-        // TODO disbale all other cores
-
-        // Safety: interrupts and other cores disabled
-        SERIAL1.get_mut()
+        // Safety: in panic handler after disable cores
+        recreate_logger();
     };
 
     // Saftey: [LOGGER] is only writen to during the boot process.
@@ -43,7 +67,7 @@ fn panic(info: &PanicInfo) -> ! {
         clear_frame_buffer(fb, Color::PANIC);
     }
 
-    error_write!(write, "PANIC: {}", info);
+    error!("PANIC: {}", info);
 
     cpu::halt();
 }

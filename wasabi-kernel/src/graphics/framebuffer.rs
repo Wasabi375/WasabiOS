@@ -35,7 +35,7 @@ pub fn clear_frame_buffer(fb: &mut FrameBuffer, c: Color) {
 
 /// clears the framebuffer to the given rgb color
 pub fn clear_frame_buffer_rgb(fb: &mut FrameBuffer, r: u8, g: u8, b: u8) {
-    let info = fb.info().clone();
+    let info = fb.info();
     let buffer = fb.buffer_mut();
 
     for y in 0..info.height {
