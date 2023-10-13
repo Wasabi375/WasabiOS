@@ -442,7 +442,7 @@ impl<T, I> ReadWriteCell<T, I> {
         }
     }
 
-    /// creates a new preemtable [ReadWriteCell]
+    /// creates a new non-preemtable [ReadWriteCell]
     ///
     /// This assumes that it is save to disable interrupts
     /// while the lock is held.
@@ -474,13 +474,11 @@ impl<T: Default, I> ReadWriteCell<T, I> {
 
 impl<T: Send, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
     fn read(&self) -> ReadCellGuard<'_, T, Self> {
-        assert!(
-            !self.preemtable || !I::in_interrupt(),
-            "use onf non-preemtable lock in interrupt"
-        );
+        // NOTE: because there can be multiple readers, RWLock is allowed
+        // in interrupts even if preemtable
         unsafe {
             // Safety: disabling interrupts is ok, for preemtable locks
-            I::enter_lock(!self.preemtable);
+            I::enter_lock(false);
         }
 
         let mut cur_count = self.access_count.load(Ordering::Acquire);
