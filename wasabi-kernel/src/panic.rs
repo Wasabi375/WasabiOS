@@ -3,10 +3,11 @@
 use core::panic::PanicInfo;
 
 use log::error;
+use shared::lockcell::LockCell;
 
 use crate::{
-    boot_info, cpu,
-    graphics::{framebuffer::clear_frame_buffer, Color},
+    cpu,
+    graphics::{framebuffer, Canvas, Color},
     locals,
     logger::LOGGER,
     serial_println,
@@ -41,6 +42,14 @@ pub unsafe fn recreate_logger() {
     //      without this logging during panic can deadlock
 }
 
+/// Ensures frambuffer is accessible during panic
+///
+/// # Safety:
+///
+/// This should onl be called from panics, after all multicore and interrupts are
+/// disabled.
+pub unsafe fn recreate_framebuffer() {}
+
 /// This function is called on panic.
 #[panic_handler]
 #[allow(unreachable_code)]
@@ -54,17 +63,17 @@ fn panic(info: &PanicInfo) -> ! {
 
         // Safety: in panic handler after disable cores
         recreate_logger();
+
+        recreate_framebuffer();
     };
+
+    framebuffer().lock().clear(Color::PINK);
 
     // Saftey: [LOGGER] is only writen to during the boot process.
     // Either we are in the boot process, in which case only we have access
     // or we aren't in which case everyone only reads
     if unsafe { &LOGGER }.is_none() {
         panic_no_logger(info);
-    }
-
-    if let Some(fb) = boot_info().framebuffer.as_mut() {
-        clear_frame_buffer(fb, Color::PANIC);
     }
 
     error!("PANIC: {}", info);
@@ -74,10 +83,6 @@ fn panic(info: &PanicInfo) -> ! {
 
 /// panic handler if we haven't initialized logging
 fn panic_no_logger(info: &PanicInfo) -> ! {
-    if let Some(fb) = boot_info().framebuffer.as_mut() {
-        clear_frame_buffer(fb, Color::PANIC);
-    }
-
     serial_println!("PANIC(no-logger): {}", info);
 
     cpu::halt();

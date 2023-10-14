@@ -34,7 +34,7 @@ use wasabi_kernel::{
     init,
     mem::kernel_heap::KERNEL_HEAP_SIZE,
     serial::SERIAL2,
-    time::{self, sleep_tsc},
+    time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
