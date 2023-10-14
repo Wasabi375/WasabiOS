@@ -5,9 +5,10 @@ pub mod kernel_font;
 
 pub use fb::framebuffer;
 
-use self::fb::{Framebuffer, HARDWARE_FRAMEBUFFER_START};
-use crate::boot_info;
-use bootloader_api::info::{FrameBuffer as BootFrameBuffer, Optional};
+use self::fb::{
+    startup::{take_boot_framebuffer, HARDWARE_FRAMEBUFFER_START_INFO},
+    Framebuffer,
+};
 
 /// A simple rgb (u8) Color
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -49,19 +50,15 @@ pub trait Canvas {
 /// must only be called once during initialization.
 /// Requires logging and heap access.
 pub unsafe fn init() {
-    let fb: Framebuffer = take_boot_framebuffer()
-        .expect("No framebuffer found")
-        .into();
+    let fb: Framebuffer = unsafe {
+        take_boot_framebuffer()
+            .expect("No framebuffer found")
+            .into()
+    };
 
     unsafe {
-        HARDWARE_FRAMEBUFFER_START = Some(fb.start);
+        HARDWARE_FRAMEBUFFER_START_INFO = Some((fb.start, fb.info.clone()));
     }
 
     framebuffer().lock_uninit().write(fb);
-}
-
-fn take_boot_framebuffer() -> Option<BootFrameBuffer> {
-    let boot_info = boot_info();
-    let fb = core::mem::replace(&mut boot_info.framebuffer, Optional::None);
-    fb.into_option()
 }

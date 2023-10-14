@@ -121,7 +121,9 @@ pub trait RecursivePageTableExt {
 ///     boot process is done anyways
 #[inline]
 pub fn recursive_index() -> PageTableIndex {
-    let boot_info = crate::boot_info();
+    // TODO this is unsafe. I should extract the recursive index and store it where it's
+    // easy to access it
+    let boot_info = unsafe { crate::boot_info() };
 
     let index = *boot_info
         .recursive_index

@@ -22,9 +22,6 @@ use super::Canvas;
 pub(super) static HARDWEAR_FRAME_BUFFER: UnwrapTicketLock<Framebuffer> =
     unsafe { UnwrapTicketLock::new_uninit() };
 
-/// The start addr of the hardware framebuffer. Used during panic to recreate the fb
-pub static mut HARDWARE_FRAMEBUFFER_START: Option<VirtAddr> = None;
-
 /// gives access to the hardware framebuffer
 pub fn framebuffer() -> &'static UnwrapTicketLock<Framebuffer> {
     &HARDWEAR_FRAME_BUFFER
@@ -88,6 +85,20 @@ impl Framebuffer {
         })
     }
 
+    /// Creates a new framebuffer for the given `vaddr`.
+    ///
+    /// # Safety
+    ///
+    /// `vaddr` must be a valid memory location with a lifetime of at least the result of
+    /// this function, that cannot be accessed in any other way.
+    pub unsafe fn new_at_virt_addr(vaddr: VirtAddr, info: FrameBufferInfo) -> Self {
+        Framebuffer {
+            start: vaddr,
+            source: FramebufferSource::HardwareBuffer,
+            info,
+        }
+    }
+
     /// Gives read access to the buffer
     pub fn buffer(&self) -> &[u8] {
         // Safety: buffer_start + byte_len is memory owned by this framebuffer
@@ -104,12 +115,9 @@ impl From<BootFrameBuffer> for Framebuffer {
     fn from(value: BootFrameBuffer) -> Self {
         // TODO use VirtAddr::from_slice once that is available
         let start = VirtAddr::new(value.buffer() as *const [u8] as *const u8 as u64);
-        let info = value.info();
-        Framebuffer {
-            start,
-            source: FramebufferSource::HardwareBuffer,
-            info,
-        }
+        // Safety: start points to valid FB memory,
+        // since we got it from the bootloader framebuffer
+        unsafe { Self::new_at_virt_addr(start, value.info()) }
     }
 }
 
@@ -175,5 +183,27 @@ fn set_pixel_at_pos(buffer: &mut [u8], index: usize, color: Color, pixel_format:
             buffer[index] = gray;
         }
         _ => panic!("unknown pixel format"),
+    }
+}
+
+/// module containing startup/panic recovery functionality for the framebuffer
+pub mod startup {
+    use bootloader_api::info::{FrameBuffer, FrameBufferInfo, Optional};
+    use x86_64::VirtAddr;
+
+    use crate::boot_info;
+
+    /// The start addr of the hardware framebuffer. Used during panic to recreate the fb
+    pub static mut HARDWARE_FRAMEBUFFER_START_INFO: Option<(VirtAddr, FrameBufferInfo)> = None;
+
+    /// Extracts the frambuffer from the boot info
+    ///
+    /// # Safety
+    ///
+    /// this is racy and must only be called while only a single execution has access
+    pub unsafe fn take_boot_framebuffer() -> Option<FrameBuffer> {
+        let boot_info = unsafe { boot_info() };
+        let fb = core::mem::replace(&mut boot_info.framebuffer, Optional::None);
+        fb.into_option()
     }
 }

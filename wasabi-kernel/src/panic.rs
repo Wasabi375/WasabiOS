@@ -3,11 +3,17 @@
 use core::panic::PanicInfo;
 
 use log::error;
-use shared::lockcell::LockCell;
+use shared::lockcell::{LockCell, LockCellInternal, UnwrapLock};
 
 use crate::{
     cpu,
-    graphics::{framebuffer, Canvas, Color},
+    graphics::{
+        fb::{
+            startup::{take_boot_framebuffer, HARDWARE_FRAMEBUFFER_START_INFO},
+            Framebuffer,
+        },
+        framebuffer, Canvas, Color,
+    },
     locals,
     logger::LOGGER,
     serial_println,
@@ -36,7 +42,7 @@ pub unsafe fn panic_disable_cores() {
 /// # Safety:
 ///
 /// This should onl be called from panics, after all multicore and interrupts are
-/// disabled.
+/// disabled and the framebuffer is useable
 pub unsafe fn recreate_logger() {
     // FIXME recreate loggers in panic
     //      without this logging during panic can deadlock
@@ -47,8 +53,30 @@ pub unsafe fn recreate_logger() {
 /// # Safety:
 ///
 /// This should onl be called from panics, after all multicore and interrupts are
-/// disabled.
-pub unsafe fn recreate_framebuffer() {}
+/// disabled. This function dose not require logging.
+pub unsafe fn recreate_framebuffer() {
+    if <UnwrapLock<_, _> as LockCellInternal<Framebuffer>>::is_unlocked(framebuffer()) {
+        // if the framebuffer is unlocked we can just keep using the existing fb
+        return;
+    }
+    let fb = match unsafe { HARDWARE_FRAMEBUFFER_START_INFO.take() } {
+        Some((start, info)) => unsafe {
+            // Safety:
+            //  we are in a panic and therefor the memory will not be accessed any other way.
+            Framebuffer::new_at_virt_addr(start, info)
+        },
+        None => unsafe {
+            // Safety: during panic, and therefor unique access
+            take_boot_framebuffer()
+        }
+        // NOTE: infinite panic loop here. Expect just for reasoning why this should be Some
+        .expect("start/info static is not filled, therefor boot-framebuffer should exits")
+        .into(),
+    };
+    // NOTE: this does not drop any existing fb, which is fine because we are in a panic
+    // We do this just to recreate the lock
+    framebuffer().lock_uninit().write(fb);
+}
 
 /// This function is called on panic.
 #[panic_handler]
@@ -57,14 +85,13 @@ fn panic(info: &PanicInfo) -> ! {
     #[cfg(feature = "test")]
     crate::testing::panic::test_panic_handler(info);
 
+    // Safety: we are in a panic handler
     unsafe {
-        // Safety: we are in a panic handler
         panic_disable_cores();
 
-        // Safety: in panic handler after disable cores
-        recreate_logger();
-
         recreate_framebuffer();
+
+        recreate_logger();
     };
 
     framebuffer().lock().clear(Color::PINK);

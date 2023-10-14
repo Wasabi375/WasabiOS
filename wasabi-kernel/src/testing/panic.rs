@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use log::{debug, error, trace};
 
 use crate::{
-    panic::{panic_disable_cores, recreate_logger},
+    panic::{panic_disable_cores, recreate_framebuffer, recreate_logger},
     prelude::TicketLock,
     testing::qemu,
 };
@@ -28,11 +28,12 @@ static PANIC_RECURSION_MARKER: AtomicU8 = AtomicU8::new(0);
 pub fn test_panic_handler(info: &PanicInfo) -> ! {
     let panic_recursion = PANIC_RECURSION_MARKER.fetch_add(1, Ordering::SeqCst);
 
+    // Safety: we are in a panic handler
     unsafe {
-        // Safety: we are in a panic handler
         panic_disable_cores();
 
-        // Safety: in panic handler after disable cores
+        recreate_framebuffer();
+
         recreate_logger();
     };
 

@@ -106,7 +106,8 @@ pub unsafe fn init() {
             print_debug_info(&mut recursive_page_table, bootloader_page_table_vaddr);
         }
 
-        frame_allocator::init(&boot_info().memory_regions);
+        // Safety: during kernel boot
+        frame_allocator::init(&unsafe { boot_info() }.memory_regions);
 
         page_allocator::init(&mut recursive_page_table);
     }
@@ -322,35 +323,38 @@ fn print_debug_info(
 ) {
     recursive_page_table.print_all_mapped_regions(true);
 
+    // TODO this is unsafe
+    let boot_info = unsafe { boot_info() };
+
     recursive_page_table
         .print_page_flags_for_vaddr(bootloader_page_table_vaddr, Some("Page Table L4"));
 
     recursive_page_table
         .print_page_flags_for_vaddr(VirtAddr::new(0x8000019540), Some("Kernel entry point"));
     recursive_page_table.print_page_flags_for_vaddr(
-        VirtAddr::new(boot_info() as *const BootInfo as u64),
+        VirtAddr::new(boot_info as *const BootInfo as u64),
         Some("Boot Info"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
-        VirtAddr::new(boot_info().framebuffer.as_ref().unwrap() as *const FrameBuffer as u64),
+        VirtAddr::new(boot_info.framebuffer.as_ref().unwrap() as *const FrameBuffer as u64),
         Some("Frame Buffer Info"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
-        VirtAddr::new(boot_info().framebuffer.as_ref().unwrap().buffer().as_ptr() as u64),
+        VirtAddr::new(boot_info.framebuffer.as_ref().unwrap().buffer().as_ptr() as u64),
         Some("Frame Buffer Start"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
-        VirtAddr::new(*boot_info().rsdp_addr.as_ref().unwrap()),
+        VirtAddr::new(*boot_info.rsdp_addr.as_ref().unwrap()),
         Some("RSDP"),
     );
 
     let rip = read_rip();
     recursive_page_table.print_page_flags_for_vaddr(rip, Some("RDI"));
 
-    let memory_regions = &boot_info().memory_regions;
+    let memory_regions = &boot_info.memory_regions;
 
     info!("memory region count {}", memory_regions.len());
     assert_phys_not_available(
@@ -360,7 +364,7 @@ fn print_debug_info(
         "page table",
     );
 
-    let fb_vaddr = VirtAddr::from_ptr(boot_info().framebuffer.as_ref().unwrap().buffer().as_ptr());
+    let fb_vaddr = VirtAddr::from_ptr(boot_info.framebuffer.as_ref().unwrap().buffer().as_ptr());
     assert_phys_not_available(
         recursive_page_table.translate_addr(fb_vaddr).unwrap(),
         "framebuffer",
@@ -370,7 +374,8 @@ fn print_debug_info(
 
 /// asserts that the given phys addr is not within the memory regions of the boot info
 fn assert_phys_not_available(addr: PhysAddr, message: &str) {
-    let avail_mem = &boot_info().memory_regions;
+    // TODO this is unsafe
+    let avail_mem = &unsafe { boot_info() }.memory_regions;
 
     let available = avail_mem.iter().any(|region| {
         region.start <= addr.as_u64()

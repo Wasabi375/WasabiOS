@@ -50,8 +50,11 @@ use core::ptr::null_mut;
 static mut BOOT_INFO: *mut BootInfo = null_mut();
 
 /// returns the [BootInfo] provided by the bootloader
-/// TODO: this breaks rust uniquness guarantee
-pub fn boot_info() -> &'static mut BootInfo {
+///
+/// # Safety:
+///
+/// the caller must guarantee unique access
+pub unsafe fn boot_info() -> &'static mut BootInfo {
     unsafe { &mut *BOOT_INFO }
 }
 

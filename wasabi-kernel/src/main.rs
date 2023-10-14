@@ -32,7 +32,6 @@ use wasabi_kernel::{
         apic::{self, TimerConfig},
     },
     init,
-    mem::kernel_heap::KERNEL_HEAP_SIZE,
     serial::SERIAL2,
     time,
 };
@@ -78,15 +77,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             duration: apic_rate * 1_000_000 / 2,
         }));
     }
-
-    info!(
-        "framebuffer size: {:?} bytes",
-        wasabi_kernel::boot_info()
-            .framebuffer
-            .as_ref()
-            .map(|b| b.info().byte_len)
-    );
-    info!("kernel heap size: {} bytes", KERNEL_HEAP_SIZE);
 
     info!("OS Done! cpu::halt()");
     cpu::halt();
