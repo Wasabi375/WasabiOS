@@ -35,6 +35,16 @@ static mut SERIAL_LOGGER: Option<
     StaticLogger<'static, SerialPort, UnwrapTicketLock<SerialPort>, 0, MAX_RENAME_MAPPINGS>,
 > = None;
 
+/// setup module renames for any static logger
+pub fn setup_logger_module_rename<W, L, const N: usize, const R: usize>(
+    logger: &mut StaticLogger<W, L, N, R>,
+) {
+    logger
+        .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
+        .with_module_rename("wasabi_kernel::", "::")
+        .with_module_rename("wasabi_kernel", "::");
+}
+
 /// initializes the logger piping all [log::log] calls into the first serial port.
 ///
 /// # Safety:
@@ -60,10 +70,8 @@ pub unsafe fn init() {
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
 
-    let mut serial_logger = StaticLogger::new(&SERIAL1)
-        .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
-        .with_module_rename("wasabi_kernel::", "::")
-        .with_module_rename("wasabi_kernel", "::");
+    let mut serial_logger = StaticLogger::new(&SERIAL1);
+    setup_logger_module_rename(&mut serial_logger);
     serial_logger.init();
 
     // Safety: this is fine, since we are in the kernel boot and this is only
