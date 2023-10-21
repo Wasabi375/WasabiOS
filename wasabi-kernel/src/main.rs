@@ -31,6 +31,7 @@ use wasabi_kernel::{
         self,
         apic::{self, TimerConfig},
     },
+    graphics::{framebuffer, Canvas, Color},
     init,
     serial::SERIAL2,
     time,

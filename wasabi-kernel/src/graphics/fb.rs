@@ -28,6 +28,7 @@ pub fn framebuffer() -> &'static UnwrapTicketLock<Framebuffer> {
 }
 
 /// The different memory sources for the framebuffer
+#[derive(Debug)]
 enum FramebufferSource {
     /// framebuffer is backed by the hardware buffer
     HardwareBuffer,
@@ -51,6 +52,7 @@ impl FramebufferSource {
     }
 }
 
+#[derive(Debug)]
 /// A framebuffer used for rendering to the screen
 pub struct Framebuffer {
     /// The start address of the framebuffer
@@ -156,6 +158,14 @@ impl Canvas for Framebuffer {
             info.bytes_per_pixel * info.stride * y as usize + info.bytes_per_pixel * x as usize;
         let format = info.pixel_format;
         set_pixel_at_pos(self.buffer_mut(), pos, c, format);
+    }
+
+    fn witdth(&self) -> u32 {
+        self.info.width as u32
+    }
+
+    fn height(&self) -> u32 {
+        self.info.height as u32
     }
 }
 
