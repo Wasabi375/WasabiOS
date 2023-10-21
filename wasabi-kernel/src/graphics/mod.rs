@@ -1,7 +1,9 @@
 //! Module containing all graphics related code for the kernel
 
+mod color;
 pub mod fb;
 pub mod kernel_font;
+pub use color::Color;
 
 use core::{fmt::Write, slice};
 
@@ -15,35 +17,6 @@ use self::{
     },
     kernel_font::BitFont,
 };
-
-/// A simple rgb (u8) Color
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-#[allow(missing_docs)]
-pub struct Color {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-#[allow(missing_docs)]
-impl Color {
-    pub const WHITE: Color = Color {
-        r: 255,
-        g: 255,
-        b: 255,
-    };
-    pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
-    pub const RED: Color = Color { r: 255, g: 0, b: 0 };
-    pub const GREEN: Color = Color { r: 0, g: 255, b: 0 };
-    pub const BLUE: Color = Color { r: 0, g: 0, b: 255 };
-    pub const PINK: Color = Color {
-        r: 255,
-        g: 0,
-        b: 255,
-    };
-
-    pub const PANIC: Color = Color::PINK;
-}
 
 /// A point in 2D space
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
@@ -117,6 +90,10 @@ pub struct CanvasWriter<C> {
     /// the default text color
     #[builder(default = "Color::WHITE")]
     text_color: Color,
+
+    /// the default text color
+    #[builder(default = "Color::BLACK")]
+    background_color: Color,
 }
 
 impl<C> CanvasWriterBuilder<C> {
@@ -142,6 +119,7 @@ impl<C> CanvasWriter<C> {
 
 impl<C: Canvas> CanvasWriter<C> {
     /// jump to the next line
+    #[inline]
     pub fn new_line(&mut self) {
         self.carriage_return();
         if self.cursor.y + self.font.line_height() > self.canvas.height() - self.border_height {
@@ -152,13 +130,34 @@ impl<C: Canvas> CanvasWriter<C> {
     }
 
     /// jump back to the start of the current line
+    #[inline]
     pub fn carriage_return(&mut self) {
         self.cursor.x = self.border_width + self.ident_line;
     }
 
+    /// advances the cursor by 1 character.
+    ///
+    /// This done automatically when calling [print_char]
+    #[inline]
+    pub fn advance_cursor(&mut self) {
+        self.cursor.x += self.font.char_width();
+        if self.cursor.x >= self.canvas.width() - self.border_width {
+            self.new_line();
+        }
+    }
+
     /// write a single character to the screen
-    pub fn print_char(&mut self, _c: char) {
-        todo!()
+    pub fn print_char(&mut self, c: char) {
+        // print char to pos
+        self.font.draw_char(
+            c,
+            self.cursor,
+            self.text_color,
+            self.background_color,
+            &mut self.canvas,
+        );
+
+        self.advance_cursor();
     }
 }
 
@@ -193,4 +192,19 @@ pub unsafe fn init() {
     }
 
     framebuffer().lock_uninit().write(fb);
+}
+
+fn init_framebuffer_logger() {
+    todo!("create fb logger")
+    // how do we want to handle ownership over the framebuffer
+    //
+    // This feels like a general problem we will have more often in the future.
+    // More precisely, how do we handle ownership/transfer of ownership of
+    // system resources that can only exit once.
+    //
+    // E.g use fb for logging during boot
+    //      -> transfere ownership to cli
+    //      -> transfere ownership to gui
+    //      -> transfere ownership to panic on crash
+    //      etc
 }

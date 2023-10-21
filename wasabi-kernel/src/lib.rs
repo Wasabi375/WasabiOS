@@ -25,6 +25,7 @@ pub mod core_local;
 pub mod cpu;
 pub mod graphics;
 pub mod logger;
+pub mod math;
 pub mod mem;
 pub mod panic;
 pub mod prelude;

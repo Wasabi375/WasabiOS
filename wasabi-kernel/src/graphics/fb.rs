@@ -160,7 +160,7 @@ impl Canvas for Framebuffer {
         set_pixel_at_pos(self.buffer_mut(), pos, c, format);
     }
 
-    fn witdth(&self) -> u32 {
+    fn width(&self) -> u32 {
         self.info.width as u32
     }
 
