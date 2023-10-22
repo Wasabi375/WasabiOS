@@ -1,6 +1,9 @@
 //! A module containing logging and debug utilities
+use core::fmt::Write;
+
 use log::{info, LevelFilter};
 use logger::{dispatch::TargetLogger, StaticLogger};
+use shared::lockcell::LockCell;
 use uart_16550::SerialPort;
 
 use crate::{
@@ -38,7 +41,7 @@ static mut SERIAL_LOGGER: Option<
 /// setup module renames for any static logger
 pub fn setup_logger_module_rename<W, L, const N: usize, const R: usize>(
     logger: &mut StaticLogger<W, L, N, R>,
-) {
+) where L: LockCell<W>, W: Write {
     logger
         .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
         .with_module_rename("wasabi_kernel::", "::")

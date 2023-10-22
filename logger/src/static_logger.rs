@@ -174,7 +174,7 @@ where
         self
     }
 
-    pub fn with_module_rename(mut self, target: &'static str, rename: &'static str) -> Self {
+    pub fn with_module_rename(&mut self, target: &'static str, rename: &'static str) -> &mut Self {
         self.module_rename_mapping.push((target, rename));
 
         self
