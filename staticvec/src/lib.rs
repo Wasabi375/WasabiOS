@@ -11,7 +11,9 @@
   // generally way less readable IMO.
   clippy::match_bool,
   // Without this, every single use of const generics is warned against.
-  incomplete_features
+  incomplete_features,
+  // allow core intrinsics
+  internal_features
 )]
 #![feature(
     core_intrinsics,

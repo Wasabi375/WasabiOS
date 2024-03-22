@@ -64,7 +64,7 @@ fn panic(info: &PanicInfo) -> ! {
     // Saftey: [LOGGER] is only writen to during the boot process.
     // Either we are in the boot process, in which case only we have access
     // or we aren't in which case everyone only reads
-    if unsafe { &LOGGER }.is_none() {
+    if unsafe { &*core::ptr::addr_of!(LOGGER) }.is_none() {
         panic_no_logger(info);
     }
 
