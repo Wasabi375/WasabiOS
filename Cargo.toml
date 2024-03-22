@@ -45,7 +45,7 @@ proc-macro2 = "1.0.58"
 quote = "1.0.27"
 syn = { version = "2.0.16", features = ["full"] }
 itertools = { version = "0.10.5", default-features = false, features = ["use_alloc"] }
-uart_16550 = { version = "0.3.0", path = "../uart_16550" }
+uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
 derive_builder = { version = "0.12.0", default-features = false}
 
 # latin-1-suplement is required for german Umlauts. unicode-specials contains the replacement character �
