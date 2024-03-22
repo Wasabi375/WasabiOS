@@ -90,7 +90,7 @@ pub fn init(boot_info: &'static mut BootInfo) {
             mem::init();
 
             // Safety: bsp during `init` and locks and logging are working
-            graphics::init();
+            graphics::init(true);
         }
     }
 
