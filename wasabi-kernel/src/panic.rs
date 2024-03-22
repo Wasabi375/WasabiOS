@@ -3,21 +3,8 @@
 use core::panic::PanicInfo;
 
 use log::error;
-use shared::lockcell::{LockCell, LockCellInternal, UnwrapLock};
 
-use crate::{
-    cpu,
-    graphics::{
-        fb::{
-            startup::{take_boot_framebuffer, HARDWARE_FRAMEBUFFER_START_INFO},
-            Framebuffer,
-        },
-        framebuffer, Canvas, Color,
-    },
-    locals,
-    logger::LOGGER,
-    serial_println,
-};
+use crate::{cpu, locals, logger::LOGGER, serial_println};
 
 /// Disables all other cores and interrupts.
 ///
@@ -55,27 +42,7 @@ pub unsafe fn recreate_logger() {
 /// This should onl be called from panics, after all multicore and interrupts are
 /// disabled. This function dose not require logging.
 pub unsafe fn recreate_framebuffer() {
-    if <UnwrapLock<_, _> as LockCellInternal<Framebuffer>>::is_unlocked(framebuffer()) {
-        // if the framebuffer is unlocked we can just keep using the existing fb
-        return;
-    }
-    let fb = match unsafe { HARDWARE_FRAMEBUFFER_START_INFO.take() } {
-        Some((start, info)) => unsafe {
-            // Safety:
-            //  we are in a panic and therefor the memory will not be accessed any other way.
-            Framebuffer::new_at_virt_addr(start, info)
-        },
-        None => unsafe {
-            // Safety: during panic, and therefor unique access
-            take_boot_framebuffer()
-        }
-        // NOTE: infinite panic loop here. Expect just for reasoning why this should be Some
-        .expect("start/info static is not filled, therefor boot-framebuffer should exits")
-        .into(),
-    };
-    // NOTE: this does not drop any existing fb, which is fine because we are in a panic
-    // We do this just to recreate the lock
-    framebuffer().lock_uninit().write(fb);
+    // FIXME: implement
 }
 
 /// This function is called on panic.
@@ -93,8 +60,6 @@ fn panic(info: &PanicInfo) -> ! {
 
         recreate_logger();
     };
-
-    framebuffer().lock().clear(Color::PINK);
 
     // Saftey: [LOGGER] is only writen to during the boot process.
     // Either we are in the boot process, in which case only we have access

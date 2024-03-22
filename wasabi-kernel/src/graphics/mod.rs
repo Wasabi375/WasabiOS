@@ -4,16 +4,17 @@ mod color;
 pub mod fb;
 pub mod kernel_font;
 pub use color::Color;
+use log::warn;
+use shared::lockcell::LockCell;
 
 use core::{fmt::Write, slice};
 
 use derive_builder::Builder;
-pub use fb::framebuffer;
 
 use self::{
     fb::{
         startup::{take_boot_framebuffer, HARDWARE_FRAMEBUFFER_START_INFO},
-        Framebuffer,
+        Framebuffer, HARDWARE_FRAMEBUFFER,
     },
     kernel_font::BitFont,
 };
@@ -63,7 +64,7 @@ pub trait Canvas {
 
 /// A [Write]r for a [Canvas]
 #[derive(Debug, Builder)]
-#[builder(no_std)]
+#[builder(no_std, pattern = "owned")]
 pub struct CanvasWriter<C> {
     /// the [Canvas] to write to
     canvas: C,
@@ -180,7 +181,7 @@ impl<C: Canvas> Write for CanvasWriter<C> {
 ///
 /// must only be called once during initialization.
 /// Requires logging and heap access.
-pub unsafe fn init() {
+pub unsafe fn init(frambuffer_logger: bool) {
     let fb: Framebuffer = unsafe {
         take_boot_framebuffer()
             .expect("No framebuffer found")
@@ -191,20 +192,26 @@ pub unsafe fn init() {
         HARDWARE_FRAMEBUFFER_START_INFO = Some((fb.start, fb.info.clone()));
     }
 
-    framebuffer().lock_uninit().write(fb);
+    *HARDWARE_FRAMEBUFFER.lock() = Some(fb);
+
+    if frambuffer_logger {
+        init_framebuffer_logger();
+    }
 }
 
 fn init_framebuffer_logger() {
-    todo!("create fb logger")
-    // how do we want to handle ownership over the framebuffer
-    //
-    // This feels like a general problem we will have more often in the future.
-    // More precisely, how do we handle ownership/transfer of ownership of
-    // system resources that can only exit once.
-    //
-    // E.g use fb for logging during boot
-    //      -> transfere ownership to cli
-    //      -> transfere ownership to gui
-    //      -> transfere ownership to panic on crash
-    //      etc
+    let fb = if let Some(fb) = HARDWARE_FRAMEBUFFER.lock().take() {
+        fb
+    } else {
+        warn!("Framebuffer already taken. Frambuffer logger will not be created");
+        return;
+    };
+
+    let canvas_writer = CanvasWriterBuilder::create_empty()
+        .font(todo!("kernel font"))
+        .canvas(fb)
+        .border_width(10)
+        .border_height(10)
+        .build()
+        .expect("Canvas writer should be fully initialized");
 }

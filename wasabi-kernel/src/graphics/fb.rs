@@ -8,7 +8,7 @@ use crate::mem::structs::GuardedPages;
 use crate::mem::structs::Mapped;
 use crate::mem::structs::Unmapped;
 use crate::mem::MemError;
-use crate::prelude::UnwrapTicketLock;
+use crate::prelude::TicketLock;
 use bootloader_api::info::FrameBuffer as BootFrameBuffer;
 use bootloader_api::info::FrameBufferInfo;
 use bootloader_api::info::PixelFormat;
@@ -19,13 +19,7 @@ use x86_64::VirtAddr;
 
 use super::Canvas;
 
-pub(super) static HARDWEAR_FRAME_BUFFER: UnwrapTicketLock<Framebuffer> =
-    unsafe { UnwrapTicketLock::new_uninit() };
-
-/// gives access to the hardware framebuffer
-pub fn framebuffer() -> &'static UnwrapTicketLock<Framebuffer> {
-    &HARDWEAR_FRAME_BUFFER
-}
+pub static HARDWARE_FRAMEBUFFER: TicketLock<Option<Framebuffer>> = TicketLock::new(None);
 
 /// The different memory sources for the framebuffer
 #[derive(Debug)]
