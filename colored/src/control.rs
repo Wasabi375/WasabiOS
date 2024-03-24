@@ -1,6 +1,5 @@
 //! A couple of functions to enable and disable coloring.
 
-use core::default::Default;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// A flag to to if coloring should occur.

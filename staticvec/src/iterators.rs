@@ -1,7 +1,7 @@
 use core::fmt::{self, Debug, Formatter};
 use core::intrinsics::assume;
 use core::iter::{FusedIterator, TrustedLen, TrustedRandomAccessNoCoerce};
-use core::marker::{PhantomData, Send, Sync};
+use core::marker::PhantomData;
 use core::mem::{replace, size_of, MaybeUninit};
 use core::ptr;
 use core::slice::{from_raw_parts, from_raw_parts_mut};

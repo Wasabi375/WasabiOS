@@ -1,5 +1,5 @@
 use core::borrow::{Borrow, BorrowMut};
-use core::cmp::{Eq, Ord, Ordering, PartialEq};
+use core::cmp::Ordering;
 use core::fmt::{self, Debug, Formatter};
 use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;

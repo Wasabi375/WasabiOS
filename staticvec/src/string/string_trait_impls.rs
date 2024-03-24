@@ -3,7 +3,6 @@ use core::cmp::Ordering;
 use core::convert::Infallible;
 use core::fmt::{self, Arguments, Debug, Display, Formatter, Write};
 use core::hash::{Hash, Hasher};
-use core::iter::FromIterator;
 use core::ops::{
     Add, AddAssign, Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive,
     RangeTo, RangeToInclusive,

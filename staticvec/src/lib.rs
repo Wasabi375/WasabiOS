@@ -32,7 +32,6 @@
     const_eval_select
 )]
 
-use core::cmp::{Ord, PartialEq};
 use core::intrinsics::assume;
 use core::marker::PhantomData;
 use core::mem::{self, size_of, MaybeUninit};

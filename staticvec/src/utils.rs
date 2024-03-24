@@ -1,4 +1,4 @@
-use core::cmp::{Ordering, PartialOrd};
+use core::cmp::Ordering;
 use core::intrinsics::{assume, const_eval_select};
 use core::mem::{size_of, MaybeUninit};
 
@@ -28,6 +28,7 @@ pub(crate) const fn distance_between<T>(dest: *const T, origin: *const T) -> usi
     match size_of::<T>() {
         // This function cannot safely be used on ZST pointers at compile time (which would not be
         // useful in any scenario I can currently think of anyways).
+        #[allow(unused_unsafe)]
         0 => unsafe {
             const_eval_select(
                 (dest, origin),
@@ -134,7 +135,10 @@ pub(crate) fn runtime_zst_ptr_add_mut<T>(ptr: *mut T, count: usize) -> *mut T {
 #[inline(always)]
 pub(crate) const fn zst_ptr_add<T>(ptr: *const T, count: usize) -> *const T {
     debug_assert!(size_of::<T>() == 0, "`zst_ptr_add` called on a non-ZST!");
-    unsafe { const_eval_select((ptr, count), compiletime_zst_ptr_add, runtime_zst_ptr_add) }
+    #[allow(unused_unsafe)]
+    unsafe {
+        const_eval_select((ptr, count), compiletime_zst_ptr_add, runtime_zst_ptr_add)
+    }
 }
 
 /// An internal convenience function for incrementing mutable ZST pointers by usize offsets.
@@ -144,6 +148,7 @@ pub(crate) const fn zst_ptr_add_mut<T>(ptr: *mut T, count: usize) -> *mut T {
         size_of::<T>() == 0,
         "`zst_ptr_add_mut` called on a non-ZST!"
     );
+    #[allow(unused_unsafe)]
     unsafe {
         const_eval_select(
             (ptr, count),

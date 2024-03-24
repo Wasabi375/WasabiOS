@@ -1,5 +1,4 @@
 use core::fmt::{self, Debug, Formatter};
-use core::iter::FromIterator;
 
 use super::StaticHeap;
 use crate::iterators::{StaticVecIntoIter, StaticVecIterConst, StaticVecIterMut};
