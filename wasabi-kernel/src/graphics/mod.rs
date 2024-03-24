@@ -64,7 +64,11 @@ pub trait Canvas {
 
 /// A [Write]r for a [Canvas]
 #[derive(Debug, Builder)]
-#[builder(no_std, pattern = "owned")]
+#[builder(
+    no_std,
+    pattern = "owned",
+    build_fn(error = "derive_builder::UninitializedFieldError")
+)]
 pub struct CanvasWriter<C> {
     /// the [Canvas] to write to
     canvas: C,
