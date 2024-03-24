@@ -1,5 +1,5 @@
 use crate::{
-    args::{BuildArgs, BuildOptions, CheckArgs, CleanArgs, RunCommand},
+    args::{BuildArgs, BuildOptions, CheckArgs, CleanArgs, ExpandArgs, RunCommand},
     latest_path, run,
     test::test,
 };
@@ -243,5 +243,50 @@ pub async fn clean(args: CleanArgs) -> Result<()> {
             ensure!(success, "clean member {} failed", member);
         }
     }
+    Ok(())
+}
+
+pub async fn expand(args: ExpandArgs) -> Result<()> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("expand");
+
+    cmd.arg("--package").arg(args.package.as_os_path());
+
+    if let Some(bin) = args.bin {
+        if args.lib {
+            bail!("Only one of --lib and --bin can be used at once");
+        }
+        cmd.arg("--bin").arg(bin);
+    } else if args.lib {
+        cmd.arg("--lib");
+    }
+
+    let options = &args.options;
+    cmd.arg("--target").arg(options.target.tripple_str());
+
+    if options.no_default_features {
+        cmd.arg("--no-default-features");
+    }
+    if options.all_features {
+        cmd.arg("--all-features");
+    } else if !options.features.is_empty() {
+        cmd.arg("--features");
+        for feature in &options.features {
+            cmd.arg(feature.as_os_str());
+        }
+    }
+
+    cmd.arg("--profile").arg(options.profile().as_os_str());
+
+    if let Some(item) = args.item {
+        cmd.arg(item);
+    }
+
+    let success = cmd
+        .status()
+        .await
+        .context("cargo expand execution")?
+        .success();
+    ensure!(success, "cargo expand {:?} failed", args.package);
     Ok(())
 }

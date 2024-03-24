@@ -10,7 +10,7 @@ mod test;
 
 use anyhow::{Context, Result};
 use args::{Arguments, BuildCommand, LatestArgs, Profile, RunCommand, Target};
-use build::{build, check, clean};
+use build::{build, check, clean, expand};
 use clap::Parser;
 use log::LevelFilter;
 use qemu::{launch_qemu, Kernel, QemuConfig};
@@ -38,6 +38,7 @@ async fn main() -> Result<()> {
         BuildCommand::Latest(args) => latests(args).await,
         BuildCommand::Clean(args) => clean(args).await,
         BuildCommand::Check(args) => check(args).await,
+        BuildCommand::Expand(args) => expand(args).await,
     }
 }
 

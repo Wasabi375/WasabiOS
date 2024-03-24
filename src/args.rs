@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 
 /// Runner for WasabiOs
 #[derive(Parser, Debug)]
@@ -20,6 +20,8 @@ pub enum BuildCommand {
     Clean(CleanArgs),
     /// run cargo check on kernel
     Check(CheckArgs),
+    /// run cargo expand on kernel
+    Expand(ExpandArgs),
     // TODO Docs command for building and opening docs
 }
 
@@ -132,9 +134,29 @@ pub struct CheckArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct ExpandArgs {
+    /// Expand only this package's library
+    #[arg(long)]
+    pub lib: bool,
+
+    /// Expand only the specified binary
+    #[arg(long)]
+    pub bin: Option<String>,
+
+    #[command(flatten)]
+    pub options: BuildOptions,
+
+    #[arg(short, long, value_enum, default_value_t = WorkspacePackage::WasabiKernel)]
+    pub package: WorkspacePackage,
+
+    /// Local path to module or other named item to expand, e.g. cpu::gdt
+    pub item: Option<String>,
+}
+
+#[derive(Args, Debug)]
 pub struct BuildOptions {
     /// build profile
-    #[arg(short, long)]
+    #[arg(long)]
     pub profile: Option<Profile>,
 
     /// use release profile, overwritten by [profile]
@@ -185,6 +207,50 @@ impl Profile {
             Profile::Dev => OsStr::new("dev"),
             Profile::Release => OsStr::new("release"),
         }
+    }
+}
+
+/// A package in the WasabiOs workspace
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[allow(non_camel_case_types)]
+pub enum WorkspacePackage {
+    WasabiKernel,
+    WasabiTest,
+    SharedDerive,
+    Shared,
+    Logger,
+    Staticvec,
+    Colored,
+    InterruptFnBuilder,
+    Testing,
+    Testing_Derive,
+}
+
+impl WorkspacePackage {
+    pub fn as_os_path(&self) -> OsString {
+        let name = format!("{self:?}");
+        let mut name = name.chars();
+
+        let mut output = OsString::new();
+        {
+            let first = name.next().unwrap();
+            if first.is_uppercase() {
+                output.push(first.to_lowercase().to_string());
+            } else {
+                output.push(format!("{first}"));
+            }
+        }
+        for c in name {
+            match c {
+                '_' => output.push("/"),
+                _ if c.is_uppercase() => {
+                    output.push("-");
+                    output.push(c.to_lowercase().to_string());
+                }
+                _ => output.push(format!("{c}")),
+            }
+        }
+        output
     }
 }
 
