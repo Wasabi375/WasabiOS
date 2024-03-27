@@ -15,7 +15,7 @@ use super::{
     MemError,
 };
 
-/// Marker trati for things that can be memory mapped.
+/// Marker trait for things that can be memory mapped.
 pub trait Mappable {}
 
 /// A memory mapped [T]
@@ -49,7 +49,7 @@ pub struct Pages<S: PageSize> {
     /// the first page
     pub first_page: Page<S>,
     /// the number of consecutive pages in virtual memory
-    pub count: usize,
+    pub count: u64,
 }
 
 impl<S: PageSize> Mappable for Pages<S> {}
@@ -62,7 +62,7 @@ impl<S: PageSize> Pages<S> {
 
     /// the total size in bytes of all consecutive pages
     pub fn size(&self) -> u64 {
-        S::SIZE * self.count as u64
+        S::SIZE * self.count
     }
 
     /// the end addr (inclusive) of the last page
@@ -205,15 +205,16 @@ impl<S: PageSize> DerefMut for GuardedPages<S> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PagesIter<S: PageSize> {
     first_page: Page<S>,
-    count: usize,
-    index: isize,
+    count: u64,
+    // TODO this is technically a bug because count might not fit into a i64
+    index: i64,
 }
 
 impl<S: PageSize> Iterator for PagesIter<S> {
     type Item = Page<S>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.count as isize {
+        if self.index >= self.count as i64 {
             None
         } else {
             let res = Some(self.first_page + self.index as u64);

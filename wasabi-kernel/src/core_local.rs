@@ -18,6 +18,7 @@ use alloc::boxed::Box;
 use core::{
     arch::asm,
     hint::spin_loop,
+    ptr::addr_of_mut,
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
 use shared::{lockcell::InterruptState, types::CoreId};
@@ -233,7 +234,7 @@ impl CoreLocals {
 pub unsafe fn core_boot() -> CoreId {
     let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::AcqRel).into();
 
-    let boot_core_locals = unsafe { &mut BOOT_CORE_LOCALS };
+    let boot_core_locals = unsafe { &mut *addr_of_mut!(BOOT_CORE_LOCALS) };
 
     unsafe {
         cpu::disable_interrupts();

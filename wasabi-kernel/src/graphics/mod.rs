@@ -92,7 +92,7 @@ pub struct CanvasWriter<C> {
     #[builder(default = "self._build_cursor()", setter(skip))]
     cursor: Point,
 
-    /// the default text color
+    /// the default text col."or
     #[builder(default = "Color::WHITE")]
     text_color: Color,
 

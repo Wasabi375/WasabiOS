@@ -13,7 +13,7 @@ use interrupt_fn_builder::exception_fn;
 use lazy_static::lazy_static;
 use shared::{
     lockcell::{LockCell, RWLockCell},
-    sizes::KiB,
+    KiB,
 };
 use thiserror::Error;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
@@ -148,12 +148,12 @@ exception_fn!(breakpoint_handler, stack_frame, {
 /// the stack size for the double fault exception stack
 ///
 /// DF uses a separate stack, in case DF was caused by a stack overflow
-pub const DOUBLE_FAULT_STACK_SIZE: usize = KiB(4 * 5);
+pub const DOUBLE_FAULT_STACK_SIZE: u64 = KiB!(4 * 5);
 
 /// the stack size for the page fault exception stack
 ///
 /// PF uses a separate stack, in case PF was caused by a stack overflow
-pub const PAGE_FAULT_STACK_SIZE: usize = KiB(4 * 5);
+pub const PAGE_FAULT_STACK_SIZE: u64 = KiB!(4 * 5);
 
 /// generic interrupt handler, that is called for any interrupt handler with
 /// `interrupt_vector >= 32`.

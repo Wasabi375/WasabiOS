@@ -212,8 +212,8 @@ impl PageAllocator {
     }
 
     /// allocates multiple consecutive pages of virtual memory.
-    pub fn allocate_pages<S: PageSize>(&mut self, count: usize) -> Result<Pages<S>> {
-        let size = S::SIZE * count as u64;
+    pub fn allocate_pages<S: PageSize>(&mut self, count: u64) -> Result<Pages<S>> {
+        let size = S::SIZE * count;
         let align = S::SIZE;
 
         let start = self.vaddrs.allocate(size, align);
@@ -238,7 +238,7 @@ impl PageAllocator {
     /// 4KiB page at the front and back.
     pub fn allocate_guarded_pages<S: PageSize>(
         &mut self,
-        count: usize,
+        count: u64,
         head_guard: bool,
         tail_guard: bool,
     ) -> Result<GuardedPages<S>> {
@@ -252,7 +252,7 @@ impl PageAllocator {
         }
 
         let size = {
-            let mut size = S::SIZE * count as u64;
+            let mut size = S::SIZE * count;
             if head_guard {
                 size += Size4KiB::SIZE;
             }

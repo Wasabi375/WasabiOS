@@ -29,11 +29,11 @@ panic_exception_with_error!(alignment_check);
 panic_exception_with_error!(vmm_communication_exception);
 panic_exception_with_error!(security_exception);
 
-// NOTE: apge_fault is pub(super) in order to set stack index
+// NOTE: page_fault is pub(super) in order to set stack index
 exception_page_fault_fn!(pub(super) page_fault_handler, stack_frame, page_fault, {
     panic!(
         "PAGE FAULT:\nAccessed Address: {:p}\nError code: {page_fault:?}\n{stack_frame:#?}",
-        Cr2::read()
+        Cr2::read().expect("Cr2 is not a valid addr")
     );
 });
 

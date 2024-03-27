@@ -1,5 +1,7 @@
 //! utilities to setup the Generald Descriptor Table
 
+use core::ptr::addr_of;
+
 use lazy_static::lazy_static;
 use log::{debug, info, trace};
 use x86_64::{
@@ -51,18 +53,18 @@ lazy_static! {
         let mut tss = TaskStateSegment::new();
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
             /// double fault stack
-            static mut STACK: [u8; DOUBLE_FAULT_STACK_SIZE] = [0; DOUBLE_FAULT_STACK_SIZE];
+            static mut STACK: [u8; DOUBLE_FAULT_STACK_SIZE as usize] = [0; DOUBLE_FAULT_STACK_SIZE as usize];
 
             // safety: lazy_static initializer is guared by a spin lock
-            let start = VirtAddr::from_ptr(unsafe { &STACK });
+            let start = VirtAddr::from_ptr(unsafe { addr_of!(STACK) });
             let end = start + DOUBLE_FAULT_STACK_SIZE;
             end
         };
         tss.interrupt_stack_table[PAGE_FAULT_IST_INDEX as usize] = {
-            static mut STACK: [u8; PAGE_FAULT_STACK_SIZE] = [0; PAGE_FAULT_STACK_SIZE];
+            static mut STACK: [u8; PAGE_FAULT_STACK_SIZE as usize] = [0; PAGE_FAULT_STACK_SIZE as usize];
 
             // safety: lazy_static initializer is guared by a spin lock
-            let start = VirtAddr::from_ptr(unsafe { &STACK });
+            let start = VirtAddr::from_ptr(unsafe { addr_of!(STACK) });
             let end = start + DOUBLE_FAULT_STACK_SIZE;
             end
         };
@@ -74,8 +76,8 @@ lazy_static! {
     /// the GDT used by this kernel
     static ref GDT: (GlobalDescriptorTable, Segments) = {
         let mut gdt = GlobalDescriptorTable::new();
-        let code = gdt.add_entry(Descriptor::kernel_code_segment());
-        let tss = gdt.add_entry(Descriptor::tss_segment(&TSS));
+        let code = gdt.append(Descriptor::kernel_code_segment());
+        let tss = gdt.append(Descriptor::tss_segment(&TSS));
         (gdt, Segments { code, tss })
     };
 }

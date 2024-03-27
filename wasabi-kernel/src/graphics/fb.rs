@@ -62,7 +62,7 @@ pub struct Framebuffer {
 impl Framebuffer {
     /// Allocates a new memory backed framebuffer
     pub fn alloc_new(info: FrameBufferInfo) -> Result<Self, MemError> {
-        let page_count = (info.byte_len + Size4KiB::SIZE as usize - 1) / Size4KiB::SIZE as usize;
+        let page_count = (info.byte_len as u64 + Size4KiB::SIZE - 1) / Size4KiB::SIZE;
 
         let pages = PageAllocator::get_kernel_allocator()
             .lock()

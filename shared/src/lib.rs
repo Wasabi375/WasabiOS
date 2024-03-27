@@ -53,25 +53,23 @@ pub mod types {
     }
 }
 
-/// size calulation utilities
-///
-/// TODO rework as enum?
-#[allow(dead_code)]
-#[allow(non_snake_case)]
-pub mod sizes {
+#[macro_export]
+macro_rules! KiB {
+    ($v:expr) => {
+        $v * 1024
+    };
+}
 
-    /// calulates KiB in bytes
-    pub const fn KiB(n: usize) -> usize {
-        1024 * n
-    }
+#[macro_export]
+macro_rules! MiB {
+    ($v:expr) => {
+        $v * 1024 * 1024
+    };
+}
 
-    /// calulates MiB in bytes
-    pub const fn MiB(n: usize) -> usize {
-        1024 * 1024 * n
-    }
-
-    /// calulates GiB in bytes
-    pub const fn GiB(n: usize) -> usize {
-        1024 * 1024 * 1024 * n
-    }
+#[macro_export]
+macro_rules! GiB {
+    ($v:expr) => {
+        $v * 1024 * 1024 * 1024
+    };
 }

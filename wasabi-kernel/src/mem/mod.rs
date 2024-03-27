@@ -47,9 +47,9 @@ pub enum MemError {
     #[error("Page already in use")]
     PageInUse,
     #[error("Allocation size({size:#x}) is invalid. Expected: {expected:#x}")]
-    InvalidAllocSize { size: usize, expected: usize },
+    InvalidAllocSize { size: u64, expected: u64 },
     #[error("Allocation alignment({align:#x}) is invalid. Expected: {expected:#x}")]
-    InvalidAllocAlign { align: usize, expected: usize },
+    InvalidAllocAlign { align: u64, expected: u64 },
     #[error("Zero size allocation")]
     ZeroSizeAllocation,
     #[error("Pointer was not allocated by this allocator")]

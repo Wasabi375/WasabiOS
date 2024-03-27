@@ -18,7 +18,7 @@ use core::{
     ptr::{null_mut, NonNull},
 };
 use linked_list_allocator::Heap as LinkedHeap;
-use shared::{lockcell::LockCellInternal, sizes::KiB};
+use shared::{lockcell::LockCellInternal, KiB};
 use x86_64::{
     structures::paging::{Mapper, PageSize, PageTableFlags, Size4KiB},
     VirtAddr,
@@ -27,13 +27,13 @@ use x86_64::{
 use super::structs::{Mapped, Pages};
 
 /// the size of the kernel heap in bytes
-pub const KERNEL_HEAP_SIZE: usize = KernelHeapPageSize::SIZE as usize * KERNEL_HEAP_PAGE_COUNT;
+pub const KERNEL_HEAP_SIZE: u64 = KernelHeapPageSize::SIZE * KERNEL_HEAP_PAGE_COUNT;
 
 /// the size of a single page in the kernel heap
 type KernelHeapPageSize = Size4KiB;
 
 /// number of memory pages used by the kernel heap
-const KERNEL_HEAP_PAGE_COUNT: usize = 5;
+const KERNEL_HEAP_PAGE_COUNT: u64 = 5;
 
 /// the [KernelHeap]
 // Safety: initialized by [init] before it we use allocated types
@@ -134,10 +134,10 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
 }
 
 /// the sizes of the [SlabAllocator]s used by the kernel heap
-const SLAB_ALLOCATOR_SIZES_BYTES: [usize; 5] = [2, 4, 8, 16, 32];
+const SLAB_ALLOCATOR_SIZES_BYTES: [u64; 5] = [2, 4, 8, 16, 32];
 
 /// block size for the [SlabAllocator]
-const SLAB_BLOCK_SIZE: usize = KiB(1);
+const SLAB_BLOCK_SIZE: u64 = KiB!(1);
 
 /// The allocator trait used by the kernel
 trait Allocator {
@@ -245,7 +245,7 @@ impl MutAllocator for KernelHeap {
             return Err(MemError::ZeroSizeAllocation);
         }
         for slab in &mut self.slab_allocators {
-            if slab.size >= layout.size() {
+            if slab.size >= layout.size() as u64 {
                 return slab.alloc(layout);
             }
         }
@@ -255,12 +255,12 @@ impl MutAllocator for KernelHeap {
 
     unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
         let vaddr = VirtAddr::from_ptr(ptr.as_ptr());
-        if vaddr < self.start || vaddr + layout.size() > self.end {
+        if vaddr < self.start || vaddr + layout.size() as u64 > self.end {
             return Err(MemError::PtrNotAllocated(ptr));
         }
 
         for slab in &mut self.slab_allocators {
-            if slab.size >= layout.size() {
+            if slab.size >= layout.size() as u64 {
                 // safety: same guarantee as ours
                 return unsafe { slab.free(ptr, layout) };
             }
@@ -273,10 +273,12 @@ impl MutAllocator for KernelHeap {
 
 impl Allocator for UnwrapTicketLock<KernelHeap> {
     fn alloc(&self, layout: Layout) -> Result<NonNull<u8>> {
+        // TODO looking at the current implementation we don't need this lock
         self.lock().alloc(layout)
     }
 
     unsafe fn free(&self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
+        // TODO looking at the current implementation we don't need this lock
         unsafe { self.lock().free(ptr, layout) }
     }
 }
@@ -286,7 +288,7 @@ impl Allocator for UnwrapTicketLock<KernelHeap> {
 #[derive(Debug)]
 struct SlabAllocator<'a, A> {
     /// Size of the allocations this slab allocator provides
-    size: usize,
+    size: u64,
     /// The first block for tracking allocations (linked list)
     block: Option<NonNull<SlabBlock>>,
 
@@ -305,13 +307,13 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
 
     /// utility to verify align of self is valid
     #[inline]
-    fn align(&self) -> usize {
+    fn align(&self) -> u64 {
         self.size
     }
 
     /// returns `true` if this allocator can allocate memory with the given alignment
     #[inline]
-    fn can_accept_align(&self, align: usize) -> bool {
+    fn can_accept_align(&self, align: u64) -> bool {
         assert!(align.is_power_of_two());
         // alignments are always a powe of 2, so if requested align
         // is less or equal to our align it will always match up.
@@ -325,7 +327,7 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
     ///
     /// caller ensures that [SlabAllocator::init] is the first function called
     /// on self.
-    unsafe fn new(size: usize) -> Self {
+    unsafe fn new(size: u64) -> Self {
         let slab = Self {
             size,
             block: None,
@@ -393,16 +395,16 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
 
 impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
     fn alloc(&mut self, layout: Layout) -> Result<NonNull<u8>> {
-        if layout.size() > self.size {
+        if layout.size() as u64 > self.size {
             return Err(MemError::InvalidAllocSize {
-                size: layout.size(),
+                size: layout.size() as u64,
                 expected: self.size,
             });
         }
-        if !self.can_accept_align(layout.align()) {
+        if !self.can_accept_align(layout.align() as u64) {
             return Err(MemError::InvalidAllocAlign {
-                align: layout.align(),
-                expected: self.align(),
+                align: layout.align() as u64,
+                expected: self.align() as u64,
             });
         }
         let size = self.size;
@@ -416,15 +418,15 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
     }
 
     unsafe fn free(&mut self, ptr: NonNull<u8>, layout: Layout) -> Result<()> {
-        if layout.size() > self.size {
+        if layout.size() as u64 > self.size {
             return Err(MemError::InvalidAllocSize {
-                size: layout.size(),
+                size: layout.size() as u64,
                 expected: self.size,
             });
         }
-        if !self.can_accept_align(layout.align()) {
+        if !self.can_accept_align(layout.align() as u64) {
             return Err(MemError::InvalidAllocAlign {
-                align: layout.align(),
+                align: layout.align() as u64,
                 expected: self.align(),
             });
         }
@@ -494,16 +496,16 @@ struct SlabBlock {
     /// the end of memory managed by this block
     end: VirtAddr,
     /// the memory used from this block
-    used: usize,
+    used: u64,
     /// the size of allocations freed from this block
-    freed: usize,
+    freed: u64,
 }
 
 impl SlabBlock {
     /// helper function to create a [Layout] for a [SlabBlock]
     #[inline]
     fn layout() -> Layout {
-        Layout::from_size_align(SLAB_BLOCK_SIZE, align_of::<SlabBlock>())
+        Layout::from_size_align(SLAB_BLOCK_SIZE as usize, align_of::<SlabBlock>())
             .expect("Bug in SlabAllocator block layout calculation")
     }
 
@@ -514,11 +516,11 @@ impl SlabBlock {
     /// is at the start of the allocation.
     /// [`SlabBlock::start`] and [`SlabBlock::end`] point to the start and end of the
     /// rest of the allocation.
-    fn new<A: Allocator>(size: usize, allocator: &A) -> Result<NonNull<Self>> {
+    fn new<A: Allocator>(size: u64, allocator: &A) -> Result<NonNull<Self>> {
         let layout = Self::layout();
         let memory = allocator.alloc(layout)?;
         let block_start = VirtAddr::from_ptr(memory.as_ptr());
-        let free_start = (block_start + size_of::<SlabBlock>()).align_up(size as u64);
+        let free_start = (block_start + size_of::<SlabBlock>() as u64).align_up(size);
         let free_end = block_start + (SLAB_BLOCK_SIZE - 1);
 
         // safety: we just allocated this memory so we can access it however we want
@@ -556,18 +558,18 @@ impl SlabBlock {
 
     /// returns `true` if the block has no more space for a `size` allocation
     #[inline]
-    fn is_full(&self, size: usize) -> bool {
+    fn is_full(&self, size: u64) -> bool {
         self.start + self.used + size >= self.end
     }
 
     /// returns `true` if all possible allocations of `size` have been freed
     #[inline]
-    fn is_freed(&self, size: usize) -> bool {
+    fn is_freed(&self, size: u64) -> bool {
         self.start + self.freed + size >= self.end
     }
 
     /// finds the first block that can still fit `size`
-    fn find_block_with_space(&mut self, size: usize) -> Option<&mut SlabBlock> {
+    fn find_block_with_space(&mut self, size: u64) -> Option<&mut SlabBlock> {
         if !self.is_full(size) {
             Some(self)
         } else if let Some(mut next) = self.next {
@@ -580,7 +582,7 @@ impl SlabBlock {
     }
 
     /// allocates `size` bytes from this block
-    fn alloc(&mut self, size: usize) -> Result<NonNull<u8>> {
+    fn alloc(&mut self, size: u64) -> Result<NonNull<u8>> {
         if self.is_full(size) {
             return Err(MemError::OutOfMemory);
         }
@@ -592,7 +594,7 @@ impl SlabBlock {
         assert!(start + size <= self.end);
         self.used += size;
 
-        assert!(start.is_aligned(size as u64));
+        assert!(start.is_aligned(size));
 
         // safety:
         // start + used ..=end is unused memory.

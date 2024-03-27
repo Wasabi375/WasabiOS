@@ -110,6 +110,7 @@ impl PhysAllocator {
 /// a linked list of unused phys frames
 #[repr(C)]
 #[derive(Debug)]
+#[allow(dead_code)] // TODO
 struct UnusedFrame {
     size: u64,
     phys_addr: PhysAddr,
@@ -169,7 +170,7 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
 
     /// the debug name of the page size
     pub const fn page_size_debug_name() -> &'static str {
-        S::SIZE_AS_DEBUG_STR
+        S::DEBUG_STR
     }
 
     /// allocate a new frame
