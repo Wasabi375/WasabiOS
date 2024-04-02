@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+alloc = []
 test = []
+default= ["alloc"]
 
 [dependencies]
 x86_64.workspace = true

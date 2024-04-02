@@ -5,10 +5,17 @@
     maybe_uninit_slice,
     let_chains
 )]
+#![cfg_attr(feature = "alloc", feature(box_into_inner))]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 pub mod lockcell;
 pub mod primitive_enum;
 pub mod rangeset;
+
+#[cfg(feature = "alloc")]
+pub mod reforbox;
 
 /// common type definitions
 pub mod types {
