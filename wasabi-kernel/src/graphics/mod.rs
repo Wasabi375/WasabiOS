@@ -12,7 +12,7 @@ use logger::{dispatch::TargetLogger, OwnLogger};
 use shared::lockcell::LockCell;
 
 use self::{
-    canvas::{CanvasWriter, CanvasWriterBuilder},
+    canvas::CanvasWriter,
     fb::{
         startup::{take_boot_framebuffer, HARDWARE_FRAMEBUFFER_START_INFO},
         Framebuffer, HARDWARE_FRAMEBUFFER,
@@ -102,8 +102,11 @@ fn init_framebuffer_logger() {
         .border_width(10)
         .border_height(10)
         .background_color(bg_color)
+        .log_errors(false)
+        .ignore_ansi(true) // TODO
         .build()
         .expect("Canvas writer should be fully initialized");
+    warn!("fb logger ansi disabled!");
 
     let canvas_lock = TicketLock::new_non_preemtable(canvas_writer);
 
@@ -111,7 +114,7 @@ fn init_framebuffer_logger() {
     setup_logger_module_rename(&mut fb_logger);
 
     if let Some(dispatch_logger) = unsafe { LOGGER.as_ref() } {
-        let logger = TargetLogger::new_primary_boxed("framebuffer", Box::from(fb_logger));
+        let logger = TargetLogger::new_secondary_boxed("framebuffer", Box::from(fb_logger));
 
         dispatch_logger.with_logger(logger)
     } else {

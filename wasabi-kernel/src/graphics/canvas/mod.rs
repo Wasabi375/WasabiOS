@@ -1,9 +1,13 @@
+mod ansi_sgr;
+
 use alloc::format;
 use core::fmt::Write;
+use log::error;
 use thiserror::Error;
 
 use derive_builder::Builder;
 
+use self::ansi_sgr::AnsiSGR;
 use super::{kernel_font::BitFont, Color, Point};
 
 /// A surface which can be drawn on. Screen, Screen region, etc
@@ -77,7 +81,7 @@ pub struct CanvasWriter<C: Canvas> {
     #[builder(default = "self._build_cursor()", setter(skip))]
     cursor: Point,
 
-    /// the default text col."or
+    /// the default text color
     #[builder(default = "Color::WHITE")]
     text_color: Color,
 
@@ -85,8 +89,22 @@ pub struct CanvasWriter<C: Canvas> {
     #[builder(default = "Color::BLACK")]
     background_color: Color,
 
+    /// the default scroll beahviour of the writer
     #[builder(default)]
     scroll_behaviour: CanvasWriterScrollBehaviour,
+
+    /// logs errors if set to `true`.
+    ///
+    /// If set to `false` if `write_str` fails with [core::fmt::Error] there
+    /// is no way to get the reason of the failure.
+    ///
+    /// This is usefull if the [CanvasWriter] is used as the target for a logger.
+    #[builder(default = "true")]
+    log_errors: bool,
+
+    /// if set the writer will ignore all ansi control sequences
+    #[builder(default = "false")]
+    ignore_ansi: bool,
 }
 
 #[derive(Debug, Error)]
@@ -225,14 +243,45 @@ impl<C: Canvas> CanvasWriter<C> {
 
         self.advance_cursor();
     }
+
+    #[cfg(feature = "no-color")]
+    pub fn handle_ansi_ctrl_seq(&mut self, chars: &mut impl Iterator<char>) {
+        // TODO skip ansi escape sequence
+        self.print_char('\x1b')
+    }
+
+    #[cfg(not(feature = "no-color"))]
+    /// Handles ansi colors
+    ///
+    /// `chars` should be the rest of the ansi control sequence fater the `ESC(0x1b)`.
+    ///
+    /// A sequence looks like `ESC[(0-9){1,3}(;(0-9){1,3})*m`
+    /// https://chrisyeh96.github.io/2020/03/28/terminal-colors.html
+    pub fn handle_ansi_ctrl_seq(
+        &mut self,
+        chars: &mut impl Iterator<Item = char>,
+    ) -> Result<(), ansi_sgr::SGRParseError> {
+        let sgr = AnsiSGR::parse_from_chars(chars, true)?;
+        if self.ignore_ansi {
+            return Ok(());
+        }
+        todo!()
+    }
 }
 
 impl<C: Canvas> Write for CanvasWriter<C> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        for c in s.chars() {
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
             match c {
                 '\n' => self.new_line(),
                 '\r' => self.carriage_return(),
+                '\x1b' => self.handle_ansi_ctrl_seq(&mut chars).map_err(|e| {
+                    if self.log_errors {
+                        error!("Failed to write to canvas: {e}")
+                    }
+                    core::fmt::Error
+                })?,
                 c => self.print_char(c),
             }
         }
