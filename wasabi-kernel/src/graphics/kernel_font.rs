@@ -4,7 +4,7 @@
 //! Instead it only contains functionality for loading and displaying a single
 //! mono font (noto-sans-mono).
 
-use super::{Canvas, Color, Point};
+use super::{canvas::Canvas, Color, Point};
 use noto_sans_mono_bitmap::{
     get_raster, get_raster_width, FontWeight, RasterHeight, RasterizedChar,
 };

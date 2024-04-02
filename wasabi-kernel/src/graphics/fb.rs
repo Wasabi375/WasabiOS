@@ -1,4 +1,5 @@
 //! utilites for framebuffer access
+// TODO rename file to frambuffer
 
 use core::slice;
 
@@ -17,7 +18,7 @@ use x86_64::structures::paging::PageSize;
 use x86_64::structures::paging::Size4KiB;
 use x86_64::VirtAddr;
 
-use super::Canvas;
+use super::canvas::Canvas;
 
 pub static HARDWARE_FRAMEBUFFER: TicketLock<Option<Framebuffer>> = TicketLock::new(None);
 
@@ -160,6 +161,45 @@ impl Canvas for Framebuffer {
 
     fn height(&self) -> u32 {
         self.info.height as u32
+    }
+
+    fn supports_scrolling() -> bool {
+        true
+    }
+
+    fn scroll(
+        &mut self,
+        height: i32,
+        clear_color: Color,
+    ) -> core::result::Result<(), super::canvas::ScrollingNotSupportedError> {
+        if height == 0 {
+            return Ok(());
+        }
+
+        let lines_to_move = self.height() as usize - height.abs() as usize;
+
+        let bytes_per_line = self.info.stride * self.info.bytes_per_pixel;
+        let (start, dest, clear_start): (usize, usize, u32) = if height.is_positive() {
+            // move every line up by height pixels. therefor we copy starting
+            // from the nth line and copy into the 0th line
+            (height as usize * bytes_per_line, 0, lines_to_move as u32)
+        } else {
+            // move every line down by height pixels. therefor we copy starting
+            // from the 0th line and copy into the nth line
+            (0, height.abs() as usize * bytes_per_line, 0)
+        };
+        let src = start as usize..(start + lines_to_move * bytes_per_line) as usize;
+
+        self.buffer_mut().copy_within(src, dest);
+
+        // clear the freed up lines
+        for line in 0..height.abs() as u32 {
+            let y = clear_start + line;
+            for x in 0..self.width() {
+                self.set_pixel(x, y, clear_color);
+            }
+        }
+        Ok(())
     }
 }
 
