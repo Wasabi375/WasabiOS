@@ -31,9 +31,7 @@ use wasabi_kernel::{
         self,
         apic::{self, TimerConfig},
     },
-    init,
-    serial::SERIAL2,
-    time,
+    init, time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
@@ -55,12 +53,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let startup_time = time::time_since_startup().to_millis();
     info!("tsc clock rate {}MHz", time::tsc_tickrate());
     info!("kernel boot took {:?} - {}", startup_time, startup_time);
-
-    if SERIAL2.lock().is_some() {
-        info!("SERIAL2 found!");
-    } else {
-        info!("SERIAL2 not found");
-    }
 
     {
         let mut apic_guard = locals!().apic.lock();

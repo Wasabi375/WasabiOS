@@ -72,13 +72,12 @@ pub fn init(boot_info: &'static mut BootInfo) {
     let core_id = unsafe { core_boot() };
 
     if core_id.is_bsp() {
+        time::calibrate_tsc();
         unsafe {
-            time::calibrate_tsc();
-
             // Safety: bsp during `init`
             serial::init_serial_ports();
 
-            // Safety: bsp during `init`
+            // Safety: bsp during `init` after serial::init_serial_ports
             logger::init();
 
             // Safety: inherently unsafe and can crash, but if cpuid isn't supported
@@ -89,7 +88,7 @@ pub fn init(boot_info: &'static mut BootInfo) {
             // Safety: bsp during `init` and locks and logging are working
             mem::init();
 
-            // Safety: bsp during `init` and locks and logging are working
+            // Safety: bsp during `init` and locks, logging and alloc are working
             graphics::init(true);
         }
     }
@@ -106,6 +105,8 @@ pub fn init(boot_info: &'static mut BootInfo) {
     apic::init().unwrap();
 
     assert!(locals!().interrupts_enabled());
+    info!("Interrupts enabled");
+    info!("Kernel initialized");
 }
 
 /// fills in bootloader configuration that is shared between normal and test mode

@@ -53,7 +53,7 @@ pub fn init() -> Result<(), ApicCreationError> {
         .get_bits(24..)
         .try_into()
         .unwrap_or_else(|_| panic!("local apic id does not fit in u8"));
-    info!("local apic id: {local_apic_id}");
+    debug!("local apic id: {local_apic_id}");
 
     let apic = Apic::create_from_msr(IA32_APIC_BASE)?;
 
@@ -70,6 +70,7 @@ pub fn init() -> Result<(), ApicCreationError> {
     );
 
     *local_apic = Some(apic);
+    info!("Apic initialized");
 
     Ok(())
 }

@@ -234,17 +234,27 @@ impl CoreLocals {
 pub unsafe fn core_boot() -> CoreId {
     let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::AcqRel).into();
 
+    // Safety: This is only safe as long as we are the only core
+    // to access this. Right now we might not be.
+    // We must not use this other than to take the boot_lock.
+    // Only when we have the boot_lock, this is save to use.
     let boot_core_locals = unsafe { &mut *addr_of_mut!(BOOT_CORE_LOCALS) };
 
     unsafe {
+        // Safety:
+        // we are still setting up all interrupt handlers, locks, etc so
+        // we can disable this now until everything is set up.
         cpu::disable_interrupts();
     }
-    cpu::set_gs_base(boot_core_locals as *const CoreLocals as u64);
 
+    // This is critical for the safe access to boot_core_locals
     while boot_core_locals.boot_lock.load(Ordering::SeqCst) != core_id.0 {
         spin_loop();
     }
 
+    cpu::set_gs_base(boot_core_locals as *const CoreLocals as u64);
+
+    // setup locals region for boot of core
     boot_core_locals.core_id = core_id;
     boot_core_locals.virt_addr = VirtAddr::from_ptr(boot_core_locals);
 
