@@ -3,25 +3,45 @@ use thiserror::Error;
 
 use crate::graphics::Color;
 
+/// A color as used by ansi control sequences. This can either be an
+/// index into one of the color maps or a True [crate::graphics::Color].
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TextColor {
+    /// Index into the normal color map.
+    ///
+    /// Only 1-8 are valid
     Normal(u8),
+    /// Index into the bright color map.
+    ///
+    /// Only 1-8 are valid
     Bright(u8),
+    /// Index into the extended color map.
+    ///
+    /// This can map the entire u8 range.
     Extended(u8),
+    /// A true rgb color using u8 for each channel
     True(Color),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AnsiSGR {
+    /// reset the style back to the default
     Reset,
+    /// make the style bold
     Bold,
+    /// make the style faint
     Faint,
+    /// underline the text
     Underline,
+    /// change the cursor blink speed to slow
     SlowBlink,
+    /// set the foreground color
     Foreground(TextColor),
+    /// set the background color
     Background(TextColor),
 }
-/// enum for all memory related errors
+
+/// enum for all sgr parsing related errors
 #[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
 #[allow(missing_docs)]
 pub enum SGRParseError {
@@ -81,21 +101,21 @@ impl SGRParseState {
             SGRParseState::ParseFg(state) => {
                 Self::parse_color(c, state);
                 match state {
-                    _ => {}
                     ColorParseState::Done(color) => {
                         *self = SGRParseState::Done(AnsiSGR::Foreground(*color))
                     }
                     ColorParseState::Err(e) => *self = SGRParseState::Err(*e),
+                    _ => {}
                 }
             }
             SGRParseState::ParseBg(state) => {
                 Self::parse_color(c, state);
                 match state {
-                    _ => {}
                     ColorParseState::Done(color) => {
                         *self = SGRParseState::Done(AnsiSGR::Background(*color))
                     }
                     ColorParseState::Err(e) => *self = SGRParseState::Err(*e),
+                    _ => {}
                 }
             }
         }
@@ -234,6 +254,13 @@ impl SGRParseState {
 }
 
 impl AnsiSGR {
+    /// Parse AnsiSGR (Select Graphic Rendition) from char iterator.
+    ///
+    /// if `no_esc` is set this assumes that the ESC char in the SGR was already
+    /// read and the next char is expected to be a `[`.
+    /// Otherwise the first to chars are expected to be `\0x1b[`.
+    ///
+    /// See: <https://chrisyeh96.github.io/2020/03/28/terminal-colors.html>
     pub fn parse_from_chars(
         chars: &mut impl Iterator<Item = char>,
         no_esc: bool,
