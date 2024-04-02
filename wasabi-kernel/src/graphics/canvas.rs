@@ -1,14 +1,14 @@
-mod ansi_sgr;
-
 use alloc::format;
 use core::fmt::Write;
+use derive_builder::Builder;
 use log::error;
 use thiserror::Error;
 
-use derive_builder::Builder;
-
-use self::ansi_sgr::AnsiSGR;
-use super::{kernel_font::BitFont, Color, Point};
+use super::{
+    ansi::{self, AnsiSGR, TextColorError},
+    kernel_font::BitFont,
+    Color, Point,
+};
 
 /// A surface which can be drawn on. Screen, Screen region, etc
 pub trait Canvas {
@@ -42,12 +42,38 @@ pub trait Canvas {
 ///
 /// returned by scrolling actions in a canvas if scrolling is not supported
 /// by the canvas
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq, Clone, Copy)]
 pub struct ScrollingNotSupportedError;
 
 impl core::fmt::Display for ScrollingNotSupportedError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("Scrolling is not supported")
+    }
+}
+
+/// enum for all canvas writer related errors
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+#[allow(missing_docs)]
+pub enum CanvasWriterError {
+    #[error("scrolling is not supported for this canvas writer")]
+    ScrollingNotSupported(ScrollingNotSupportedError),
+    #[error("failed to parse ansi control sequence: {0}")]
+    SGRParsing(ansi::SGRParseError),
+    #[error("feature {0} is not implemented")]
+    Todo(&'static str),
+    #[error("Color pallet not supported for {0}")]
+    ColorError(ansi::TextColorError),
+}
+
+impl From<ansi::SGRParseError> for CanvasWriterError {
+    fn from(value: ansi::SGRParseError) -> Self {
+        CanvasWriterError::SGRParsing(value)
+    }
+}
+
+impl From<ansi::TextColorError> for CanvasWriterError {
+    fn from(value: ansi::TextColorError) -> Self {
+        CanvasWriterError::ColorError(value)
     }
 }
 
@@ -81,13 +107,30 @@ pub struct CanvasWriter<C: Canvas> {
     #[builder(default = "self._build_cursor()", setter(skip))]
     cursor: Point,
 
-    /// the default text color
-    #[builder(default = "Color::WHITE")]
+    /// the active text color
+    #[builder(
+        default = "self.default_text_color.unwrap_or(ansi::color::DEFAULT_TEXT)",
+        setter(skip)
+    )]
     text_color: Color,
 
     /// the default text color
-    #[builder(default = "Color::BLACK")]
+    #[builder(default = "ansi::color::DEFAULT_TEXT", setter(name = "text_color"))]
+    default_text_color: Color,
+
+    /// the active background color
+    #[builder(
+        default = "self.default_text_color.unwrap_or(ansi::color::DEFAULT_BACKGROUND)",
+        setter(skip)
+    )]
     background_color: Color,
+
+    /// the default text color
+    #[builder(
+        default = "ansi::color::DEFAULT_BACKGROUND",
+        setter(name = "background_color")
+    )]
+    default_background_color: Color,
 
     /// the default scroll beahviour of the writer
     #[builder(default)]
@@ -180,7 +223,7 @@ impl<C> CanvasWriter<C>
 where
     C: Canvas,
 {
-    /// creates a [CanvasWrtierBuilder]
+    /// creates a [CanvasWriterBuilder]
     pub fn builder() -> CanvasWriterBuilder<C> {
         CanvasWriterBuilder::create_empty()
     }
@@ -245,9 +288,13 @@ impl<C: Canvas> CanvasWriter<C> {
     }
 
     #[cfg(feature = "no-color")]
-    pub fn handle_ansi_ctrl_seq(&mut self, chars: &mut impl Iterator<char>) {
-        // TODO skip ansi escape sequence
-        self.print_char('\x1b')
+    pub fn handle_ansi_ctrl_seq(
+        &mut self,
+        chars: &mut impl Iterator<char>,
+    ) -> Result<(), CanvasWriterError> {
+        // skip ansi sgr sequence and ignore possible errors
+        let _ = AnsiSGR::parse_from_chars(chars, true);
+        Ok(())
     }
 
     #[cfg(not(feature = "no-color"))]
@@ -260,12 +307,28 @@ impl<C: Canvas> CanvasWriter<C> {
     pub fn handle_ansi_ctrl_seq(
         &mut self,
         chars: &mut impl Iterator<Item = char>,
-    ) -> Result<(), ansi_sgr::SGRParseError> {
-        let sgr = AnsiSGR::parse_from_chars(chars, true)?;
+    ) -> Result<(), CanvasWriterError> {
+        let sgr = AnsiSGR::parse_from_chars(chars, true)
+            .map_err(|e| Into::<CanvasWriterError>::into(e))?;
         if self.ignore_ansi {
             return Ok(());
         }
-        todo!()
+        match sgr {
+            AnsiSGR::Reset => self.reset_to_defaults(),
+            AnsiSGR::Bold => return Err(CanvasWriterError::Todo("bold text")),
+            AnsiSGR::Faint => return Err(CanvasWriterError::Todo("faint text")),
+            AnsiSGR::Underline => return Err(CanvasWriterError::Todo("underlined text")),
+            AnsiSGR::SlowBlink => return Err(CanvasWriterError::Todo("underlined text")),
+            AnsiSGR::Foreground(c) => self.text_color = c.try_into()?,
+            AnsiSGR::Background(c) => self.background_color = c.try_into()?,
+        }
+
+        Ok(())
+    }
+
+    pub fn reset_to_defaults(&mut self) {
+        self.text_color = self.default_text_color;
+        self.background_color = self.default_background_color;
     }
 }
 

@@ -1,5 +1,6 @@
 //! Module containing all graphics related code for the kernel
 
+pub mod ansi;
 pub mod canvas;
 mod color;
 pub mod fb;
@@ -103,10 +104,8 @@ fn init_framebuffer_logger() {
         .border_height(10)
         .background_color(bg_color)
         .log_errors(false)
-        .ignore_ansi(true) // TODO
         .build()
         .expect("Canvas writer should be fully initialized");
-    warn!("fb logger ansi disabled!");
 
     let canvas_lock = TicketLock::new_non_preemtable(canvas_writer);
 
@@ -121,9 +120,4 @@ fn init_framebuffer_logger() {
         panic!("No global logger found to register the framebuffer logger");
     }
     info!("Framebuffer Logger initialized");
-    trace!("trace color test!");
-    debug!("debug color test");
-    info!("info color test");
-    warn!("warn color test");
-    error!("error color test");
 }

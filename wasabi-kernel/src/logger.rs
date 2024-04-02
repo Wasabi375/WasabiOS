@@ -1,9 +1,7 @@
 //! A module containing logging and debug utilities
-use core::fmt::Write;
 
 use log::{info, LevelFilter};
 use logger::{dispatch::TargetLogger, LogSetup, RefLogger};
-use shared::lockcell::LockCell;
 use uart_16550::SerialPort;
 
 use crate::{

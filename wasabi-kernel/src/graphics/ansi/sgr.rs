@@ -3,26 +3,14 @@ use thiserror::Error;
 
 use crate::graphics::Color;
 
-/// A color as used by ansi control sequences. This can either be an
-/// index into one of the color maps or a True [crate::graphics::Color].
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum TextColor {
-    /// Index into the normal color map.
-    ///
-    /// Only 1-8 are valid
-    Normal(u8),
-    /// Index into the bright color map.
-    ///
-    /// Only 1-8 are valid
-    Bright(u8),
-    /// Index into the extended color map.
-    ///
-    /// This can map the entire u8 range.
-    Extended(u8),
-    /// A true rgb color using u8 for each channel
-    True(Color),
-}
+use super::TextColor;
 
+/// a AnsiSGR (Select Graphic Rendition).
+///
+/// This represents possible changes to the styling of text that is displayed
+/// to a Terminal
+///
+/// See: <https://chrisyeh96.github.io/2020/03/28/terminal-colors.html>
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AnsiSGR {
     /// reset the style back to the default
@@ -180,6 +168,7 @@ impl SGRParseState {
 
     fn parse_mode_next(&mut self, c: char, mode: u8) {
         match c {
+            // TODO 39 and 49 are default text and background
             ';' => match mode {
                 38 => *self = SGRParseState::ParseFg(ColorParseState::ParseMode),
                 48 => *self = SGRParseState::ParseBg(ColorParseState::ParseMode),
@@ -239,17 +228,6 @@ impl SGRParseState {
             return;
         }
         *self = next;
-    }
-
-    fn read_digit(&mut self, current: char) -> Result<u8, SGRParseError> {
-        if !('0'..='9').contains(&current) {
-            Err(SGRParseError::ExpectedDigit(current))
-        } else {
-            current
-                .try_into()
-                .map_err(|_| SGRParseError::ExpectedDigit(current))
-                .map(|c: u8| c - b'0')
-        }
     }
 }
 
