@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 cargodoc() {
- cargo tree --depth 1 -e normal --prefix none | cut -d' ' -f1 | xargs printf -- '-p %s\n' | xargs cargo doc --features test --no-deps --document-private-items  $@
+ cargo tree --depth 1 -e normal --prefix none | cut -d' ' -f1 | xargs printf -- '-p %s\n' | xargs cargo doc --lib --features test --no-deps --document-private-items  $@
 }
 
 cd wasabi-kernel
