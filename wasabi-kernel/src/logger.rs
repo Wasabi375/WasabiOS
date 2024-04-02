@@ -2,7 +2,7 @@
 use core::fmt::Write;
 
 use log::{info, LevelFilter};
-use logger::{dispatch::TargetLogger, StaticLogger};
+use logger::{dispatch::TargetLogger, LogSetup, RefLogger};
 use shared::lockcell::LockCell;
 use uart_16550::SerialPort;
 
@@ -35,13 +35,14 @@ pub static mut LOGGER: Option<DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LE
 
 /// the static serial logger.
 static mut SERIAL_LOGGER: Option<
-    StaticLogger<'static, SerialPort, UnwrapTicketLock<SerialPort>, 0, MAX_RENAME_MAPPINGS>,
+    RefLogger<'static, SerialPort, UnwrapTicketLock<SerialPort>, 0, MAX_RENAME_MAPPINGS>,
 > = None;
 
 /// setup module renames for any static logger
-pub fn setup_logger_module_rename<W, L, const N: usize, const R: usize>(
-    logger: &mut StaticLogger<W, L, N, R>,
-) where L: LockCell<W>, W: Write {
+pub fn setup_logger_module_rename<L>(logger: &mut L)
+where
+    L: LogSetup,
+{
     logger
         .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
         .with_module_rename("wasabi_kernel::", "::")
@@ -65,15 +66,16 @@ pub unsafe fn init() {
         .with_level(LevelFilter::Debug)
         // .with_level(LevelFilter::Info)
         // .with_level(LevelFilter::Trace)
-        .with_module_level("wasabi_kernel", LevelFilter::Trace)
+        // .with_module_level("wasabi_kernel", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
+        .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
 
-    let mut serial_logger = StaticLogger::new(&SERIAL1);
+    let mut serial_logger = RefLogger::new(&SERIAL1);
     setup_logger_module_rename(&mut serial_logger);
     serial_logger.init();
 

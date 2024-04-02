@@ -10,13 +10,21 @@ use staticvec::StaticVec;
 
 use crate::{FlushError, TryLog};
 
+#[cfg(feature = "alloc")]
+use shared::reforbox::RefOrBox;
+#[cfg(not(feature = "alloc"))]
+type RefOrBox<'a, T> = &'a T;
+
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 /// Contains a reference to a [TryLogger] and some additional metadata
 /// for [DispatchLogger].
 pub struct TargetLogger<'a> {
     /// identifier string used for logging. Displayed to the user
     pub name: &'a str,
     /// The logger reference
-    pub logger: &'a dyn TryLog,
+    pub logger: RefOrBox<'a, dyn TryLog + Sync + 'a>,
     /// `true` if the [DispatchLogger] should panic if this errors
     pub panic_on_error: bool,
     /// `true` if the [DispatchLogger] should panic if this errors on flush
@@ -26,7 +34,11 @@ pub struct TargetLogger<'a> {
 }
 
 impl<'a> TargetLogger<'a> {
-    pub fn new_primary(name: &'a str, logger: &'a dyn TryLog) -> Self {
+    pub fn new_primary(name: &'a str, logger: &'a (dyn TryLog + Sync)) -> Self {
+        #[cfg(not(feature = "alloc"))]
+        let logger = logger;
+        #[cfg(feature = "alloc")]
+        let logger = RefOrBox::Ref(logger);
         Self {
             name,
             logger,
@@ -36,7 +48,11 @@ impl<'a> TargetLogger<'a> {
         }
     }
 
-    pub fn new_secondary(name: &'a str, logger: &'a dyn TryLog) -> Self {
+    pub fn new_secondary(name: &'a str, logger: &'a (dyn TryLog + Sync)) -> Self {
+        #[cfg(not(feature = "alloc"))]
+        let logger = logger;
+        #[cfg(feature = "alloc")]
+        let logger = RefOrBox::Ref(logger);
         Self {
             name,
             logger,
@@ -46,16 +62,50 @@ impl<'a> TargetLogger<'a> {
         }
     }
 
+    #[cfg(feature = "alloc")]
+    pub fn new_primary_boxed(name: &'a str, logger: Box<(dyn TryLog + Sync)>) -> Self {
+        let logger = RefOrBox::Boxed(logger);
+        Self {
+            name,
+            logger,
+            panic_on_error: true,
+            panic_on_flush_error: true,
+            primary: true,
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn new_secondary_boxed(name: &'a str, logger: Box<(dyn TryLog + Sync)>) -> Self {
+        let logger = RefOrBox::Boxed(logger);
+        Self {
+            name,
+            logger,
+            panic_on_error: false,
+            panic_on_flush_error: false,
+            primary: false,
+        }
+    }
+
+    fn logger(&'a self) -> &'a (dyn TryLog + Sync) {
+        #[cfg(feature = "alloc")]
+        match self.logger {
+            RefOrBox::Ref(r) => r,
+            RefOrBox::Boxed(ref b) => b.as_ref(),
+        }
+        #[cfg(not(feature = "alloc"))]
+        self.logger
+    }
+
     fn enabled(&self, metadata: &Metadata) -> bool {
-        self.logger.enabled(metadata)
+        self.logger().enabled(metadata)
     }
 
     fn log(&self, record: &Record) -> Result<(), core::fmt::Error> {
-        self.logger.log(record)
+        self.logger().log(record)
     }
 
     fn flush(&self) -> Result<(), FlushError> {
-        self.logger.flush()
+        self.logger().flush()
     }
 }
 

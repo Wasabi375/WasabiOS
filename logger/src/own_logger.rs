@@ -22,6 +22,7 @@
 //!
 //! From: `<https://github.com/borntyping/rust-simple_logger/blob/main/src/lib.rs>`
 //!
+//! Original Version:
 //! Copyright 2015-2021 Sam Clements
 //!
 //! Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -42,7 +43,7 @@
 //! OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 //! USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::{default_colors, TryLog};
+use crate::{default_colors, LogSetup, TryLog};
 use core::{
     fmt::{self, Error, Write},
     marker::PhantomData,
@@ -54,17 +55,19 @@ use staticvec::{StaticString, StaticVec};
 #[cfg(feature = "color")]
 use colored::{Color, ColoredString, Colorize};
 
-// TODO StaticLogger Docs are outdated
-//  they reflect API and functionality of the SimpleLogger this is based off
-
 /// Implements [`Log`] and a set of simple builder methods for configuration.
+///
+// TODO OwnLogger Docs are outdated
+//  they reflect API and functionality of the SimpleLogger this is based off
 ///
 /// Use the various "builder" methods on this struct to configure the logger,
 /// then call [`init`](StaticLogger::init) to configure the [`log`] crate.
 ///
 /// This logger does not use any heap allocations. All data is stored in place.
 /// It can only store [`LevelFilter`]s for `N` log targets/modules and `R` rename mappings
-pub struct StaticLogger<'a, W, L, const N: usize = 126, const R: usize = 126> {
+// TODO unifiy with RefLogger:
+//      I could use RefOrBox. This would require boxing the lock to the writer
+pub struct OwnLogger<W, L, const N: usize = 126, const R: usize = 126> {
     /// The default logging level
     default_level: LevelFilter,
 
@@ -73,26 +76,27 @@ pub struct StaticLogger<'a, W, L, const N: usize = 126, const R: usize = 126> {
     /// This is used to override the default value for some specific modules.
     /// After initialization, the vector is sorted so that the first (prefix) match
     /// directly gives us the desired log level.
-    module_levels: StaticVec<(&'a str, LevelFilter), N>,
+    module_levels: StaticVec<(&'static str, LevelFilter), N>,
 
     /// a list off mappings renaming modules
     ///
     /// This can be used to shorten module names
-    module_rename_mapping: StaticVec<(&'a str, &'a str), R>,
+    module_rename_mapping: StaticVec<(&'static str, &'static str), R>,
 
-    writer: &'a L,
+    writer: L,
     _phantom_writer: PhantomData<W>,
 
     #[cfg(feature = "color")]
     level_colors: [Color; 6],
 }
 
-unsafe impl<W, L: Sync, const N: usize, const R: usize> Sync for StaticLogger<'_, W, L, N, R> {}
-unsafe impl<W, L: Send, const N: usize, const R: usize> Send for StaticLogger<'_, W, L, N, R> {}
+unsafe impl<W, L: Sync, const N: usize, const R: usize> Sync for OwnLogger<W, L, N, R> {}
+unsafe impl<W, L: Send, const N: usize, const R: usize> Send for OwnLogger<W, L, N, R> {}
 
-impl<'a, W, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R>
+impl<W, L, const N: usize, const R: usize> OwnLogger<W, L, N, R>
 where
     W: fmt::Write,
+    L: LockCell<W>,
 {
     /// Initializes the global logger with a StaticLogger instance with
     /// default log level set to `Level::Trace`.
@@ -106,8 +110,8 @@ where
     /// [`init`]: #method.init
     // TODO fix must use message
     #[must_use = "You must call init() to begin logging"]
-    pub fn new(writer: &'a L) -> Self {
-        StaticLogger {
+    pub fn new(writer: L) -> Self {
+        OwnLogger {
             default_level: LevelFilter::Info,
             module_levels: StaticVec::new(),
             module_rename_mapping: StaticVec::new(),
@@ -174,12 +178,6 @@ where
         self
     }
 
-    pub fn with_module_rename(&mut self, target: &'static str, rename: &'static str) -> &mut Self {
-        self.module_rename_mapping.push((target, rename));
-
-        self
-    }
-
     /// Overrides the log color used for the specified level.
     #[cfg(feature = "color")]
     #[must_use = "You must call init() to begin logging"]
@@ -190,7 +188,7 @@ where
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R> {
+impl<W: Write, L: LockCell<W>, const N: usize, const R: usize> OwnLogger<W, L, N, R> {
     /// 'Init' the actual logger, instantiate it and configure it,
     pub fn init(&mut self) {
         /* Sort all module levels from most specific to least specific. The length of the module
@@ -219,7 +217,7 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<'a, W, L, N, R> {
+impl<W: Write, L: LockCell<W>, const N: usize, const R: usize> OwnLogger<W, L, N, R> {
     pub fn try_log(&self, record: &Record) -> Result<(), Error> {
         if !self.enabled(record.metadata()) {
             return Ok(());
@@ -281,9 +279,7 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> StaticLogger<
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
-    for StaticLogger<'a, W, L, N, R>
-{
+impl<W: Write, L: LockCell<W>, const N: usize, const R: usize> Log for OwnLogger<W, L, N, R> {
     fn enabled(&self, metadata: &Metadata) -> bool {
         self.enabled(metadata)
     }
@@ -297,9 +293,7 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
     fn flush(&self) {}
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> TryLog
-    for StaticLogger<'a, W, L, N, R>
-{
+impl<W: Write, L: LockCell<W>, const N: usize, const R: usize> TryLog for OwnLogger<W, L, N, R> {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         self.enabled(metadata)
     }
@@ -310,5 +304,13 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> TryLog
 
     fn flush(&self) -> Result<(), crate::FlushError> {
         Ok(())
+    }
+}
+
+impl<W, L, const N: usize, const R: usize> LogSetup for OwnLogger<W, L, N, R> {
+    fn with_module_rename(&mut self, target: &'static str, rename: &'static str) -> &mut Self {
+        self.module_rename_mapping.push((target, rename));
+
+        self
     }
 }

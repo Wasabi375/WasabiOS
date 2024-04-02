@@ -1,13 +1,18 @@
 #![no_std]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub mod dispatch;
-mod static_logger;
+mod own_logger;
+mod ref_logger;
 
 #[cfg(feature = "color")]
 use colored::Color;
 
 pub use dispatch::DispatchLogger;
-pub use static_logger::StaticLogger;
+pub use own_logger::OwnLogger;
+pub use ref_logger::RefLogger;
 
 pub struct FlushError {}
 
@@ -17,6 +22,10 @@ pub trait TryLog: Send + Sync {
     fn log(&self, record: &log::Record) -> Result<(), core::fmt::Error>;
 
     fn flush(&self) -> Result<(), FlushError>;
+}
+
+pub trait LogSetup {
+    fn with_module_rename(&mut self, target: &'static str, rename: &'static str) -> &mut Self;
 }
 
 /// Default colors for logging
