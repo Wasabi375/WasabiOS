@@ -2,8 +2,6 @@
 //!
 //! The defaults are taken from
 //! <https://github.com/alacritty/alacritty-theme/blob/11664caf4c2bfae94e006e860042f93b217fc0f7/themes/blood_moon.toml>
-
-use alloc::format;
 use thiserror::Error;
 
 use crate::graphics::Color;
@@ -50,6 +48,7 @@ impl TryInto<Color> for TextColor {
 }
 
 #[derive(Debug, Error, PartialEq, Eq, Clone, Copy)]
+#[allow(missing_docs)]
 pub enum TextColorError {
     #[error("Text color {0:?} not supported")]
     NotSupported(TextColor),

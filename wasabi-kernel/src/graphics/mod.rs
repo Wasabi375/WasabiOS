@@ -1,14 +1,14 @@
 //! Module containing all graphics related code for the kernel
 
-pub mod ansi;
 pub mod canvas;
 mod color;
 pub mod fb;
 pub mod kernel_font;
+pub mod tty;
 
 use alloc::boxed::Box;
 use core::slice;
-use log::{debug, error, info, trace, warn};
+use log::{info, warn};
 use logger::{dispatch::TargetLogger, OwnLogger};
 use shared::lockcell::LockCell;
 

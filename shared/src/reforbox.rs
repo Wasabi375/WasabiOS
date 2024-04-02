@@ -1,6 +1,6 @@
 use core::{borrow::Borrow, ops::Deref};
 
-use alloc::{borrow::ToOwned, boxed::Box};
+use alloc::boxed::Box;
 
 /// Can be either a reference to `T` or an owned value of type `O` that derefs to `T`
 ///

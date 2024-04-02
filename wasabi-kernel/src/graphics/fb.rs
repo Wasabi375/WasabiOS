@@ -20,6 +20,8 @@ use x86_64::VirtAddr;
 
 use super::canvas::Canvas;
 
+/// The hardware backed framebuffer.
+/// This can be taken, at which point this will be `None`.
 pub static HARDWARE_FRAMEBUFFER: TicketLock<Option<Framebuffer>> = TicketLock::new(None);
 
 /// The different memory sources for the framebuffer

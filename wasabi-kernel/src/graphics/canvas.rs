@@ -1,3 +1,6 @@
+//! A Canvas represents a surface that can be drawn to.
+//!
+//! This can be a framebuffer, a image or anything else.
 use alloc::format;
 use core::fmt::Write;
 use derive_builder::Builder;
@@ -5,8 +8,8 @@ use log::error;
 use thiserror::Error;
 
 use super::{
-    ansi::{self, AnsiSGR, TextColorError},
     kernel_font::BitFont,
+    tty::{self, AnsiSGR},
     Color, Point,
 };
 
@@ -58,21 +61,21 @@ pub enum CanvasWriterError {
     #[error("scrolling is not supported for this canvas writer")]
     ScrollingNotSupported(ScrollingNotSupportedError),
     #[error("failed to parse ansi control sequence: {0}")]
-    SGRParsing(ansi::SGRParseError),
+    SGRParsing(tty::SGRParseError),
     #[error("feature {0} is not implemented")]
     Todo(&'static str),
     #[error("Color pallet not supported for {0}")]
-    ColorError(ansi::TextColorError),
+    ColorError(tty::TextColorError),
 }
 
-impl From<ansi::SGRParseError> for CanvasWriterError {
-    fn from(value: ansi::SGRParseError) -> Self {
+impl From<tty::SGRParseError> for CanvasWriterError {
+    fn from(value: tty::SGRParseError) -> Self {
         CanvasWriterError::SGRParsing(value)
     }
 }
 
-impl From<ansi::TextColorError> for CanvasWriterError {
-    fn from(value: ansi::TextColorError) -> Self {
+impl From<tty::TextColorError> for CanvasWriterError {
+    fn from(value: tty::TextColorError) -> Self {
         CanvasWriterError::ColorError(value)
     }
 }
@@ -84,6 +87,7 @@ impl From<ansi::TextColorError> for CanvasWriterError {
     pattern = "owned",
     build_fn(validate = "Self::validate", error = "CanvasWriterBuilderError")
 )]
+//#[doc = "A Builder for a [CanvasWriter]"]
 pub struct CanvasWriter<C: Canvas> {
     /// the [Canvas] to write to
     canvas: C,
@@ -109,25 +113,25 @@ pub struct CanvasWriter<C: Canvas> {
 
     /// the active text color
     #[builder(
-        default = "self.default_text_color.unwrap_or(ansi::color::DEFAULT_TEXT)",
+        default = "self.default_text_color.unwrap_or(tty::color::DEFAULT_TEXT)",
         setter(skip)
     )]
     text_color: Color,
 
     /// the default text color
-    #[builder(default = "ansi::color::DEFAULT_TEXT", setter(name = "text_color"))]
+    #[builder(default = "tty::color::DEFAULT_TEXT", setter(name = "text_color"))]
     default_text_color: Color,
 
     /// the active background color
     #[builder(
-        default = "self.default_text_color.unwrap_or(ansi::color::DEFAULT_BACKGROUND)",
+        default = "self.default_text_color.unwrap_or(tty::color::DEFAULT_BACKGROUND)",
         setter(skip)
     )]
     background_color: Color,
 
     /// the default text color
     #[builder(
-        default = "ansi::color::DEFAULT_BACKGROUND",
+        default = "tty::color::DEFAULT_BACKGROUND",
         setter(name = "background_color")
     )]
     default_background_color: Color,
@@ -150,22 +154,24 @@ pub struct CanvasWriter<C: Canvas> {
     ignore_ansi: bool,
 }
 
+/// Error used by [CanvasWriterBuilder]
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum CanvasWriterBuilderError {
-    UninitializedFiled(&'static str),
+    UninitializedField(&'static str),
     ScrollingNotSupported,
 }
 
 impl From<derive_builder::UninitializedFieldError> for CanvasWriterBuilderError {
     fn from(value: derive_builder::UninitializedFieldError) -> Self {
-        Self::UninitializedFiled(value.field_name())
+        Self::UninitializedField(value.field_name())
     }
 }
 
 impl core::fmt::Display for CanvasWriterBuilderError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            CanvasWriterBuilderError::UninitializedFiled(field) => f.write_str(&format!(
+            CanvasWriterBuilderError::UninitializedField(field) => f.write_str(&format!(
                 "Field  \"{}\" not initialized in CanvasWriterBuilder",
                 field
             )),
@@ -176,9 +182,18 @@ impl core::fmt::Display for CanvasWriterBuilderError {
     }
 }
 
+/// The Scroll behaviour of a [CanvasWriter]
 #[derive(Debug, Copy, Clone)]
 pub enum CanvasWriterScrollBehaviour {
+    /// The canvas scrolls, when the end of the area is reached.
+    ///
+    /// When a new line is written and the canvas is "full" the canvas
+    /// scrolls down by 1 line.
     Scroll,
+    /// The canvas is cleared, when the end of the area is reached.
+    ///
+    /// When a new line is written and the canvas is "full" the canvas is
+    /// cleared and the new line is written from the top.
     #[allow(dead_code)]
     Clear,
 }
@@ -288,7 +303,7 @@ impl<C: Canvas> CanvasWriter<C> {
     }
 
     #[cfg(feature = "no-color")]
-    pub fn handle_ansi_ctrl_seq(
+    fn handle_ansi_ctrl_seq(
         &mut self,
         chars: &mut impl Iterator<char>,
     ) -> Result<(), CanvasWriterError> {
@@ -304,7 +319,7 @@ impl<C: Canvas> CanvasWriter<C> {
     ///
     /// A sequence looks like `ESC[(0-9){1,3}(;(0-9){1,3})*m`
     /// https://chrisyeh96.github.io/2020/03/28/terminal-colors.html
-    pub fn handle_ansi_ctrl_seq(
+    fn handle_ansi_ctrl_seq(
         &mut self,
         chars: &mut impl Iterator<Item = char>,
     ) -> Result<(), CanvasWriterError> {
@@ -326,6 +341,11 @@ impl<C: Canvas> CanvasWriter<C> {
         Ok(())
     }
 
+    /// resets the [CanvasWriter] to it's default values.
+    ///
+    /// This effects all style values. Currently:
+    ///  * [text_color]
+    ///  * [background_color]
     pub fn reset_to_defaults(&mut self) {
         self.text_color = self.default_text_color;
         self.background_color = self.default_background_color;
