@@ -112,7 +112,8 @@ where
     #[must_use = "You must call init() to begin logging"]
     pub fn new(writer: L) -> Self {
         OwnLogger {
-            default_level: LevelFilter::Info,
+            // default is trace because level filtering is mainly done in dispatch logger
+            default_level: LevelFilter::Trace,
             module_levels: StaticVec::new(),
             module_rename_mapping: StaticVec::new(),
             writer,
