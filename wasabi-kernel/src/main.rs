@@ -29,7 +29,7 @@ use wasabi_kernel::{
     bootloader_config_common,
     cpu::{
         self,
-        apic::{self, TimerConfig},
+        apic::{self, timer::TimerConfig},
     },
     init, time,
 };
@@ -55,6 +55,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     info!("kernel boot took {:?} - {}", startup_time, startup_time);
 
     {
+        use apic::timer::{TimerDivider, TimerMode};
+
         let mut apic_guard = locals!().apic.lock();
         let apic = apic_guard.as_mut().as_mut().unwrap();
         apic.timer().calibrate();
@@ -64,8 +66,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             .register_interrupt_handler(55, timer_int_handler)
             .unwrap();
         let apic_rate = apic.timer().rate_mhz() as u32;
-        apic.timer().start(apic::TimerMode::Periodic(TimerConfig {
-            divider: apic::TimerDivider::DivBy2,
+        apic.timer().start(TimerMode::Periodic(TimerConfig {
+            divider: TimerDivider::DivBy2,
             duration: apic_rate * 1_000_000 / 2,
         }));
     }

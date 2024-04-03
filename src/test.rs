@@ -3,7 +3,7 @@ use crate::{
     qemu::{launch_qemu, launch_with_timeout, HostArchitecture, Kernel, QemuConfig},
 };
 use anyhow::{bail, ensure, Context, Result};
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use std::{
     fmt::{Debug, Display},
     io::ErrorKind,
