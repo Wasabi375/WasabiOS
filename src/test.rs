@@ -3,7 +3,7 @@ use crate::{
     qemu::{launch_qemu, launch_with_timeout, HostArchitecture, Kernel, QemuConfig},
 };
 use anyhow::{bail, ensure, Context, Result};
-use log::debug;
+use log::{debug, trace, warn};
 use std::{
     fmt::{Debug, Display},
     io::ErrorKind,
@@ -19,7 +19,7 @@ use tokio::{
     net::TcpStream,
     process::Child,
     select,
-    time::timeout,
+    time::{sleep, timeout},
 };
 
 const QEMU_EXIT_SUCCESS_CODE: i32 = 0x10 << 1 | 1;
@@ -81,7 +81,7 @@ pub async fn test(uefi: &Path, mut args: TestArgs) -> Result<()> {
         ..QemuConfig::default()
     };
 
-    let tcp_string = format!("tcp::{},server", args.tcp_port);
+    let tcp_string = format!("tcp::{},server=on", args.tcp_port);
     qemu_config.add_serial(&tcp_string)?;
 
     let mut test_count = TestCount::default();
@@ -409,6 +409,9 @@ struct QemuInstance {
     tcp: TcpStream,
 }
 
+const TCP_CONNECTION_RETRY_COUNT: u32 = 5;
+const TCP_CONNECTION_RETRY_DELAY: Duration = Duration::from_millis(200);
+
 impl QemuInstance {
     async fn create(
         kernel: &Kernel<'_>,
@@ -418,9 +421,21 @@ impl QemuInstance {
         let mut child = launch_qemu(kernel, config)
             .await
             .context("failed to launch qemu")?;
-        let mut tcp = TcpStream::connect(socket_addr)
-            .await
-            .context("failed to establish tcp connection to qemu instance")?;
+        let mut retries = TCP_CONNECTION_RETRY_COUNT;
+        let mut tcp = loop {
+            match TcpStream::connect(socket_addr)
+                .await
+                .context("failed to establish tcp connection to qemu instance")
+            {
+                Ok(tcp) => break tcp,
+                Err(e) if retries == 0 => return Err(e),
+                Err(e) => {
+                    trace!("failed to connect to tcp. Retrying... {e}");
+                    retries -= 1;
+                    sleep(TCP_CONNECTION_RETRY_DELAY).await;
+                }
+            }
+        };
 
         select! {
             res = handshake(&mut tcp) => {
