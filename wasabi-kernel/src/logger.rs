@@ -65,11 +65,11 @@ pub unsafe fn init() {
         // .with_level(LevelFilter::Info)
         // .with_level(LevelFilter::Trace)
         // .with_module_level("wasabi_kernel", LevelFilter::Trace)
-        // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
-        // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
-        // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
+        .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
+        .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
+        .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
-        .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
+        // .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
 

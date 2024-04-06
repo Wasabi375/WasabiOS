@@ -105,7 +105,6 @@ pub fn init(boot_info: &'static mut BootInfo) {
     apic::init().unwrap();
 
     assert!(locals!().interrupts_enabled());
-    info!("Interrupts enabled");
     info!("Kernel initialized");
 }
 
