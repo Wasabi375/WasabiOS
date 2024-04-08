@@ -104,6 +104,8 @@ pub fn init(boot_info: &'static mut BootInfo) {
 
     apic::init().unwrap();
 
+    apic::multiprocessor::ap_startup();
+
     assert!(locals!().interrupts_enabled());
     info!("Kernel initialized");
 }

@@ -22,6 +22,7 @@ use x86_64::{
 
 use self::timer::{Timer, TimerData};
 
+pub mod multiprocessor;
 pub mod timer;
 
 /// MSR address of the local apic base.
@@ -66,6 +67,9 @@ pub fn init() -> Result<(), ApicCreationError> {
         locals!().apic_id.0,
         "apic id in locals()! did not match apic provided id"
     );
+
+    // TODO: ensure that software enable bit in SIV register (bit 8) is set
+    //  otherwise apic will mask all interrupts except for INIT, NMI, SMI, SIPI
 
     *local_apic = Some(apic);
     info!("Apic initialized");

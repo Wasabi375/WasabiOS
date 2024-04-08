@@ -1,12 +1,10 @@
-//! PhysFrame allocator for the kernel
-
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
 use crate::prelude::{LockCell, UnwrapTicketLock};
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use core::marker::PhantomData;
-use shared::rangeset::{Range, RangeSet};
+use shared::rangeset::{Range, RangeSet, RegionRequest};
 use x86_64::{
     structures::paging::{
         FrameAllocator, FrameDeallocator, PageSize, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
@@ -49,9 +47,12 @@ pub fn init(regions: &MemoryRegions) {
         ranges.insert(range);
     }
 
-    let allocator = PhysAllocator {
+    let mut allocator = PhysAllocator {
         memory_ranges: ranges,
     };
+
+    reserve_phys_frames(&mut allocator);
+
     GLOBAL_PHYS_ALLOCATOR.lock_uninit().write(allocator);
 
     info!(
@@ -76,10 +77,14 @@ pub fn init(regions: &MemoryRegions) {
         .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
 }
 
+fn reserve_phys_frames(allocator: &mut PhysAllocator) {
+    crate::apic::multiprocessor::reserve_phys_frames(allocator);
+}
+
 /// A wrapper around a RangeSet that allows allocation and deallocation of
 /// Physical Frames of any size
 #[derive(Clone, Copy)]
-struct PhysAllocator {
+pub struct PhysAllocator {
     memory_ranges: RangeSet<{ Self::N }>,
 }
 
@@ -93,6 +98,17 @@ impl PhysAllocator {
         let align = S::SIZE;
 
         let alloc_start = self.memory_ranges.allocate(size, align);
+        alloc_start.map(|s| PhysAddr::new(s as u64)).map(|s| {
+            PhysFrame::from_start_address(s).expect("range set should only return valid alignments")
+        })
+    }
+
+    /// allocate a new frame within the given range
+    pub fn alloc_in_range<S: PageSize>(&mut self, range: RegionRequest) -> Option<PhysFrame<S>> {
+        let size = S::SIZE;
+        let align = S::SIZE;
+
+        let alloc_start = self.memory_ranges.allocate_prefer(size, align, range);
         alloc_start.map(|s| PhysAddr::new(s as u64)).map(|s| {
             PhysFrame::from_start_address(s).expect("range set should only return valid alignments")
         })
