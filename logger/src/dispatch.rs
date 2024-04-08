@@ -212,6 +212,10 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> Log for DispatchLogg
     }
 
     fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+
         let mut error_to_panic = StaticVec::<&'a str, N>::new();
         let mut error_to_log = StaticVec::<&'a str, N>::new();
 
