@@ -37,6 +37,17 @@ pub struct Range {
     pub end: u64,
 }
 
+/// Specifies which region an allocation should be within
+pub enum RegionRequest<'a, const N: usize = 256> {
+    /// Any region can be used for the allocation
+    Any,
+    /// The given region should be prefered, but any region can be used,
+    /// if the prefered region can not fullfill the allocation
+    Preference(&'a RangeSet<N>),
+    /// The allocation must be fullfilled from within the region
+    Forced(&'a RangeSet<N>),
+}
+
 /// A set of non-overlapping inclusive `u64` ranges
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -278,7 +289,7 @@ impl<const N: usize> RangeSet<N> {
     /// Allocate `size` bytes of memory with `align` requirement for alignment
     pub fn allocate(&mut self, size: u64, align: u64) -> Option<usize> {
         // Allocate anywhere from the `RangeSet`
-        self.allocate_prefer(size, align, None)
+        self.allocate_prefer(size, align, RegionRequest::Any)
     }
 
     /// Allocate `size` bytes of memory with `align` requirement for alignment
@@ -290,7 +301,7 @@ impl<const N: usize> RangeSet<N> {
         &mut self,
         size: u64,
         align: u64,
-        regions: Option<&RangeSet>,
+        regions: RegionRequest,
     ) -> Option<usize> {
         // Don't allow allocations of zero size
         if size == 0 {
@@ -304,6 +315,14 @@ impl<const N: usize> RangeSet<N> {
 
         // Generate a mask for the specified alignment
         let alignmask = align - 1;
+
+        // extract regions the caller wants to use, and whether the regions
+        // are a suggestion or a must-use
+        let (regions, force_regions) = match regions {
+            RegionRequest::Any => (None, false),
+            RegionRequest::Preference(r) => (Some(r), false),
+            RegionRequest::Forced(r) => (Some(r), true),
+        };
 
         // Go through each memory range in the `RangeSet`
         let mut allocation = None;
@@ -368,12 +387,14 @@ impl<const N: usize> RangeSet<N> {
                 }
             }
 
-            // Compute the "best" allocation size to date
-            let prev_size = allocation.map(|(base, end, _)| end - base);
+            if !force_regions {
+                // Compute the "best" allocation size to date
+                let prev_size = allocation.map(|(base, end, _)| end - base);
 
-            if allocation.is_none() || prev_size.unwrap() > end - base {
-                // Update the allocation to the new best size
-                allocation = Some((base, end, (base + align_fix) as usize));
+                if allocation.is_none() || prev_size.unwrap() > end - base {
+                    // Update the allocation to the new best size
+                    allocation = Some((base, end, (base + align_fix) as usize));
+                }
             }
         }
 
