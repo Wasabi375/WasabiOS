@@ -45,6 +45,9 @@
             cargo-watch
             rust-analyzer
             qemu
+            nasm
+            nasmfmt
+            asm-lsp
           ];
         };
       });

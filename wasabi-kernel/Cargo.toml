@@ -20,16 +20,20 @@ colored = { path = "../colored" }
 interrupt-fn-builder =  { path = "../interrupt-fn-builder" }
 testing = { path = "../testing", optional = true }
 
+bit_field.workspace = true
 bootloader_api.workspace = true
+derive_builder.workspace = true
 lazy_static.workspace = true
+linked_list_allocator = { version = "0.10.5", default-features = false }
+linkme.workspace = true
+log.workspace = true
+noto-sans-mono-bitmap.workspace = true
+paste.workspace = true
+static_assertions.workspace = true
 thiserror.workspace = true
 uart_16550.workspace = true
-x86_64.workspace = true
-log.workspace = true
-bit_field.workspace = true
 volatile = "0.4.6"
-linked_list_allocator = { version = "0.10.5", default-features = false }
-paste.workspace = true
-linkme.workspace = true
-noto-sans-mono-bitmap.workspace = true
-derive_builder.workspace = true
+x86_64.workspace = true
+
+[build-dependencies]
+walkdir.workspace = true
