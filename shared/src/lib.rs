@@ -19,7 +19,10 @@ pub mod reforbox;
 
 /// common type definitions
 pub mod types {
-    use core::ops::{Deref, DerefMut};
+    use core::{
+        fmt,
+        ops::{Deref, DerefMut},
+    };
 
     /// contains the id for a given core
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -56,6 +59,12 @@ pub mod types {
     impl Into<u8> for CoreId {
         fn into(self) -> u8 {
             self.0
+        }
+    }
+
+    impl fmt::Display for CoreId {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.0.fmt(f)
         }
     }
 }
