@@ -3,19 +3,20 @@
 #![no_std]
 #![no_main]
 #![feature(
-    error_in_core,
-    ptr_alignment_type,
     abi_x86_interrupt,
-    ascii_char,
-    let_chains,
     allocator_api,
-    result_flattening,
-    maybe_uninit_uninit_array,
-    maybe_uninit_array_assume_init,
-    stmt_expr_attributes,
-    panic_info_message,
+    ascii_char,
     box_into_inner,
-    never_type
+    error_in_core,
+    let_chains,
+    maybe_uninit_array_assume_init,
+    maybe_uninit_uninit_array,
+    never_type,
+    panic_info_message,
+    pointer_is_aligned,
+    ptr_alignment_type,
+    result_flattening,
+    stmt_expr_attributes
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![allow(rustdoc::private_intra_doc_links)]
@@ -38,6 +39,9 @@ extern crate alloc;
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
+use shared::KiB;
+use static_assertions::const_assert;
+use x86_64::structures::paging::{PageSize, Size4KiB};
 
 use crate::{
     core_local::core_boot,
@@ -91,6 +95,13 @@ pub fn init(boot_info: &'static mut BootInfo) {
             // Safety: bsp during `init` and locks, logging and alloc are working
             graphics::init(true);
         }
+    } else {
+        unsafe {
+            // Safety: inherently unsafe and can crash, but if cpuid isn't supported
+            // we will crash at some point in the future anyways, so we might as well
+            // crash early
+            cpuid::check_cpuid_usable();
+        }
     }
 
     // Safety:
@@ -110,10 +121,21 @@ pub fn init(boot_info: &'static mut BootInfo) {
     info!("Kernel initialized");
 }
 
+/// The default stack size used by the kernel
+pub const DEFAULT_STACK_SIZE: u64 = KiB!(80);
+// assert stack size is multiple of page size
+const_assert!(DEFAULT_STACK_SIZE & 0xfff == 0);
+
+/// The default number of pages(4K) used for the kernel stack
+///
+/// Calculated from [DEFAULT_STACK_SIZE]
+pub const DEFAULT_STACK_PAGE_COUNT: u64 = DEFAULT_STACK_SIZE / Size4KiB::SIZE;
+
 /// fills in bootloader configuration that is shared between normal and test mode
 pub const fn bootloader_config_common(
     mut config: bootloader_api::BootloaderConfig,
 ) -> bootloader_api::BootloaderConfig {
     config.mappings.page_table_recursive = Some(Mapping::Dynamic);
+    config.kernel_stack_size = DEFAULT_STACK_SIZE;
     config
 }
