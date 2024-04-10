@@ -151,6 +151,7 @@ pub struct PageAllocator {
 }
 
 // TODO convert errors from MemError to PageTableError
+// TODO do I want to always return/require Mapped/Unmapped?
 impl PageAllocator {
     /// create a new [PageAllocator]
     pub fn new() -> Self {
@@ -239,7 +240,7 @@ impl PageAllocator {
     pub fn allocate_guarded_pages<S: PageSize>(
         &mut self,
         count: u64,
-        head_guard: bool,
+        head_guard: bool, // TODO convert bool args to enum
         tail_guard: bool,
     ) -> Result<GuardedPages<S>> {
         if !head_guard && !tail_guard {
@@ -326,6 +327,8 @@ impl PageAllocator {
         self.allocate_page()
     }
 
+    // FIXME: free should be unsafe, right??
+
     /// frees a page
     // TODO unsafe?
     pub fn free_page<S: PageSize>(&mut self, page: Page<S>) {
@@ -337,6 +340,24 @@ impl PageAllocator {
             start: page.start_address().as_u64(),
             end: page.start_address().as_u64() + (S::SIZE - 1),
         });
+    }
+
+    /// frees multiple pages
+    pub fn free_pages<S: PageSize>(&mut self, pages: Pages<S>) {
+        for p in pages.iter() {
+            self.free_page(p);
+        }
+    }
+
+    /// frees multiple pages
+    pub fn free_guarded_pages<S: PageSize>(&mut self, pages: GuardedPages<S>) {
+        self.free_pages(pages.pages);
+        if let Some(guard) = pages.head_guard {
+            self.free_page(guard.0);
+        }
+        if let Some(guard) = pages.tail_guard {
+            self.free_page(guard.0);
+        }
     }
 }
 

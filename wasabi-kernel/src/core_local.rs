@@ -27,7 +27,12 @@ use x86_64::VirtAddr;
 /// A counter used to assign the core id for each core.
 /// Each core calls [AtomicU8::fetch_add] to get it's id and automatically increment
 /// it for the next core, ensuring ids are unique.
+///
+/// As a side-effect, this is also the number of cores that have been started
 static CORE_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
+
+/// The number of cores that have finished booting
+static CORE_READY_COUNT: AtomicU8 = AtomicU8::new(0);
 
 /// an array with the [VirtAddr]s for each [CoreLocals] indexed by the core id.
 static mut CORE_LOCALS_VADDRS: [VirtAddr; 255] = [VirtAddr::zero(); 255];
@@ -88,8 +93,9 @@ pub struct CoreLocals {
     boot_lock: AtomicU8,
 
     /// A unique id of this core. Each core has sequential ids starting from 0 and ending
-    /// at [get_max_core_id].
+    /// at [get_started_core_count].
     pub core_id: CoreId,
+
     /// The core local apic id. This is assigned by the hardware and is not necessarially
     /// equal to the core id.
     pub apic_id: CoreId,
@@ -236,7 +242,7 @@ pub unsafe fn core_boot() -> CoreId {
 
     // Safety: This is only safe as long as we are the only core
     // to access this. Right now we might not be.
-    // We must not use this other than to take the boot_lock.
+    // We must not use this other than to take th boot_lock.
     // Only when we have the boot_lock, this is save to use.
     let boot_core_locals = unsafe { &mut *addr_of_mut!(BOOT_CORE_LOCALS) };
 
@@ -318,6 +324,7 @@ pub unsafe fn init(core_id: CoreId) {
         // have unique access to [BOOT_CORE_LOCALS]
         BOOT_CORE_LOCALS.boot_lock.fetch_add(1, Ordering::SeqCst);
     }
+    CORE_READY_COUNT.fetch_add(1, Ordering::Release);
 
     // don't drop core_local, we want it to life forever in static memory.
     // However we can't use a static variable, because we need 1 per core
@@ -372,10 +379,14 @@ impl InterruptState for CoreInterruptState {
     }
 }
 
-/// returns the core id of the last core to check in.
-/// This means that this can still grow, if not all cores are initialized
-pub fn get_max_core_id() -> u8 {
-    CORE_ID_COUNTER.load(Ordering::Acquire)
+/// The number of cores that have started
+pub fn get_started_core_count(ordering: Ordering) -> u8 {
+    CORE_ID_COUNTER.load(ordering)
+}
+
+/// The number of cores that finished booting
+pub fn get_ready_core_count(ordering: Ordering) -> u8 {
+    CORE_READY_COUNT.load(ordering)
 }
 
 /// Returns this' core [CoreLocals] struct.

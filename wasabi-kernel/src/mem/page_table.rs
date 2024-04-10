@@ -1,15 +1,18 @@
 //! Page table implementation for the kernel
 
 #[allow(unused_imports)]
-use log::{debug, error, info, trace, warn};
-use thiserror::Error;
+use log::{debug, error, info, log, trace, warn};
 
-use crate::prelude::UnwrapTicketLock;
+use crate::{prelude::UnwrapTicketLock, todo_error, todo_warn};
 use core::fmt::Write;
+use staticvec::StaticString;
+use thiserror::Error;
 use x86_64::{
     structures::paging::{
-        mapper::MapToError, Page, PageTable, PageTableFlags, PageTableIndex, PhysFrame,
-        RecursivePageTable, Size1GiB, Size2MiB, Size4KiB,
+        mapper::{MapToError, MappedFrame, Translate, TranslateResult},
+        page_table::{FrameError, PageTableEntry},
+        Page, PageSize, PageTable, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable,
+        Size1GiB, Size2MiB, Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
@@ -260,7 +263,6 @@ mod test {
         let frame_alloc: &mut WasabiFrameAllocator<Size4KiB> =
             &mut WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
-
         unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
             .map(|flusher| flusher.flush())
             .map_err_debug_display()
@@ -336,7 +338,7 @@ mod test {
 
     #[kernel_test]
     fn test_map_specific_pages() -> Result<(), KernelTestError> {
-        const START_ADDRS: &[u64] = &[0x2000];
+        const START_ADDRS: &[u64] = &[0x46000];
         let mut pages: [Option<Page<Size4KiB>>; START_ADDRS.len()] = [None; START_ADDRS.len()];
 
         for (i, p) in &mut pages.iter_mut().enumerate() {

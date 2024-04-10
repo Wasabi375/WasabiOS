@@ -80,13 +80,15 @@ impl From<PageTableMapError> for MemError {
 /// Must be called only once during kernel boot process. Requires locks and logging
 pub unsafe fn init() {
     let (level_4_page_table, _) = Cr3::read();
-    info!(
-        "Level 4 page table at {:?} with rec index {:?}",
-        level_4_page_table.start_address(),
-        recursive_index()
-    );
 
     let bootloader_page_table_vaddr = RecursivePageTable::l4_table_vaddr(recursive_index());
+
+    info!(
+        "Level 4 page table at (phys: {:p}, virt: {:p}) with rec index {:?}",
+        level_4_page_table.start_address(),
+        bootloader_page_table_vaddr,
+        recursive_index()
+    );
 
     // Safety: assuming the bootloader doesn't lie to us, this is the valid page table vaddr
     // and we have mutable access, because we are in the boot process of the kernel
@@ -109,7 +111,11 @@ pub unsafe fn init() {
         let mut recursive_page_table = KERNEL_PAGE_TABLE.lock();
 
         if log::log_enabled!(log::Level::Trace) {
-            print_debug_info(&mut recursive_page_table, bootloader_page_table_vaddr);
+            print_debug_info(
+                &mut recursive_page_table,
+                bootloader_page_table_vaddr,
+                log::Level::Info,
+            );
         }
 
         // Safety: during kernel boot
@@ -331,6 +337,7 @@ where
 fn print_debug_info(
     recursive_page_table: &mut RecursivePageTable,
     bootloader_page_table_vaddr: VirtAddr,
+    level: log::Level,
 ) {
     recursive_page_table.print_all_mapped_regions(true, Level::Info);
 
@@ -339,45 +346,53 @@ fn print_debug_info(
 
     recursive_page_table.print_page_flags_for_vaddr(
         bootloader_page_table_vaddr,
-        Level::Info,
+        level,
         Some("Page Table L4"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
-        VirtAddr::new(0x8000019540),
-        Level::Info,
-        Some("Kernel entry point"),
-    );
-    recursive_page_table.print_page_flags_for_vaddr(
         VirtAddr::new(boot_info as *const BootInfo as u64),
-        Level::Info,
+        level,
         Some("Boot Info"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
         VirtAddr::new(boot_info.framebuffer.as_ref().unwrap() as *const FrameBuffer as u64),
-        Level::Info,
+        level,
         Some("Frame Buffer Info"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
         VirtAddr::new(boot_info.framebuffer.as_ref().unwrap().buffer().as_ptr() as u64),
-        Level::Info,
+        level,
         Some("Frame Buffer Start"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
         VirtAddr::new(*boot_info.rsdp_addr.as_ref().unwrap()),
-        Level::Info,
+        level,
         Some("RSDP"),
     );
 
+    if let Some(framebuffer) = boot_info.framebuffer.as_ref() {
+        recursive_page_table.print_page_flags_for_vaddr(
+            VirtAddr::new(framebuffer as *const FrameBuffer as u64),
+            level,
+            Some("Frame Buffer Info"),
+        );
+        recursive_page_table.print_page_flags_for_vaddr(
+            VirtAddr::new(framebuffer.buffer().as_ptr() as u64),
+            level,
+            Some("Frame Buffer Start"),
+        );
+    }
+
     let rip = read_rip();
-    recursive_page_table.print_page_flags_for_vaddr(rip, Level::Info, Some("RDI"));
+    recursive_page_table.print_page_flags_for_vaddr(rip, level, Some("RIP"));
 
     let memory_regions = &boot_info.memory_regions;
 
-    info!("memory region count {}", memory_regions.len());
+    log::log!(level, "memory region count {}", memory_regions.len());
     assert_phys_not_available(
         recursive_page_table
             .translate_addr(bootloader_page_table_vaddr)

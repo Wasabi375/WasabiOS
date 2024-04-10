@@ -2,6 +2,7 @@
 
 use core::assert_matches::assert_matches;
 use core::ops::{Deref, DerefMut};
+use log::trace;
 use shared::lockcell::LockCell;
 use x86_64::{
     structures::paging::{
@@ -169,6 +170,7 @@ impl Mapped<GuardedPages<Size4KiB>> {
         let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
+        trace!("unmap guarded pages");
         for page in pages.iter() {
             let (frame, _flags, flusher) = page_table.unmap(page)?;
             flusher.flush();
@@ -269,10 +271,7 @@ mod test {
         PageSize, PageTableFlags, Size4KiB, Translate,
     };
 
-    use crate::mem::{
-        page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE,
-        page_table_debug_ext::PageTableDebugExt, VirtAddrExt,
-    };
+    use crate::mem::{page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE, VirtAddrExt};
 
     use super::Unmapped;
 
@@ -294,10 +293,6 @@ mod test {
 
     #[kernel_test]
     fn map_unmap_guarded_page() -> Result<(), KernelTestError> {
-        // TODO fix test and enable.
-        // #[kernel_test(ignore)] is broken, so we use return Ok(()) instead
-        #![allow(unreachable_code)]
-        return Ok(());
         let mut allocator = PageAllocator::get_kernel_allocator().lock();
 
         let pages = allocator
