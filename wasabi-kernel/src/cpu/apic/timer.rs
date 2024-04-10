@@ -3,7 +3,7 @@ use bit_field::BitField;
 use log::info;
 
 use crate::{
-    cpu::interrupts::{self, InterruptFn, InterruptRegistrationError},
+    cpu::interrupts::{self, InterruptFn, InterruptRegistrationError, InterruptVector},
     time::{calibration_tick, read_tsc},
 };
 
@@ -126,7 +126,7 @@ pub struct TimerData {
     /// The clockspeed of the timer in mhz
     mhz: u64,
     /// th interrupt vector triggerd by the timer
-    interrupt_vector: Option<u8>,
+    interrupt_vector: Option<InterruptVector>,
     /// the current [TimerMode]
     mode: TimerMode,
     /// the tsc time, when the timer was calibrated
@@ -185,7 +185,7 @@ impl Timer<'_> {
     /// see [interrupts::register_interrupt_handler]
     pub fn register_interrupt_handler(
         &mut self,
-        vector: u8,
+        vector: InterruptVector,
         handler: InterruptFn,
     ) -> Result<(), InterruptRegistrationError> {
         interrupts::register_interrupt_handler(vector, handler)?;
@@ -194,7 +194,7 @@ impl Timer<'_> {
         apic.offset_mut(Offset::TimerLocalVectorTableEntry)
             .update(|vte| {
                 vte.set_bit(Timer::MASK_BIT, false);
-                vte.set_bits(Timer::VECTOR_BIST, vector as u32);
+                vte.set_bits(Timer::VECTOR_BIST, vector as u8 as u32);
             });
 
         self.apic.timer.interrupt_vector = Some(vector);

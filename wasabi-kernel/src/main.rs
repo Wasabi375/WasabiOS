@@ -30,19 +30,20 @@ use wasabi_kernel::{
     cpu::{
         self,
         apic::{self, timer::TimerConfig},
+        interrupts::InterruptVector,
     },
     init, time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
 static LAST_TIMER_TSC: AtomicU64 = AtomicU64::new(0);
-fn timer_int_handler(_vec: u8, _isf: InterruptStackFrame) -> Result<(), ()> {
+fn timer_int_handler(_vec: InterruptVector, _isf: InterruptStackFrame) -> Result<(), ()> {
     let last_tsc = LAST_TIMER_TSC.load(Ordering::Relaxed);
     let now = time::read_tsc();
     LAST_TIMER_TSC.store(now, Ordering::Relaxed);
 
     let duration = time::time_between_tsc(last_tsc, now);
-    info!(target: "Timer", "Duration since last tick: {}", duration);
+    info!(target: "Timer", "[Core: {}] Duration since last tick: {}", locals!().core_id, duration);
     Ok(())
 }
 
@@ -54,26 +55,29 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     info!("tsc clock rate {}MHz", time::tsc_tickrate());
     info!("kernel boot took {:?} - {}", startup_time, startup_time);
 
-    {
-        use apic::timer::{TimerDivider, TimerMode};
-
-        let mut apic_guard = locals!().apic.lock();
-        let apic = apic_guard.as_mut().as_mut().unwrap();
-        apic.timer().calibrate();
-        info!("apic timer: {:#?}", apic.timer());
-
-        apic.timer()
-            .register_interrupt_handler(55, timer_int_handler)
-            .unwrap();
-        let apic_rate = apic.timer().rate_mhz() as u32;
-        apic.timer().start(TimerMode::Periodic(TimerConfig {
-            divider: TimerDivider::DivBy2,
-            duration: apic_rate * 1_000_000 / 2,
-        }));
-    }
+    // start_timer();
 
     info!("OS Done! cpu::halt()");
     cpu::halt();
+}
+
+#[allow(dead_code)]
+fn start_timer() {
+    use apic::timer::{TimerDivider, TimerMode};
+
+    let mut apic_guard = locals!().apic.lock();
+    let apic = apic_guard.as_mut().as_mut().unwrap();
+    apic.timer().calibrate();
+    info!("apic timer: {:#?}", apic.timer());
+
+    apic.timer()
+        .register_interrupt_handler(InterruptVector::Timer, timer_int_handler)
+        .unwrap();
+    let apic_rate = apic.timer().rate_mhz() as u32;
+    apic.timer().start(TimerMode::Periodic(TimerConfig {
+        divider: TimerDivider::DivBy2,
+        duration: apic_rate * 1_000_000 / 2,
+    }));
 }
 
 /// configuration for the bootloader

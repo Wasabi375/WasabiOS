@@ -1,7 +1,10 @@
 //! kernel utilities/handlers for interrupts
 
+use core::fmt;
+
 #[allow(unused_imports)]
 use log::{debug, error, info, warn};
+use shared_derive::U8Enum;
 
 use super::apic::Apic;
 use crate::{
@@ -19,7 +22,8 @@ use thiserror::Error;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 
 /// The function type used for interrupt handlers
-pub type InterruptFn = fn(interrupt_vector: u8, stack_frame: InterruptStackFrame) -> Result<(), ()>;
+pub type InterruptFn =
+    fn(interrupt_vector: InterruptVector, stack_frame: InterruptStackFrame) -> Result<(), ()>;
 
 lazy_static! {
     /// The interrupt descriptor table used by this kernel
@@ -66,13 +70,25 @@ pub fn init() {
     }
 }
 
+#[derive(U8Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum InterruptVector {
+    Timer = 55,
+}
+
+impl fmt::Display for InterruptVector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("{:?}({})", self, *self as u8))
+    }
+}
+
 #[derive(Error, Debug, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub enum InterruptRegistrationError {
     #[error("Interrupt vector({0}) was already registered")]
-    InterruptVectorInUse(u8),
+    InterruptVectorInUse(InterruptVector),
     #[error("Interrupt vector({0}) was never registered")]
-    InterruptVectorNotRegistered(u8),
+    InterruptVectorNotRegistered(InterruptVector),
     #[error("No Interrupt vector registered")]
     NoRegisteredVector,
 }
@@ -82,14 +98,14 @@ pub enum InterruptRegistrationError {
 /// Fails with [InterruptRegistrationError::InterruptVectorInUse] if a handler is already
 /// registered for this `vector`
 pub fn register_interrupt_handler(
-    vector: u8,
+    vector: InterruptVector,
     handler: InterruptFn,
 ) -> Result<(), InterruptRegistrationError> {
     check_interrupt_vector(vector);
     let mut handler_guard = INTERRUPT_HANDLERS.lock();
     let handlers = &mut handler_guard;
 
-    let index = (vector - 32) as usize;
+    let index = (vector as u8 - 32) as usize;
 
     if handlers[index].is_some() {
         return Err(InterruptRegistrationError::InterruptVectorInUse(vector));
@@ -104,12 +120,14 @@ pub fn register_interrupt_handler(
 ///
 /// Fails with [InterruptRegistrationError::InterruptVectorNotRegistered] if no handler
 /// was registered for the handler
-pub fn unregister_interrupt_handler(vector: u8) -> Result<InterruptFn, InterruptRegistrationError> {
+pub fn unregister_interrupt_handler(
+    vector: InterruptVector,
+) -> Result<InterruptFn, InterruptRegistrationError> {
     check_interrupt_vector(vector);
     let mut handler_guard = INTERRUPT_HANDLERS.lock();
     let handlers = &mut handler_guard;
 
-    let index = (vector - 32) as usize;
+    let index = (vector as u8 - 32) as usize;
 
     if let Some(handler) = handlers[index] {
         Ok(handler)
@@ -122,8 +140,10 @@ pub fn unregister_interrupt_handler(vector: u8) -> Result<InterruptFn, Interrupt
 
 /// returns the registered handler for `vector` or `None` if none was registered
 #[inline]
-pub fn get_interrupt_handler(vector: u8) -> Option<InterruptFn> {
+pub fn get_interrupt_handler(vector: InterruptVector) -> Option<InterruptFn> {
     check_interrupt_vector(vector);
+
+    let vector = vector as u8;
     let index = (vector - 32) as usize;
     INTERRUPT_HANDLERS.read()[index]
 }
@@ -134,9 +154,11 @@ pub fn get_interrupt_handler(vector: u8) -> Option<InterruptFn> {
 /// # let vector = 35;
 /// assert!(vector >= 32 && vector <= 255);
 /// ```
-fn check_interrupt_vector(vector: u8) {
+fn check_interrupt_vector(vector: InterruptVector) {
+    // TODO InterruptVector is enum so I should be able to check all
+    //  variances at compile time
     assert!(
-        vector >= 32,
+        vector as u8 >= 32,
         "interrupt handler called with invalid vector of {vector}"
     );
 }
@@ -158,6 +180,11 @@ pub const PAGE_FAULT_STACK_SIZE: u64 = KiB!(4 * 5);
 /// generic interrupt handler, that is called for any interrupt handler with
 /// `interrupt_vector >= 32`.
 fn interrupt_handler(interrupt_vector: u8, int_stack_frame: InterruptStackFrame) {
+    let interrupt_vector = match InterruptVector::try_from(interrupt_vector) {
+        Ok(v) => v,
+        Err(_) => panic!("Interrupt {interrupt_vector} not defined: \n{int_stack_frame:#?}"),
+    };
+
     let handler = get_interrupt_handler(interrupt_vector);
 
     if let Some(handler) = handler {

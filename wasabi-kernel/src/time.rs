@@ -191,6 +191,7 @@ pub fn calibrate_tsc() {
 ///
 /// this does not support fractions so converting into a
 /// larger scale will lose information.
+// TODO why do I have my own duration class
 #[derive(Clone, Copy)]
 pub enum Duration {
     /// duration in microseconds
