@@ -67,7 +67,7 @@ pub unsafe fn init() {
         // .with_module_level("wasabi_kernel", LevelFilter::Trace)
         .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
         .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
-        //.with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
+        // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
         // comment to move ; to separate line - easy uncomment of module log levels
@@ -136,7 +136,10 @@ macro_rules! todo_warn {
         log::warn!("not yet implemented")
     };
     ($($arg:tt)+) => {
-        log::warn!("not yet implemented: {}", $crate::format_args!($($arg)+))
+        log::warn!(
+            "not yet implemented: {}",
+            $crate::logger::__macro_internals::format_args!($($arg)+)
+        )
     };
 }
 
@@ -148,6 +151,14 @@ macro_rules! todo_error {
         log::error!("not yet implemented")
     };
     ($($arg:tt)+) => {
-        log::error!("not yet implemented: {}", $crate::format_args!($($arg)+))
+        log::error!(
+            "not yet implemented: {}",
+            $crate::logger::__macro_internals::format_args!($($arg)+)
+        )
     };
+}
+
+#[doc(hidden)]
+pub mod __macro_internals {
+    pub use core::format_args;
 }

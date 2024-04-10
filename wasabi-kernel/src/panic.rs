@@ -68,7 +68,7 @@ fn panic(info: &PanicInfo) -> ! {
         panic_no_logger(info);
     }
 
-    error!("PANIC: {}", info);
+    error!(target: "PANIC", "{}", info);
 
     cpu::halt();
 }
