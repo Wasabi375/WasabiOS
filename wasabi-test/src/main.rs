@@ -5,7 +5,7 @@
 //! serial port.  If there is a serial port the test kernel runs in serial
 //! control mode. Otherwise it runs in no-serial mode.
 //!
-//! In no-serial mode the kernel will simply test all `#[test]`s that are not
+//! In no-serial mode the kernel will simply test all `#[kernel_test]`s that are not
 //! marked as expected to panic. If a panic occures all following tests wont be
 //! executed.
 //!

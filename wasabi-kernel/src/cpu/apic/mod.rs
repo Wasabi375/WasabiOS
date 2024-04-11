@@ -20,8 +20,12 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-use self::timer::{Timer, TimerData};
+use self::{
+    ipi::{Ipi, IPI_STATUS_BIT},
+    timer::{Timer, TimerData},
+};
 
+pub mod ipi;
 pub mod multiprocessor;
 pub mod timer;
 
@@ -152,11 +156,30 @@ impl Apic {
         unsafe { vaddr.as_volatile() }
     }
 
+    /// calculate [Volatile] low and high for the given [Offset]
+    fn offset64(&self, offset: Offset) -> (Volatile<&u32, ReadOnly>, Volatile<&u32, ReadOnly>) {
+        let vaddr_low = self.base + offset as u64;
+        let vaddr_high = vaddr_low + 0x10;
+
+        unsafe { (vaddr_low.as_volatile(), vaddr_high.as_volatile()) }
+    }
+
     /// calculate mutable [Volatile] for the given [Offset]
     fn offset_mut(&mut self, offset: Offset) -> Volatile<&mut u32, ReadWrite> {
         let vaddr = self.base + offset as u64;
         // safety: we have mut access to apic, so we can read and write it's registers
         unsafe { vaddr.as_volatile_mut() }
+    }
+
+    /// calculate mutable [Volatile] low and high for the given [Offset]
+    fn offset64_mut(
+        &self,
+        offset: Offset,
+    ) -> (Volatile<&mut u32, ReadWrite>, Volatile<&mut u32, ReadWrite>) {
+        let vaddr_low = self.base + offset as u64;
+        let vaddr_high = vaddr_low + 0x10;
+
+        unsafe { (vaddr_low.as_volatile_mut(), vaddr_high.as_volatile_mut()) }
     }
 
     /// get access to the apic timer
@@ -168,6 +191,18 @@ impl Apic {
     pub fn id(&self) -> Id {
         let id = self.offset(Offset::Id);
         Id(id.read())
+    }
+
+    /// send an Inter-Processor interrupt
+    pub fn send_ipi(&mut self, ipi: Ipi) {
+        let (low, high) = self.offset64_mut(Offset::InterruptCommand);
+        ipi.send(low, high)
+    }
+
+    /// Read the status of the InterruptCommand register
+    pub fn ipi_status(&mut self) -> ipi::DeliveryStatus {
+        let (low, high) = self.offset64_mut(Offset::InterruptCommand);
+        low.read().get_bit(IPI_STATUS_BIT).into()
     }
 
     /// issues a End of interrupt to the apic.

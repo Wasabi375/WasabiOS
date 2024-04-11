@@ -74,6 +74,7 @@ pub fn init() {
 #[repr(u8)]
 pub enum InterruptVector {
     Timer = 55,
+    Test = 255,
 }
 
 impl fmt::Display for InterruptVector {
