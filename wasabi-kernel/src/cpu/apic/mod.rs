@@ -36,10 +36,7 @@ const IA32_APIC_BASE: Msr = Msr::new(0x1b);
 pub fn init() -> Result<(), ApicCreationError> {
     info!("Init Apic...");
 
-    let mut local_apic = locals!().apic.lock();
-    if local_apic.is_some() {
-        panic!("Apic should only ever be initialized once per core");
-    }
+    let mut local_apic = locals!().apic.lock_uninit();
 
     disable_pic();
 
@@ -75,7 +72,7 @@ pub fn init() -> Result<(), ApicCreationError> {
     // TODO: ensure that software enable bit in SIV register (bit 8) is set
     //  otherwise apic will mask all interrupts except for INIT, NMI, SMI, SIPI
 
-    *local_apic = Some(apic);
+    local_apic.write(apic);
     info!("Apic initialized");
 
     Ok(())
@@ -217,7 +214,7 @@ impl Apic {
 
             // Safety: this is only safe, because we execute an atomic operation
             // on the apic register, therefor we can ignore the lock here.
-            let apic = locals!().apic.get_mut().as_mut().unwrap();
+            let apic = LockCellInternal::<Apic>::get_mut(&locals!().apic);
 
             apic.offset_mut(Offset::EndOfInterrupt).write(0u32);
         }

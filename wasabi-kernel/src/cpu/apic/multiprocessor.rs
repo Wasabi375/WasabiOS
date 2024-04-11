@@ -24,12 +24,12 @@ use log::{debug, error, info, trace, warn};
 
 use crate::{
     core_local::{get_ready_core_count, get_started_core_count},
+    cpu::apic::Apic,
     cpu::halt,
-    map_frame,
+    locals, map_frame,
     mem::{
         frame_allocator::{PhysAllocator, WasabiFrameAllocator},
         page_allocator::PageAllocator,
-        page_table::KERNEL_PAGE_TABLE,
         structs::{GuardedPages, Mapped, Unmapped},
         MemError,
     },

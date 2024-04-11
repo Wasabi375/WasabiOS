@@ -65,8 +65,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 fn start_timer() {
     use apic::timer::{TimerDivider, TimerMode};
 
-    let mut apic_guard = locals!().apic.lock();
-    let apic = apic_guard.as_mut().as_mut().unwrap();
+    let mut apic = locals!().apic.lock();
     apic.timer().calibrate();
     info!("apic timer: {:#?}", apic.timer());
 

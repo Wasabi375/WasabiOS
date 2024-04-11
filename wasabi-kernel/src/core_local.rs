@@ -12,7 +12,7 @@ use crate::{test_locals, testing::core_local::TestCoreLocals};
 use crate::{
     cpu::{self, apic::Apic, cpuid},
     locals,
-    prelude::TicketLock,
+    prelude::{TicketLock, UnwrapTicketLock},
 };
 use alloc::boxed::Box;
 use core::{
@@ -21,7 +21,10 @@ use core::{
     ptr::addr_of_mut,
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
-use shared::{lockcell::InterruptState, types::CoreId};
+use shared::{
+    lockcell::{InterruptState, LockCellInternal},
+    types::CoreId,
+};
 use x86_64::VirtAddr;
 
 /// A counter used to assign the core id for each core.
@@ -116,8 +119,11 @@ pub struct CoreLocals {
 
     /// A lock holding the local apic. This can be [None] if the apic has not been
     /// initialized.
-    // TODO change to UnwrapLock
-    pub apic: TicketLock<Option<Apic>>,
+    ///
+    /// # Safety:
+    ///
+    /// [cpu::apic::init] must be called before this can be used
+    pub apic: UnwrapTicketLock<Apic>,
 
     /// Core locals used by tests
     #[cfg(feature = "test")]
@@ -138,7 +144,7 @@ impl CoreLocals {
             // for interrupts, after all we have not initialized them.
             interrupts_disable_count: AtomicU64::new(1),
 
-            apic: TicketLock::new_non_preemtable(None),
+            apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
 
             #[cfg(feature = "test")]
             test_local: TestCoreLocals::new(),
@@ -294,14 +300,14 @@ pub unsafe fn init(core_id: CoreId) {
         interrupt_count: AutoRefCounter::new(0),
         exception_count: AutoRefCounter::new(0),
         interrupts_disable_count: AtomicU64::new(1),
-        apic: TicketLock::new_non_preemtable(None),
+        apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
 
         #[cfg(feature = "test")]
         test_local: TestCoreLocals::new(),
     });
 
     core_local.virt_addr = VirtAddr::from_ptr(core_local.as_ref());
-    assert!(!core_local.apic.preemtable);
+    assert!(!LockCellInternal::<Apic>::is_preemtable(&core_local.apic));
     debug!(
         "Core {}: Core Locals initialized from boot locals",
         core_id.0

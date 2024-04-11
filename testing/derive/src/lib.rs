@@ -7,6 +7,7 @@ use syn::parse_macro_input;
 mod args;
 mod declaration;
 
+// TODO provide proper docs
 #[proc_macro_attribute]
 pub fn kernel_test(attribute: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attribute as Args);
