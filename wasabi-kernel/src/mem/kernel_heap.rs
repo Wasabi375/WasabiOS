@@ -33,7 +33,7 @@ pub const KERNEL_HEAP_SIZE: u64 = KernelHeapPageSize::SIZE * KERNEL_HEAP_PAGE_CO
 type KernelHeapPageSize = Size4KiB;
 
 /// number of memory pages used by the kernel heap
-const KERNEL_HEAP_PAGE_COUNT: u64 = 5;
+const KERNEL_HEAP_PAGE_COUNT: u64 = 250;
 
 /// the [KernelHeap]
 // Safety: initialized by [init] before it we use allocated types

@@ -38,6 +38,7 @@ pub struct QemuConfig<'a> {
     pub devices: &'a str,
     pub serial: Vec<&'a str>,
     pub kill_on_drop: bool,
+    pub processor_count: u8,
 }
 
 impl Default for QemuConfig<'_> {
@@ -47,6 +48,7 @@ impl Default for QemuConfig<'_> {
             devices: "",
             serial: vec!["stdio"],
             kill_on_drop: true,
+            processor_count: 4,
         }
     }
 }
@@ -108,6 +110,8 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
     }
 
     cmd.arg("-m").arg(qemu.memory);
+
+    cmd.arg("-smp").arg(qemu.processor_count.to_string());
 
     if !qemu.devices.is_empty() {
         cmd.arg("-device").arg(qemu.devices);

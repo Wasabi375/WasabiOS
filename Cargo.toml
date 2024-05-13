@@ -36,6 +36,7 @@ edition = "2021"
 # TODO remove lazy_static as a dependency, in order to get rid of the external spin-lock
 bit_field = "0.10.2"
 derive_builder = { version = "0.20.0", git = "https://github.com/Wasabi375/rust-derive-builder", branch = "owned_custom_default", default-features = false}
+iced-x86 = { version = "1.21", default-features = false, features = [ "no_std", "nasm", "decoder" ] }
 itertools = { version = "0.10.5", default-features = false, features = ["use_alloc"] }
 lazy_static = { version = "1.4.0", features=["spin_no_std"] }
 linkme = "0.3.10"

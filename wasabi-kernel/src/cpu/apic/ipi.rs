@@ -1,4 +1,5 @@
 use bit_field::BitField;
+use log::trace;
 use shared_derive::U8Enum;
 use volatile::{access::ReadWrite, Volatile};
 
@@ -79,6 +80,9 @@ impl Ipi {
         let mut low: u32 = 0;
         let mut high: u32 = 0;
 
+        // should be set for all but deassert Inits
+        low |= 1 << IPI_ASSERT_BIT;
+
         let mode = match self.mode {
             DeliveryMode::Fixed(v) => {
                 low |= v as u8 as u32;
@@ -91,7 +95,7 @@ impl Ipi {
             DeliveryMode::SMI => 0b010,
             DeliveryMode::NMI => 0b100,
             DeliveryMode::INIT => {
-                low |= 1 << IPI_ASSERT_BIT;
+                // for deassert (not implemented) set assert bit to 0
                 0b101
             }
             DeliveryMode::SIPI(v) => {
@@ -129,6 +133,9 @@ impl Ipi {
         }
 
         let (low, high) = self.encode();
+
+        trace!("send ipi: 0x{:x}{:x}", high, low);
+
         if let Destination::Target(_) = self.destination {
             icr_high.write(high)
         }

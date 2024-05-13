@@ -139,9 +139,13 @@ pub fn init(page_table: &mut RecursivePageTable) {
         &mut vaddrs,
     );
 
-    KERNEL_PAGE_ALLOCATOR
-        .lock_uninit()
-        .write(PageAllocator { vaddrs });
+    let mut page_allocator = PageAllocator { vaddrs };
+    reserve_pages(&mut page_allocator);
+    KERNEL_PAGE_ALLOCATOR.lock_uninit().write(page_allocator);
+}
+
+fn reserve_pages(page_allocator: &mut PageAllocator) {
+    crate::apic::multiprocessor::reserve_pages(page_allocator);
 }
 
 /// A page allocator
