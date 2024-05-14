@@ -104,7 +104,7 @@ use core::{
 };
 use itertools::Itertools;
 use shared::lockcell::LockCell;
-use testing::{KernelTestDescription, KernelTestFn, TestExitState, KERNEL_TESTS};
+use testing::description::{KernelTestDescription, KernelTestFn, TestExitState, KERNEL_TESTS};
 use uart_16550::SerialPort;
 use wasabi_kernel::{
     bootloader_config_common, init,
@@ -453,7 +453,7 @@ fn run_test_no_panic(test: &KernelTestDescription) -> bool {
         TestExitState::Succeed => match test_result {
             Ok(()) => true,
             Err(error) => {
-                error!("TEST failed with {}", error);
+                error!("{}", error);
                 false
             }
         },
@@ -510,4 +510,100 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
         test_result
     );
     false
+}
+
+#[cfg(feature = "test-tests")]
+mod test_tests {
+    use testing::{
+        description::TestExitState, kernel_test, t_assert, t_assert_eq, t_assert_ne, tfail,
+        KernelTestError,
+    };
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
+    fn test_tfail() -> Result<(), KernelTestError> {
+        tfail!()
+    }
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
+    fn test_tfail_message() -> Result<(), KernelTestError> {
+        tfail!("with message: {}", "fail variable");
+    }
+
+    #[kernel_test]
+    fn test_t_assert_true() -> Result<(), KernelTestError> {
+        t_assert!(true);
+        t_assert!(true, "This is a message that we should never see!");
+        t_assert!(
+            true,
+            "This is a message that we should never see with args: {}!",
+            12 * 5
+        );
+
+        Ok(())
+    }
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Assert)))]
+    fn test_t_assert_false() -> Result<(), KernelTestError> {
+        let foo = false;
+        t_assert!(foo);
+        Ok(())
+    }
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Assert)))]
+    fn test_t_assert_false_message() -> Result<(), KernelTestError> {
+        t_assert!(false, "Message: {}", 5 * 12);
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_t_assert_eq() -> Result<(), KernelTestError> {
+        let a = 42;
+        t_assert_eq!(a, 2 * 21);
+        t_assert_eq!(a, 2 * 21, "some message");
+        t_assert_eq!(a, 2 * 21, "some message with args: {}, {}", a, 42);
+
+        Ok(())
+    }
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Assert)))]
+    fn test_t_assert_eq_fail() -> Result<(), KernelTestError> {
+        let a = 42;
+        t_assert_eq!(a, 2 * 22);
+
+        Ok(())
+    }
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Assert)))]
+    fn test_t_assert_eq_fail_message() -> Result<(), KernelTestError> {
+        let a = 42;
+        t_assert_eq!(a, 2 * 22, "Some message {a}");
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_t_assert_ne() -> Result<(), KernelTestError> {
+        let a = 42;
+        t_assert_ne!(a, 2 * 22);
+        t_assert_ne!(a, 2 * 22, "some message");
+        t_assert_ne!(a, 2 * 22, "some message with args: {}, {}", a, 42);
+
+        Ok(())
+    }
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Assert)))]
+    fn test_t_assert_ne_fail() -> Result<(), KernelTestError> {
+        let a = 42;
+        t_assert_ne!(a, 2 * 21);
+
+        Ok(())
+    }
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Assert)))]
+    fn test_t_assert_ne_fail_message() -> Result<(), KernelTestError> {
+        let a = 42;
+        t_assert_ne!(a, 2 * 21, "Some message {a}");
+
+        Ok(())
+    }
 }
