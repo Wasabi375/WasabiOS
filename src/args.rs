@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
 
+use crate::build::KernelBinary;
+
 /// Runner for WasabiOs
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -282,6 +284,8 @@ impl Target {
 pub enum Feature {
     NoUnicodeLog,
     NoColor,
+    Test,
+    TestTests,
 }
 
 impl Feature {
@@ -289,6 +293,17 @@ impl Feature {
         match self {
             Feature::NoUnicodeLog => OsStr::new("no-unicode-log"),
             Feature::NoColor => OsStr::new("no-color"),
+            Feature::Test => OsStr::new("test"),
+            Feature::TestTests => OsStr::new("test-tests"),
         }
+    }
+
+    pub fn used_in(&self, binary: &KernelBinary) -> bool {
+        use Feature::*;
+        let valid_flags: &[Feature] = match binary {
+            KernelBinary::Wasabi => &[NoUnicodeLog, NoColor, Test],
+            KernelBinary::Test => &[NoColor, TestTests],
+        };
+        valid_flags.contains(self)
     }
 }

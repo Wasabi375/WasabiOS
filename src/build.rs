@@ -14,12 +14,26 @@ use std::{
 };
 use tokio::process::Command;
 
+pub enum KernelBinary {
+    Wasabi,
+    Test,
+}
+
+impl KernelBinary {
+    pub fn name(&self) -> &'static OsStr {
+        match self {
+            KernelBinary::Wasabi => OsStr::new("wasabi-kernel"),
+            KernelBinary::Test => OsStr::new("wasabi-test"),
+        }
+    }
+}
+
 pub async fn check(args: CheckArgs) -> Result<()> {
-    check_kernel(OsStr::new("wasabi-kernel"), &args.options)
+    check_kernel(KernelBinary::Wasabi, &args.options)
         .await
         .context("check kernel")?;
     if !args.no_tests {
-        check_kernel(OsStr::new("wasabi-test"), &args.options)
+        check_kernel(KernelBinary::Test, &args.options)
             .await
             .context("check test")?;
     }
@@ -30,7 +44,7 @@ pub async fn build(args: BuildArgs) -> Result<()> {
     // TODO build everything in temp dir and only on success copy to latest
     let mut to_run: PathBuf;
 
-    let (elf, dir) = build_kernel_elf(OsStr::new("wasabi-kernel"), &args.options)
+    let (elf, dir) = build_kernel_elf(KernelBinary::Wasabi, &args.options)
         .await
         .context("build kernel elf")?;
     let img = build_kernel_uefi(&elf, Path::join(&dir, "wasabi-kernel-uefi.img"))
@@ -43,7 +57,7 @@ pub async fn build(args: BuildArgs) -> Result<()> {
     to_run = img.to_owned();
 
     if !args.no_tests {
-        let (elf, dir) = build_kernel_elf(OsStr::new("wasabi-test"), &args.options)
+        let (elf, dir) = build_kernel_elf(KernelBinary::Test, &args.options)
             .await
             .context("build test kernel elf")?;
         let img = build_kernel_uefi(&elf, Path::join(&dir, "wasabi-test-uefi.img"))
@@ -97,12 +111,13 @@ pub async fn emit_asm(img: &Path, asm_file_path: &Path) -> Result<()> {
 }
 
 pub async fn build_kernel_elf(
-    bin_name: &OsStr,
+    bin: KernelBinary,
     options: &BuildOptions,
 ) -> Result<(PathBuf, PathBuf)> {
     let mut cmd = Command::new("cargo");
     cmd.arg("build");
 
+    let bin_name = bin.name();
     cmd.arg("-p").arg(bin_name);
 
     cmd.arg("--bin").arg(bin_name);
@@ -116,9 +131,9 @@ pub async fn build_kernel_elf(
     }
     if options.all_features {
         cmd.arg("--all-features");
-    } else if !options.features.is_empty() {
+    } else if options.features.iter().any(|f| f.used_in(&bin)) {
         cmd.arg("--features");
-        for feature in &options.features {
+        for feature in options.features.iter().filter(|f| f.used_in(&bin)) {
             cmd.arg(feature.as_os_str());
         }
     }
@@ -138,10 +153,11 @@ pub async fn build_kernel_elf(
     Ok((Path::join(&out_dir, bin_name), out_dir))
 }
 
-async fn check_kernel(bin_name: &OsStr, options: &BuildOptions) -> Result<()> {
+async fn check_kernel(bin: KernelBinary, options: &BuildOptions) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.arg("check");
 
+    let bin_name = bin.name();
     cmd.arg("-p").arg(bin_name);
 
     cmd.arg("--bin").arg(bin_name);
@@ -153,9 +169,9 @@ async fn check_kernel(bin_name: &OsStr, options: &BuildOptions) -> Result<()> {
     }
     if options.all_features {
         cmd.arg("--all-features");
-    } else if !options.features.is_empty() {
+    } else if options.features.iter().any(|f| f.used_in(&bin)) {
         cmd.arg("--features");
-        for feature in &options.features {
+        for feature in options.features.iter().filter(|f| f.used_in(&bin)) {
             cmd.arg(feature.as_os_str());
         }
     }
