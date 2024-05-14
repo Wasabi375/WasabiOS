@@ -7,82 +7,214 @@
 
 extern crate alloc;
 
-pub use testing_derive::kernel_test;
+use core::error::Error;
 
-use linkme::distributed_slice;
+pub use testing_derive::kernel_test;
 use thiserror::Error;
+
+pub mod description;
 
 /// Error type for Kernel-tests
 #[derive(Error, Clone, Debug, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub enum KernelTestError {
-    #[error("test failed")]
+    #[error("TEST failed")]
     Fail,
+    #[error("TEST assertion failed")]
+    Assert,
 }
 
-// TODO use Termination trait as return type?
-/// Function signature used for kernel test functions
-pub type KernelTestFn = fn() -> Result<(), KernelTestError>;
-
-/// Describes the possible ways a test can exit
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TestExitState {
-    /// The test finishes normaly
-    Succeed,
-    /// The test finishes with the specified [KernelTestError] or any
-    /// [KernelTestError] if `None`
-    Error(Option<KernelTestError>),
-    /// The test panics
-    Panic,
+/// Extensio for the Result type useful for tests
+pub trait TestResultExt<T> {
+    /// Same as `unwrap` but returns [KernelTestError]
+    ///
+    /// This should be called with the question mark operator:
+    /// ```result.tunwrap()?```
+    fn tunwrap(self) -> Result<T, KernelTestError>;
+    /// Same as `expect` but returns [KernelTestError]
+    ///
+    /// This should be called with the question mark operator:
+    /// ```result.texpect("error")?```
+    fn texpect(self, message: &str) -> Result<T, KernelTestError>;
 }
 
-/// The source code location of a test function
-#[derive(Debug, Clone)]
-pub struct SourceLocation {
-    /// module of the source location
-    pub module: &'static str,
-    /// file of the source location
-    pub file: &'static str,
-    /// line of the source location
-    pub line: u32,
-    /// column of the source location
-    pub column: u32,
-}
+impl<T, E: Error> TestResultExt<T> for Result<T, E> {
+    fn tunwrap(self) -> Result<T, KernelTestError> {
+        match self {
+            Ok(v) => Ok(v),
+            Err(err) => tfail!("{}", err),
+        }
+    }
 
-impl core::fmt::Display for SourceLocation {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_fmt(format_args!("{}:{}:{}", self.file, self.line, self.column))
+    fn texpect(self, message: &str) -> Result<T, KernelTestError> {
+        match self {
+            Ok(v) => Ok(v),
+            Err(_err) => tfail!("{}", message),
+        }
     }
 }
 
-/// Description of a single kernel test
-#[derive(Debug, Clone)]
-pub struct KernelTestDescription {
-    /// the name of the test
-    pub name: &'static str,
-
-    /// the name of the test function
-    ///
-    /// in most cases this is equal to [name](KernelTestDescription::name)
-    pub fn_name: &'static str,
-
-    /// the way we expect the test to exit
-    pub expected_exit: TestExitState,
-
-    /// the actual test
-    pub test_fn: KernelTestFn,
-
-    /// The source location of the test
-    pub test_location: SourceLocation,
-
-    /// If any test has this flag set, only tests with this flag will be executed
-    pub focus: bool,
-
-    /// Tests with this flag will only be executed, if they also have the
-    /// [focus](KernelTestDescription::focus) flag
-    pub ignore: bool,
+/// Fails the current test.
+/// Only useable if function returns `Result<T, KernelTestError`
+#[macro_export]
+macro_rules! tfail {
+    () => {{
+        log::error!(
+            target: "TEST",
+            "at {}\nFail",
+            $crate::location_str!()
+        );
+        return Err($crate::KernelTestError::Fail)
+    }};
+    ($($arg:tt)+) => {{
+        log::error!(
+            target: "TEST",
+            "at {}\nFailure: {}",
+            $crate::location_str!(),
+            $crate::__macro_internals::format_args!($($arg)+)
+        );
+        return Err($crate::KernelTestError::Fail)
+    }};
 }
 
-/// The distributed slice, collecting all kernel testss marked with `#[kernel_test]`
-#[distributed_slice]
-pub static KERNEL_TESTS: [KernelTestDescription] = [..];
+/// Same as `assert!` but returns a [KernelTestError] instead of `panic`
+#[macro_export]
+macro_rules! t_assert {
+    ($assertion:expr) => {
+        if !$assertion {
+            log::error!(
+                target: "TEST",
+                "at {}\nAssertion failed\n{}",
+                $crate::location_str!(),
+                $crate::__macro_internals::stringify!($assertion),
+            );
+            return Err($crate::KernelTestError::Assert);
+        }
+    };
+    ($assertion:expr, $($arg:tt)+) => {
+        if !$assertion {
+            log::error!(
+                target: "TEST",
+                "at {}\nAssertion failed: {}\n{}",
+                $crate::location_str!(),
+                $crate::__macro_internals::format_args!($($arg)+),
+                $crate::__macro_internals::stringify!($assertion),
+            );
+            return Err($crate::KernelTestError::Assert);
+        }
+    };
+}
+
+/// Same as `assert_eq!` but returns a [KernelTestError] instead of `panic`
+#[macro_export]
+macro_rules! t_assert_eq {
+    ($left:expr, $right:expr) => {
+        match (&$left, &$right) {
+            (l_val, r_val) => {
+                if !(l_val == r_val) {
+                    log::error!(
+                        target: "TEST",
+                        "at {}\nAssertion left == right failed\nleft: {} = {:?}\nright: {} = {:?}",
+                        $crate::location_str!(),
+                        $crate::__macro_internals::stringify!($left),
+                        l_val,
+                        $crate::__macro_internals::stringify!($right),
+                        r_val
+                    );
+                    return Err($crate::KernelTestError::Assert);
+                }
+            }
+        }
+    };
+    ($left:expr, $right:expr, $($arg:tt)+) => {
+        match (&$left, &$right) {
+            (l_val, r_val) => {
+                if !(l_val == r_val) {
+                    log::error!(
+                        target: "TEST",
+                        "at {}\nAssertion left == right failed: {}\nleft: {} = {:?}\nright: {} = {:?}",
+                        $crate::location_str!(),
+                        $crate::__macro_internals::format_args!($($arg)+),
+                        $crate::__macro_internals::stringify!($left),
+                        l_val,
+                        $crate::__macro_internals::stringify!($right),
+                        r_val
+                    );
+                    return Err($crate::KernelTestError::Assert);
+                }
+            }
+        }
+    };
+}
+
+/// Same as `assert_ne!` but returns a [KernelTestError] instead of `panic`
+#[macro_export]
+macro_rules! t_assert_ne {
+    ($left:expr, $right:expr) => {
+        match (&$left, &$right) {
+            (l_val, r_val) => {
+                if l_val == r_val {
+                    log::error!(
+                        target: "TEST",
+                        "at {}\nAssertion left != right failed\nleft: {} = {:?}\nright: {} = {:?}",
+                        $crate::location_str!(),
+                        $crate::__macro_internals::stringify!($left),
+                        l_val,
+                        $crate::__macro_internals::stringify!($right),
+                        r_val
+                    );
+                    return Err($crate::KernelTestError::Assert);
+                }
+            }
+        }
+    };
+    ($left:expr, $right:expr, $($arg:tt)+) => {
+        match (&$left, &$right) {
+            (l_val, r_val) => {
+                if l_val == r_val {
+                    log::error!(
+                        target: "TEST",
+                        "at {}\nAssertion left != right failed: {}\nleft: {} = {:?}\nright: {} = {:?}",
+                        $crate::location_str!(),
+                        $crate::__macro_internals::format_args!($($arg)+),
+                        $crate::__macro_internals::stringify!($left),
+                        l_val,
+                        $crate::__macro_internals::stringify!($right),
+                        r_val
+                    );
+                    return Err($crate::KernelTestError::Assert);
+                }
+            }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! location_str {
+    () => {
+        $crate::__macro_internals::concat!(
+            $crate::__macro_internals::file!(),
+            ":",
+            $crate::__macro_internals::line!(),
+            ":",
+            $crate::__macro_internals::column!()
+        )
+    };
+}
+
+#[doc(hidden)]
+pub mod __macro_internals {
+    pub use core::column;
+    pub use core::concat;
+    pub use core::file;
+    pub use core::format_args;
+    pub use core::line;
+    pub use core::stringify;
+
+    pub enum AssertKind {
+        Eq,
+        Ne,
+        // TODO matches?
+    }
+}

@@ -15,12 +15,12 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
         .map_or_else(|| quote! { #fn_name }, |n| quote! { #n });
 
     let expected_exit = args.expected_exit.map_or_else(
-        || quote! { testing::TestExitState::Succeed },
+        || quote! { testing::description::TestExitState::Succeed },
         |exit| quote! { #exit },
     );
 
     let test_location = quote! {
-        testing::SourceLocation {
+        testing::description::SourceLocation {
             module: module_path!(),
             file: file!(),
             line: line!(),
@@ -34,8 +34,8 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
     quote! {
         #test_fn
 
-        #[linkme::distributed_slice(testing::KERNEL_TESTS)]
-        static #description_name: testing::KernelTestDescription = testing::KernelTestDescription {
+        #[linkme::distributed_slice(testing::description::KERNEL_TESTS)]
+        static #description_name: testing::description::KernelTestDescription = testing::description::KernelTestDescription {
             name: #name,
             fn_name: #fn_name,
             expected_exit: #expected_exit,
