@@ -1,3 +1,5 @@
+//! Everything needed for PhysFrame allocation and managment
+
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
