@@ -128,6 +128,8 @@ pub unsafe fn init() {
 /// let page = map_frame!(Size4KiB, PageTableFlags::WRITABLE | PAGE_TABLE_FLAGS::PRESENT, phys_frame);
 /// # }
 /// ```
+///
+/// TODO Safety
 #[macro_export]
 macro_rules! map_frame {
     ($size: ident, $flags: expr, $frame: expr) => {{
@@ -175,6 +177,8 @@ macro_rules! map_frame {
 /// let page = map_page!(Size4KiB, PageTableFlags::WRITABLE | PageTbaleFlags::PRESENT, phys_frame)?;
 /// # }
 /// ```
+///
+/// TODO Safety
 ///
 /// # See
 ///
@@ -245,6 +249,7 @@ macro_rules! map_page {
 
         let page: Page<$size> = $page;
         let frame: PhysFrame<$size> = $frame;
+        // FIXME: this sets parent table flags as user accessible. We don't want that in the kernel
         kernel_page_table
             .map_to(page, frame, $flags, $frame_alloc)
             .map_err(|e| PageTableMapError::from(e))

@@ -6,6 +6,7 @@
     abi_x86_interrupt,
     allocator_api,
     ascii_char,
+    assert_matches,
     box_into_inner,
     error_in_core,
     let_chains,

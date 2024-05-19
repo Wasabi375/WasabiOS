@@ -45,6 +45,7 @@ pub enum PageTableMapError {
     PageAllreadyMapped1g(PhysFrame<Size1GiB>),
 }
 
+// TODO: cleanup replace from impls with #[from] attribute
 impl From<MapToError<Size4KiB>> for PageTableMapError {
     fn from(value: MapToError<Size4KiB>) -> Self {
         match value {
@@ -437,5 +438,108 @@ impl LinearMapMemRegion {
             self.flags,
             pt
         );
+    }
+}
+
+#[cfg(feature = "test")]
+mod test {
+    use crate::mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator};
+    use shared::lockcell::LockCell;
+    use testing::{
+        kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
+        TestUnwrapExt,
+    };
+    use x86_64::structures::paging::mapper::{Mapper, UnmappedFrame};
+
+    use super::*;
+
+    #[kernel_test]
+    fn test_map_unmap_fake_frame_not_present() -> Result<(), KernelTestError> {
+        let fake_frame = PhysFrame::from_start_address(PhysAddr::new(0))
+            .map_err_debug_display()
+            .tunwrap()?;
+        let page: Page<Size4KiB> = PageAllocator::get_kernel_allocator()
+            .lock()
+            .allocate_page::<Size4KiB>()
+            .tunwrap()?;
+        let frame_alloc: &mut WasabiFrameAllocator<Size4KiB> =
+            &mut WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
+
+        unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
+            .map(|flusher| flusher.flush())
+            .map_err_debug_display()
+            .tunwrap()?;
+
+        let freed_frame = page_table
+            .unmap_ignore_present(page)
+            .map_err_debug_display()
+            .tunwrap()?;
+
+        let UnmappedFrame::NotPresent { entry } = freed_frame else {
+            tfail!("Expected to unmap not present page");
+        };
+
+        t_assert_eq!(entry.addr(), fake_frame.start_address());
+        t_assert_eq!(entry.flags(), PageTableFlags::BIT_9);
+
+        t_assert_matches!(
+            page_table.translate(page.start_address()),
+            TranslateResult::NotMapped,
+        );
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_fake_frame_not_present_update_flags() -> Result<(), KernelTestError> {
+        let fake_frame = PhysFrame::from_start_address(PhysAddr::new(0))
+            .map_err_debug_display()
+            .tunwrap()?;
+        let page: Page<Size4KiB> = PageAllocator::get_kernel_allocator()
+            .lock()
+            .allocate_page::<Size4KiB>()
+            .tunwrap()?;
+        let frame_alloc: &mut WasabiFrameAllocator<Size4KiB> =
+            &mut WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
+
+        unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
+            .map(|flusher| flusher.flush())
+            .map_err_debug_display()
+            .tunwrap()?;
+
+        unsafe { page_table.update_flags(page, PageTableFlags::BIT_10) }
+            .map(|flusher| flusher.flush())
+            .map_err_debug_display()
+            .tunwrap()?;
+
+        if let TranslateResult::Mapped {
+            frame,
+            offset,
+            flags,
+        } = page_table.translate(page.start_address())
+        {
+            t_assert_matches!(frame, MappedFrame::Size4KiB(_));
+            t_assert_eq!(offset, 0);
+            t_assert_eq!(flags, PageTableFlags::BIT_10);
+        } else {
+            tfail!("expected page to be mapped");
+        }
+        log::info!("flags updated");
+
+        let freed_frame = page_table
+            .unmap_ignore_present(page)
+            .map_err_debug_display()
+            .tunwrap()?;
+
+        let UnmappedFrame::NotPresent { entry: freed_entry } = freed_frame else {
+            tfail!("Expected to unmap not present page");
+        };
+
+        t_assert_eq!(freed_entry.addr(), fake_frame.start_address());
+        t_assert_eq!(freed_entry.flags(), PageTableFlags::BIT_10);
+
+        Ok(())
     }
 }
