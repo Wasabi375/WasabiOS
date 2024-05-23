@@ -170,7 +170,7 @@ impl Mapped<GuardedPages<Size4KiB>> {
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         for page in pages.iter() {
-            let (frame, flusher) = page_table.unmap(page)?;
+            let (frame, _flags, flusher) = page_table.unmap(page)?;
             flusher.flush();
             unsafe {
                 // Safety: see fn requirements

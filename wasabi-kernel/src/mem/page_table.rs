@@ -196,7 +196,10 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
 mod test {
     use crate::{
         map_page,
-        mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator},
+        mem::{
+            frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
+            page_table_debug_ext::PageTableDebugExt,
+        },
     };
     use shared::lockcell::LockCell;
     use testing::{
@@ -319,7 +322,7 @@ mod test {
             };
             trace!("unmap page {:?}", page);
 
-            let (_, flush) = KERNEL_PAGE_TABLE
+            let (_, _, flush) = KERNEL_PAGE_TABLE
                 .lock()
                 .unmap(page)
                 .map_err_debug_display()
@@ -348,8 +351,42 @@ mod test {
                 .lock()
                 .try_allocate_page(page)
                 .tunwrap()?;
-            debug!("Map page {:?}", page);
 
+            {
+                let mut page_table = KERNEL_PAGE_TABLE.lock();
+                page_table.print_table_entries_for_vaddr(
+                    page.start_address(),
+                    log::Level::Trace,
+                    Some("Entries before mapping"),
+                );
+                use x86_64::structures::paging::page_table::PageTableLevel;
+                page_table.print_page_table_for_vaddr(
+                    page.start_address(),
+                    PageTableLevel::Four,
+                    log::Level::Trace,
+                    Some("P4 Table"),
+                );
+                page_table.print_page_table_for_vaddr(
+                    page.start_address(),
+                    PageTableLevel::Three,
+                    log::Level::Trace,
+                    Some("P3 Table"),
+                );
+                page_table.print_page_table_for_vaddr(
+                    page.start_address(),
+                    PageTableLevel::Two,
+                    log::Level::Trace,
+                    Some("P2 Table"),
+                );
+                page_table.print_page_table_for_vaddr(
+                    page.start_address(),
+                    PageTableLevel::One,
+                    log::Level::Trace,
+                    Some("P1 Table"),
+                );
+            }
+
+            debug!("Map page {:?}", page);
             unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap()?;
 
             *p = Some(page);
@@ -361,7 +398,7 @@ mod test {
             };
             trace!("unmap page {:?}", page);
 
-            let (_, flush) = KERNEL_PAGE_TABLE
+            let (_, _, flush) = KERNEL_PAGE_TABLE
                 .lock()
                 .unmap(page)
                 .map_err_debug_display()

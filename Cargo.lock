@@ -269,6 +269,7 @@ dependencies = [
 [[package]]
 name = "bootloader"
 version = "0.11.7"
+source = "git+https://github.com/Wasabi375/bootloader?branch=page_table_bug#350adcdb86e71523da929d30d65b95bb22abaa5f"
 dependencies = [
  "anyhow",
  "async-process",
@@ -285,6 +286,7 @@ dependencies = [
 [[package]]
 name = "bootloader-boot-config"
 version = "0.11.7"
+source = "git+https://github.com/Wasabi375/bootloader?branch=page_table_bug#350adcdb86e71523da929d30d65b95bb22abaa5f"
 dependencies = [
  "serde",
 ]
@@ -1808,6 +1810,7 @@ version = "0.15.1"
 dependencies = [
  "bit_field",
  "bitflags 2.5.0",
+ "log",
  "rustversion",
  "volatile",
 ]

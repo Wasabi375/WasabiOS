@@ -53,7 +53,7 @@ x86_64 = { version = "0.15", path = "/home/burkhard/programming/projects/x86_64"
 # latin-1-suplement is required for german Umlauts. unicode-specials contains the replacement character �
 noto-sans-mono-bitmap = { version = "0.2.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
 
-bootloader = { path = "/home/burkhard/programming/forks/bootloader", version = "0.11", default-features = false, features = ["uefi"] }
+bootloader = { git = "https://github.com/Wasabi375/bootloader", branch = "page_table_bug", version = "0.11", default-features = false, features = ["uefi"] }
 bootloader_api = { version = "0.11" }
 
 [profile.dev]

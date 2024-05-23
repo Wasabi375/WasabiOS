@@ -6,7 +6,7 @@ use staticvec::StaticString;
 use x86_64::{
     structures::paging::{
         mapper::{MappedFrame, TranslateResult},
-        page_table::{FrameError, PageTableEntry},
+        page_table::{FrameError, PageTableEntry, PageTableLevel},
         Page, PageSize, PageTable, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable,
         Size1GiB, Size2MiB, Size4KiB, Translate,
     },
@@ -33,9 +33,94 @@ pub trait PageTableDebugExt {
 
     /// print all mapped memory regions
     fn print_all_mapped_regions(&mut self, ignore_cpu_flags: bool, level: Level);
+
+    /// prints all entries of the page table
+    fn print_page_table_for_vaddr(
+        &mut self,
+        vaddr: VirtAddr,
+        level: PageTableLevel,
+        log_level: Level,
+        message: Option<&str>,
+    );
 }
 
 impl<'a> PageTableDebugExt for RecursivePageTable<'a> {
+    fn print_page_table_for_vaddr(
+        &mut self,
+        vaddr: VirtAddr,
+        level: PageTableLevel,
+        log_level: Level,
+        message: Option<&str>,
+    ) {
+        let recursive = self.recursive_index();
+        let table = match level {
+            PageTableLevel::One => unsafe {
+                &*Self::l1_table_vaddr(
+                    recursive,
+                    vaddr.p4_index(),
+                    vaddr.p3_index(),
+                    vaddr.p2_index(),
+                )
+                .as_ptr()
+            },
+            PageTableLevel::Two => unsafe {
+                &*Self::l2_table_vaddr(recursive, vaddr.p4_index(), vaddr.p3_index()).as_ptr()
+            },
+            PageTableLevel::Three => unsafe {
+                // this is a valid
+                &*Self::l3_table_vaddr(recursive, vaddr.p4_index()).as_ptr()
+            },
+            PageTableLevel::Four => self.level_4_table(),
+        };
+
+        let TranslateResult::Mapped {
+            frame,
+            offset,
+            flags,
+        } = self.translate(VirtAddr::from_ptr(table))
+        else {
+            if let Some(message) = message {
+                warn!("{}: PageTable not mapped!", message);
+            } else {
+                warn!("PageTable not mapped!");
+            }
+            return;
+        };
+
+        assert_eq!(offset, 0);
+
+        if let Some(message) = message {
+            log::log!(
+                log_level,
+                "{}: PageTable at {:p}: Frame: {:p}, flags: {:?}",
+                message,
+                table,
+                frame.start_address(),
+                flags
+            );
+        } else {
+            log::log!(
+                log_level,
+                "PageTable at {:p}: Frame: {:p}, flags: {:?}",
+                table,
+                frame.start_address(),
+                flags
+            );
+        }
+
+        for (index, entry) in table.iter().enumerate() {
+            if entry.is_unused() {
+                continue;
+            }
+            log::log!(
+                log_level,
+                "[{index}]: PageTableEntry: {:p}, {:?}",
+                entry.addr(),
+                entry.flags()
+            );
+        }
+    }
+
     fn print_page_flags_for_vaddr(&mut self, vaddr: VirtAddr, level: Level, message: Option<&str>) {
         let frame = self.translate(vaddr);
         let (frame, offset, flags) = match &frame {

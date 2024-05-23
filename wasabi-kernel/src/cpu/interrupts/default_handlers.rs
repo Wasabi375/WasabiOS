@@ -4,7 +4,10 @@ use interrupt_fn_builder::{
 };
 use x86_64::{
     registers::control::Cr2,
-    structures::idt::{InterruptDescriptorTable, InterruptStackFrame},
+    structures::{
+        idt::{InterruptDescriptorTable, InterruptStackFrame},
+        paging::{mapper::TranslateResult, Translate},
+    },
 };
 
 panic_exception!(divide_error);
@@ -31,9 +34,24 @@ panic_exception_with_error!(security_exception);
 
 // NOTE: page_fault is pub(super) in order to set stack index
 exception_page_fault_fn!(pub(super) page_fault_handler, stack_frame, page_fault, {
+    use shared::lockcell::LockCellInternal;
+    let page_table = unsafe {
+        // FIXME this is not save, but otherwise we might deadlock and I only want to read right
+        // now, so this should be fine :shrug:
+        KERNEL_PAGE_TABLE.lockcell.get_mut().assume_init_mut()
+    };
+    let vaddr = Cr2::read().expect("Cr2 is not a valid addr");
+    if let TranslateResult::Mapped { frame, offset, flags } = page_table.translate(vaddr) {
+        log::warn!(
+            "PAGE FAULT: {:p}: frame: {:?}, offset: {:#X}, flags: {:#b}",
+            vaddr,
+            frame,
+            offset,
+            flags
+        );
+    }
     panic!(
-        "PAGE FAULT:\nAccessed Address: {:p}\nError code: {page_fault:?}\n{stack_frame:#?}",
-        Cr2::read().expect("Cr2 is not a valid addr")
+        "PAGE FAULT:\nAccessed Address: {vaddr:p}\nError code: {page_fault:?}\n{stack_frame:#?}"
     );
 });
 
@@ -52,6 +70,8 @@ macro_rules! int_handler_fn {
         }
     };
 }
+
+use crate::mem::page_table::KERNEL_PAGE_TABLE;
 
 use super::interrupt_handler;
 
