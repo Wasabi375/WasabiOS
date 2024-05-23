@@ -443,7 +443,10 @@ impl LinearMapMemRegion {
 
 #[cfg(feature = "test")]
 mod test {
-    use crate::mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator};
+    use crate::{
+        map_page,
+        mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator},
+    };
     use shared::lockcell::LockCell;
     use testing::{
         kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
@@ -539,6 +542,41 @@ mod test {
 
         t_assert_eq!(freed_entry.addr(), fake_frame.start_address());
         t_assert_eq!(freed_entry.flags(), PageTableFlags::BIT_10);
+
+        Ok(())
+    }
+    #[kernel_test]
+    fn test_alloc_and_free_lots_of_pages() -> Result<(), KernelTestError> {
+        const PAGE_COUNT: usize = 200;
+        let mut pages: [Option<Page<Size4KiB>>; PAGE_COUNT] = [None; PAGE_COUNT];
+
+        for p in &mut pages {
+            t_assert_eq!(&None, p);
+
+            let page = PageAllocator::get_kernel_allocator()
+                .lock()
+                .allocate_page::<Size4KiB>()
+                .tunwrap()?;
+            debug!("Map page {:?}", page);
+
+            unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap();
+
+            p.insert(page);
+        }
+
+        for page in &mut pages {
+            let Some(page) = page.take() else {
+                tfail!("page should always be some");
+            };
+            trace!("unmap page {:?}", page);
+
+            KERNEL_PAGE_TABLE
+                .lock()
+                .unmap(page)
+                .map_err_debug_display()
+                .tunwrap()?;
+            PageAllocator::get_kernel_allocator().lock().free_page(page);
+        }
 
         Ok(())
     }

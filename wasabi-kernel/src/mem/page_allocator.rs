@@ -327,6 +327,7 @@ impl PageAllocator {
     }
 
     /// frees a page
+    // TODO unsafe?
     pub fn free_page<S: PageSize>(&mut self, page: Page<S>) {
         if self.vaddrs.len() as usize == self.vaddrs.capacity() {
             // TODO this warning also aplies to try_allocate_page

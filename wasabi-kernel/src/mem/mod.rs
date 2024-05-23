@@ -223,7 +223,7 @@ macro_rules! map_page {
         let frame: Option<PhysFrame<$size>> = frame_alloc.alloc();
 
         frame
-            // .ok_or_else(|| PageTableMapError::FrameAllocationFailed)
+            .ok_or_else(|| PageTableMapError::FrameAllocationFailed)
             .map(|frame| map_page!($page, $size, $flags, frame, frame_alloc))
             .flatten()
     }};
