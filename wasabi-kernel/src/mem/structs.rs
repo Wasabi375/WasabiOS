@@ -269,7 +269,10 @@ mod test {
         PageSize, PageTableFlags, Size4KiB, Translate,
     };
 
-    use crate::mem::{page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE, VirtAddrExt};
+    use crate::mem::{
+        page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE,
+        page_table_debug_ext::PageTableDebugExt, VirtAddrExt,
+    };
 
     use super::Unmapped;
 
@@ -288,8 +291,6 @@ mod test {
 
         Ok(())
     }
-
-    use crate::mem::page_table::RecursivePageTableExt;
 
     #[kernel_test]
     fn map_unmap_guarded_page() -> Result<(), KernelTestError> {
@@ -314,11 +315,6 @@ mod test {
             // with clearing the mapping from the page table
             let mut page_table = KERNEL_PAGE_TABLE.lock();
             let addr_in_page = mapped.0.first_page.start_address() + 50;
-
-            page_table.print_page_flags_for_vaddr(
-                mapped.0.head_guard.unwrap().0.start_address(),
-                Some("Guard page"),
-            );
 
             // assert that the mapping is valid
             match page_table.translate(addr_in_page) {

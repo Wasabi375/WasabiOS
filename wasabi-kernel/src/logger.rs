@@ -68,11 +68,20 @@ pub unsafe fn init() {
         .with_module_level("wasabi_test", LevelFilter::Info)
         .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
         .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
-        //.with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
-        //.with_module_level("GlobalAlloc", LevelFilter::Trace)
+        .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
+        .with_module_level("GlobalAlloc", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
+
+    #[cfg(feature = "test")]
+    {
+        // adjust log levels for tests
+        dispatch_logger = dispatch_logger
+            .with_module_level("wasabi_kernel::mem::page_table::test", LevelFilter::Debug)
+            // comment to move ; to separate line - easy uncomment of module log levels
+            ;
+    }
 
     let mut serial_logger = RefLogger::new(&SERIAL1);
     setup_logger_module_rename(&mut serial_logger);

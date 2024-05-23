@@ -4,11 +4,18 @@ pub mod frame_allocator;
 pub mod kernel_heap;
 pub mod page_allocator;
 pub mod page_table;
+pub mod page_table_debug_ext;
+pub mod structs;
 
+use log::Level;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::{boot_info, mem::page_table::KERNEL_PAGE_TABLE, prelude::LockCell};
+use crate::{
+    boot_info,
+    mem::{page_table::KERNEL_PAGE_TABLE, page_table_debug_ext::PageTableDebugExt},
+    prelude::LockCell,
+};
 use bootloader_api::{
     info::{FrameBuffer, MemoryRegionKind},
     BootInfo,
@@ -325,38 +332,48 @@ fn print_debug_info(
     recursive_page_table: &mut RecursivePageTable,
     bootloader_page_table_vaddr: VirtAddr,
 ) {
-    recursive_page_table.print_all_mapped_regions(true);
+    recursive_page_table.print_all_mapped_regions(true, Level::Info);
 
     // TODO this is unsafe
     let boot_info = unsafe { boot_info() };
 
-    recursive_page_table
-        .print_page_flags_for_vaddr(bootloader_page_table_vaddr, Some("Page Table L4"));
+    recursive_page_table.print_page_flags_for_vaddr(
+        bootloader_page_table_vaddr,
+        Level::Info,
+        Some("Page Table L4"),
+    );
 
-    recursive_page_table
-        .print_page_flags_for_vaddr(VirtAddr::new(0x8000019540), Some("Kernel entry point"));
+    recursive_page_table.print_page_flags_for_vaddr(
+        VirtAddr::new(0x8000019540),
+        Level::Info,
+        Some("Kernel entry point"),
+    );
     recursive_page_table.print_page_flags_for_vaddr(
         VirtAddr::new(boot_info as *const BootInfo as u64),
+        Level::Info,
         Some("Boot Info"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
         VirtAddr::new(boot_info.framebuffer.as_ref().unwrap() as *const FrameBuffer as u64),
+        Level::Info,
         Some("Frame Buffer Info"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
         VirtAddr::new(boot_info.framebuffer.as_ref().unwrap().buffer().as_ptr() as u64),
+        Level::Info,
         Some("Frame Buffer Start"),
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
         VirtAddr::new(*boot_info.rsdp_addr.as_ref().unwrap()),
+        Level::Info,
         Some("RSDP"),
     );
 
     let rip = read_rip();
-    recursive_page_table.print_page_flags_for_vaddr(rip, Some("RDI"));
+    recursive_page_table.print_page_flags_for_vaddr(rip, Level::Info, Some("RDI"));
 
     let memory_regions = &boot_info.memory_regions;
 
