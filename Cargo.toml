@@ -48,12 +48,12 @@ syn = { version = "2.0.16", features = ["full"] }
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
 walkdir = "2.5"
-x86_64 = { version = "0.15", git = "https://github.com/Wasabi375/x86_64", branch = "page_not_present" }
+x86_64 = { version = "0.15", path = "/home/burkhard/programming/projects/x86_64" }
 
 # latin-1-suplement is required for german Umlauts. unicode-specials contains the replacement character �
 noto-sans-mono-bitmap = { version = "0.2.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
 
-bootloader = { version = "0.11", default-features = false, features = ["uefi"] }
+bootloader = { path = "/home/burkhard/programming/forks/bootloader", version = "0.11", default-features = false, features = ["uefi"] }
 bootloader_api = { version = "0.11" }
 
 [profile.dev]

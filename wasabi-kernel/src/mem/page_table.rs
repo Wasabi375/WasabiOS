@@ -474,10 +474,7 @@ mod test {
             .map_err_debug_display()
             .tunwrap()?;
 
-        let freed_frame = page_table
-            .unmap_ignore_present(page)
-            .map_err_debug_display()
-            .tunwrap()?;
+        let freed_frame = page_table.clear(page).map_err_debug_display().tunwrap()?;
 
         let UnmappedFrame::NotPresent { entry } = freed_frame else {
             tfail!("Expected to unmap not present page");
@@ -531,10 +528,7 @@ mod test {
         }
         log::info!("flags updated");
 
-        let freed_frame = page_table
-            .unmap_ignore_present(page)
-            .map_err_debug_display()
-            .tunwrap()?;
+        let freed_frame = page_table.clear(page).map_err_debug_display().tunwrap()?;
 
         let UnmappedFrame::NotPresent { entry: freed_entry } = freed_frame else {
             tfail!("Expected to unmap not present page");
@@ -545,9 +539,10 @@ mod test {
 
         Ok(())
     }
+
     #[kernel_test]
-    fn test_alloc_and_free_lots_of_pages() -> Result<(), KernelTestError> {
-        const PAGE_COUNT: usize = 200;
+    fn test_map_lots_of_pages() -> Result<(), KernelTestError> {
+        const PAGE_COUNT: usize = 1000;
         let mut pages: [Option<Page<Size4KiB>>; PAGE_COUNT] = [None; PAGE_COUNT];
 
         for p in &mut pages {
@@ -557,11 +552,11 @@ mod test {
                 .lock()
                 .allocate_page::<Size4KiB>()
                 .tunwrap()?;
-            debug!("Map page {:?}", page);
+            trace!("Map page {:?}", page);
 
-            unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap();
+            unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap()?;
 
-            p.insert(page);
+            *p = Some(page);
         }
 
         for page in &mut pages {
@@ -570,11 +565,54 @@ mod test {
             };
             trace!("unmap page {:?}", page);
 
-            KERNEL_PAGE_TABLE
+            let (_, flush) = KERNEL_PAGE_TABLE
                 .lock()
                 .unmap(page)
                 .map_err_debug_display()
                 .tunwrap()?;
+            flush.flush();
+            PageAllocator::get_kernel_allocator().lock().free_page(page);
+        }
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_map_specific_pages() -> Result<(), KernelTestError> {
+        const START_ADDRS: &[u64] = &[0x2000];
+        let mut pages: [Option<Page<Size4KiB>>; START_ADDRS.len()] = [None; START_ADDRS.len()];
+
+        for (i, p) in &mut pages.iter_mut().enumerate() {
+            t_assert_eq!(&None, p);
+
+            let vaddr = VirtAddr::new(START_ADDRS[i]);
+            let page = Page::from_start_address(vaddr)
+                .map_err_debug_display()
+                .tunwrap()?;
+
+            PageAllocator::get_kernel_allocator()
+                .lock()
+                .try_allocate_page(page)
+                .tunwrap()?;
+            debug!("Map page {:?}", page);
+
+            unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap()?;
+
+            *p = Some(page);
+        }
+
+        for page in &mut pages {
+            let Some(page) = page.take() else {
+                tfail!("page should always be some");
+            };
+            trace!("unmap page {:?}", page);
+
+            let (_, flush) = KERNEL_PAGE_TABLE
+                .lock()
+                .unmap(page)
+                .map_err_debug_display()
+                .tunwrap()?;
+            flush.flush();
             PageAllocator::get_kernel_allocator().lock().free_page(page);
         }
 

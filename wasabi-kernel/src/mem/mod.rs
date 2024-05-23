@@ -4,7 +4,6 @@ pub mod frame_allocator;
 pub mod kernel_heap;
 pub mod page_allocator;
 pub mod page_table;
-pub mod structs;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};

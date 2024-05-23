@@ -180,13 +180,13 @@ impl Mapped<GuardedPages<Size4KiB>> {
 
         if let Some(guard) = pages.head_guard {
             assert_matches!(
-                page_table.unmap_ignore_present(guard.0)?,
+                page_table.clear(guard.0)?,
                 UnmappedFrame::NotPresent { entry: _ }
             );
         }
         if let Some(guard) = pages.tail_guard {
             assert_matches!(
-                page_table.unmap_ignore_present(guard.0)?,
+                page_table.clear(guard.0)?,
                 UnmappedFrame::NotPresent { entry: _ }
             );
         }
