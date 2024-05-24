@@ -145,13 +145,13 @@ impl Ipi {
 
 #[cfg(feature = "test")]
 mod test {
-    use testing::{kernel_test, KernelTestError};
+    use testing::{kernel_test, t_assert_eq, KernelTestError};
 
     use super::*;
 
     #[kernel_test]
     fn test_ipi_encodings() -> Result<(), KernelTestError> {
-        assert_eq!(
+        t_assert_eq!(
             Ipi {
                 mode: DeliveryMode::INIT,
                 destination: Destination::AllExcludingSelf,
@@ -159,7 +159,7 @@ mod test {
             .encode(),
             (0x000C4500, 0)
         );
-        assert_eq!(
+        t_assert_eq!(
             Ipi {
                 mode: DeliveryMode::SIPI(0xab),
                 destination: Destination::AllExcludingSelf,
@@ -167,7 +167,7 @@ mod test {
             .encode(),
             (0xc06ab, 0)
         );
-        assert_eq!(
+        t_assert_eq!(
             Ipi {
                 mode: DeliveryMode::Fixed(InterruptVector::Test),
                 destination: Destination::AllIncludingSelf,
