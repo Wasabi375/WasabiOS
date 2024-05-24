@@ -175,6 +175,10 @@ pub fn reserve_pages(allocator: &mut PageAllocator) {
     }
 }
 
+/// Start all application processors.
+///
+/// After this function exits, the kernel is executed on all cores
+/// in the machine
 // TODO temp
 #[allow(unreachable_code, unused_mut, unused_variables)]
 pub fn ap_startup() {
@@ -287,7 +291,7 @@ impl ApStack {
 
     fn alloc() -> Result<Self, ApStackError> {
         trace!("Allocate ap stack");
-        let mut pages: Unmapped<_> = PageAllocator::get_kernel_allocator()
+        let pages: Unmapped<_> = PageAllocator::get_kernel_allocator()
             .lock()
             .allocate_guarded_pages(DEFAULT_STACK_PAGE_COUNT, true, true)
             .map_err(ApStackError::from)?
@@ -605,7 +609,7 @@ impl SipiPayload<Construction> {
     }
 
     fn set_page_table(&mut self) {
-        let mut page_table: u64 = 0;
+        let page_table: u64;
         unsafe {
             // Safety: reading cr3 is safe in kernel
             asm! {

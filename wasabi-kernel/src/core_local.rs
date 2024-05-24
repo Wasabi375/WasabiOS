@@ -12,7 +12,7 @@ use crate::{test_locals, testing::core_local::TestCoreLocals};
 use crate::{
     cpu::{self, apic::Apic, cpuid},
     locals,
-    prelude::{TicketLock, UnwrapTicketLock},
+    prelude::UnwrapTicketLock,
 };
 use alloc::boxed::Box;
 use core::{

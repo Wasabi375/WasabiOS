@@ -3,18 +3,14 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, log, trace, warn};
 
-use crate::{prelude::UnwrapTicketLock, todo_error, todo_warn};
-use core::fmt::Write;
-use staticvec::StaticString;
+use crate::prelude::UnwrapTicketLock;
 use thiserror::Error;
 use x86_64::{
     structures::paging::{
-        mapper::{MapToError, MappedFrame, Translate, TranslateResult},
-        page_table::{FrameError, PageTableEntry},
-        Page, PageSize, PageTable, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable,
-        Size1GiB, Size2MiB, Size4KiB,
+        mapper::MapToError, Page, PageTable, PageTableFlags, PageTableIndex, PhysFrame,
+        RecursivePageTable, Size1GiB, Size2MiB, Size4KiB,
     },
-    PhysAddr, VirtAddr,
+    VirtAddr,
 };
 
 /// kernel internal page table flags
@@ -22,6 +18,11 @@ pub trait PageTableKernelFlags {
     /// PageTableFlag denoting a guard page
     const GUARD: PageTableFlags = PageTableFlags::BIT_9;
 
+    /// A combination of all PageTableFlags marking a page as used
+    ///
+    /// Some flags like e.g. `WRITABLE` onyl have meaning in combination
+    /// with other flags. Others like `PRESENT` or `GUARD` can be used on
+    /// their own. A page with those flags can not be repurposed.
     const PRESENT_OR_USED: PageTableFlags = {
         let mut flags = PageTableFlags::PRESENT;
         flags = flags.union(PageTableFlags::GUARD);
@@ -209,9 +210,12 @@ mod test {
         kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
         TestUnwrapExt,
     };
-    use x86_64::structures::paging::{
-        mapper::{MappedFrame, Mapper, TranslateResult, UnmappedFrame},
-        Translate,
+    use x86_64::{
+        structures::paging::{
+            mapper::{MappedFrame, Mapper, TranslateResult, UnmappedFrame},
+            Translate,
+        },
+        PhysAddr,
     };
 
     use super::*;

@@ -83,6 +83,7 @@ pub struct Apic {
     /// the base vaddr of the Apic, used to access apic registers
     base: VirtAddr,
 
+    /// the timer of this APIC
     timer: TimerData,
 }
 
@@ -154,6 +155,7 @@ impl Apic {
     }
 
     /// calculate [Volatile] low and high for the given [Offset]
+    #[allow(dead_code)]
     fn offset64(&self, offset: Offset) -> (Volatile<&u32, ReadOnly>, Volatile<&u32, ReadOnly>) {
         let vaddr_low = self.base + offset as u64;
         let vaddr_high = vaddr_low + 0x10;
@@ -198,7 +200,7 @@ impl Apic {
 
     /// Read the status of the InterruptCommand register
     pub fn ipi_status(&mut self) -> ipi::DeliveryStatus {
-        let (low, high) = self.offset64_mut(Offset::InterruptCommand);
+        let (low, _high) = self.offset64_mut(Offset::InterruptCommand);
         low.read().get_bit(IPI_STATUS_BIT).into()
     }
 

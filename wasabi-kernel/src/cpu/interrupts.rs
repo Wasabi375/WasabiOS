@@ -70,8 +70,10 @@ pub fn init() {
     }
 }
 
+/// The different interrupt vectors used by the kernel
 #[derive(U8Enum, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[allow(missing_docs)]
 pub enum InterruptVector {
     Timer = 55,
     Test = 255,

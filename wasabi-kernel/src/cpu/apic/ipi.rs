@@ -1,3 +1,5 @@
+//! This module contains functionality for encoding and sending IPIs
+
 use bit_field::BitField;
 use log::trace;
 use shared_derive::U8Enum;
@@ -62,16 +64,32 @@ pub enum Destination {
     AllExcludingSelf,
 }
 
+/// Represents a inter processor interrupt
+///
+/// This struct can be used to build messages that are sent to
+/// other (and/or this) processors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ipi {
+    /// the delviery mode of the IPI
     pub mode: DeliveryMode,
+    /// the destination for the IPI
     pub destination: Destination,
 }
 
-const IPI_MODE_BITS: usize = 8;
+/// the bits used to encode the [DeliveryMode] in an IPI
+const IPI_DELIVERY_MODE_BITS: usize = 8;
+/// the bit used to encode the current delivery status of the IPI
+///
+/// this bit is set to 1 if there is an IPI pending.
+/// New ipis should only be send when this is low.
 pub(super) const IPI_STATUS_BIT: usize = 12;
+/// the bit used to encode the assert value of an INIT IPI.
+///
+/// Should be set to 1 otherwise
 const IPI_ASSERT_BIT: usize = 14;
+/// the bits used to encode the IPI destination using a shorthand
 const IPI_DEST_SHORT_BITS: usize = 18;
+/// the bits used to encode the IPI destination if the shorthand is not used
 const IPI_DEST_BITS: usize = 56 - 32;
 
 impl Ipi {
@@ -105,7 +123,7 @@ impl Ipi {
                 0b110
             }
         };
-        low |= mode << IPI_MODE_BITS;
+        low |= mode << IPI_DELIVERY_MODE_BITS;
 
         let dest_short = match self.destination {
             Destination::Target(dest) => {

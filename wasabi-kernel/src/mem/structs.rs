@@ -308,7 +308,7 @@ mod test {
             // lock page table for asserts.
             // Don't hold onto it for unmapping, as that might dead lock
             // with clearing the mapping from the page table
-            let mut page_table = KERNEL_PAGE_TABLE.lock();
+            let page_table = KERNEL_PAGE_TABLE.lock();
             let addr_in_page = mapped.0.first_page.start_address() + 50;
 
             // assert that the mapping is valid
