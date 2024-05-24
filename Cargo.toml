@@ -35,6 +35,7 @@ edition = "2021"
 [workspace.dependencies]
 # TODO remove lazy_static as a dependency, in order to get rid of the external spin-lock
 bit_field = "0.10.2"
+#  TODO use upstream once new version is released
 derive_builder = { version = "0.20.0", git = "https://github.com/Wasabi375/rust-derive-builder", branch = "owned_custom_default", default-features = false}
 iced-x86 = { version = "1.21", default-features = false, features = [ "no_std", "nasm", "decoder" ] }
 itertools = { version = "0.10.5", default-features = false, features = ["use_alloc"] }
@@ -47,14 +48,18 @@ quote = "1.0.27"
 static_assertions = "1.1"
 syn = { version = "2.0.16", features = ["full"] }
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
+# TODO: why am I using my fork?
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
 walkdir = "2.5"
+# TODO use upstream once new version is released
 x86_64 = { version = "0.15", path = "/home/burkhard/programming/projects/x86_64" }
 
 # latin-1-suplement is required for german Umlauts. unicode-specials contains the replacement character �
 noto-sans-mono-bitmap = { version = "0.2.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
 
+# TODO use upstream once new version is released
 bootloader = { git = "https://github.com/Wasabi375/bootloader", branch = "page_table_bug", version = "0.11", default-features = false, features = ["uefi"] }
+# bootloader = { version = "0.11.8", default-features = false, features = ["uefi"] }
 bootloader_api = { version = "0.11" }
 
 [profile.dev]

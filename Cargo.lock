@@ -269,7 +269,7 @@ dependencies = [
 [[package]]
 name = "bootloader"
 version = "0.11.7"
-source = "git+https://github.com/Wasabi375/bootloader?branch=page_table_bug#350adcdb86e71523da929d30d65b95bb22abaa5f"
+source = "git+https://github.com/Wasabi375/bootloader?branch=page_table_bug#5e6bfe8656d5875207873c3e0314cdf3dbe61ed2"
 dependencies = [
  "anyhow",
  "async-process",
@@ -286,7 +286,7 @@ dependencies = [
 [[package]]
 name = "bootloader-boot-config"
 version = "0.11.7"
-source = "git+https://github.com/Wasabi375/bootloader?branch=page_table_bug#350adcdb86e71523da929d30d65b95bb22abaa5f"
+source = "git+https://github.com/Wasabi375/bootloader?branch=page_table_bug#5e6bfe8656d5875207873c3e0314cdf3dbe61ed2"
 dependencies = [
  "serde",
 ]

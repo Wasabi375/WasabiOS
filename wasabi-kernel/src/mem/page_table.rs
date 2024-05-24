@@ -304,45 +304,13 @@ mod test {
     }
 
     #[kernel_test]
-    fn test_map_lots_of_pages() -> Result<(), KernelTestError> {
-        const PAGE_COUNT: usize = 1000;
-        let mut pages: [Option<Page<Size4KiB>>; PAGE_COUNT] = [None; PAGE_COUNT];
-
-        for p in &mut pages {
-            t_assert_eq!(&None, p);
-
-            let page = PageAllocator::get_kernel_allocator()
-                .lock()
-                .allocate_page::<Size4KiB>()
-                .tunwrap()?;
-            trace!("Map page {:?}", page);
-
-            unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap()?;
-
-            *p = Some(page);
-        }
-
-        for page in &mut pages {
-            let Some(page) = page.take() else {
-                tfail!("page should always be some");
-            };
-            trace!("unmap page {:?}", page);
-
-            let (_, _, flush) = KERNEL_PAGE_TABLE
-                .lock()
-                .unmap(page)
-                .map_err_debug_display()
-                .tunwrap()?;
-            flush.flush();
-            PageAllocator::get_kernel_allocator().lock().free_page(page);
-        }
-
-        Ok(())
-    }
-
-    #[kernel_test]
     fn test_map_specific_pages() -> Result<(), KernelTestError> {
-        const START_ADDRS: &[u64] = &[0x46000];
+        const START_ADDRS: &[u64] = &[
+            // this vaddr should use the same l3 page table as a readonyl
+            // page from the bootloader which caused a page_fault:
+            // See: https://github.com/rust-osdev/bootloader/issues/443
+            0xbe296000,
+        ];
         let mut pages: [Option<Page<Size4KiB>>; START_ADDRS.len()] = [None; START_ADDRS.len()];
 
         for (i, p) in &mut pages.iter_mut().enumerate() {
@@ -359,6 +327,7 @@ mod test {
                 .tunwrap()?;
 
             {
+                debug!("Map page {:?}", page);
                 let mut page_table = KERNEL_PAGE_TABLE.lock();
                 page_table.print_table_entries_for_vaddr(
                     page.start_address(),
@@ -392,7 +361,6 @@ mod test {
                 );
             }
 
-            debug!("Map page {:?}", page);
             unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap()?;
 
             *p = Some(page);
@@ -411,6 +379,57 @@ mod test {
                 .tunwrap()?;
             flush.flush();
             PageAllocator::get_kernel_allocator().lock().free_page(page);
+        }
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_map_lots_of_pages() -> Result<(), KernelTestError> {
+        const PAGE_COUNT: usize = 1000;
+        let mut pages: [Option<Page<Size4KiB>>; PAGE_COUNT] = [None; PAGE_COUNT];
+
+        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
+
+        for (idx, p) in pages.iter_mut().enumerate() {
+            t_assert_eq!(&None, p);
+
+            let page = page_alloc.allocate_page::<Size4KiB>().tunwrap()?;
+            trace!("Map page [{}] {:?}", idx, page);
+
+            let frame = frame_alloc.alloc().tunwrap()?;
+
+            unsafe {
+                page_table.map_to_with_table_flags(
+                    page,
+                    frame,
+                    PageTableFlags::PRESENT,
+                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+                    frame_alloc.as_mut(),
+                )
+            }
+            .map_err_debug_display()
+            .tunwrap()?
+            .flush();
+
+            *p = Some(page);
+        }
+
+        for page in &mut pages {
+            let Some(page) = page.take() else {
+                tfail!("page should always be some");
+            };
+            trace!("unmap page {:?}", page);
+
+            let (frame, _, flush) = page_table.unmap(page).map_err_debug_display().tunwrap()?;
+            flush.flush();
+            unsafe {
+                // Safety: frame and page no longer accessable
+                page_alloc.free_page(page);
+                frame_alloc.free(frame);
+            }
         }
 
         Ok(())
