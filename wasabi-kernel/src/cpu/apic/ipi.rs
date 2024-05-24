@@ -76,6 +76,8 @@ const IPI_DEST_BITS: usize = 56 - 32;
 
 impl Ipi {
     /// Encode the ipi into (low, high) u32s
+    ///
+    /// See Intel Vol 3. Chap 11.6.1
     pub fn encode(&self) -> (u32, u32) {
         let mut low: u32 = 0;
         let mut high: u32 = 0;
@@ -165,7 +167,7 @@ mod test {
                 destination: Destination::AllExcludingSelf,
             }
             .encode(),
-            (0xc06ab, 0)
+            (0xc46ab, 0)
         );
         t_assert_eq!(
             Ipi {
@@ -173,7 +175,7 @@ mod test {
                 destination: Destination::AllIncludingSelf,
             }
             .encode(),
-            (0x800ff, 0)
+            (0x840ff, 0)
         );
 
         Ok(())
