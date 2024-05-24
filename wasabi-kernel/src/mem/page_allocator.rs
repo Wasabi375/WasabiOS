@@ -332,6 +332,9 @@ impl PageAllocator {
     }
 
     // FIXME: free should be unsafe, right??
+    // it is fine for unmap to be safe, because worst case we create a page fault
+    // there, but free means we can reuse this page so it needs to be unsafe or
+    // we can create unintended aliases
 
     /// frees a page
     // TODO unsafe?

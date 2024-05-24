@@ -65,13 +65,13 @@ pub unsafe fn init() {
         // .with_level(LevelFilter::Info)
         // .with_level(LevelFilter::Trace)
         // .with_module_level("wasabi_kernel", LevelFilter::Trace)
-        .with_module_level("wasabi_test", LevelFilter::Info)
-        .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
-        .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
-        .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
-        .with_module_level("wasabi_kernel::mem::kernel_heap", LevelFilter::Info)
+        // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
+        // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
+        // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
+        // .with_module_level("wasabi_kernel::mem::kernel_heap", LevelFilter::Info)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
+        .with_module_level("wasabi_kernel::cpu::apic::multiprocessor", LevelFilter::Warn)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
 
@@ -79,7 +79,8 @@ pub unsafe fn init() {
     {
         // adjust log levels for tests
         dispatch_logger = dispatch_logger
-            .with_module_level("wasabi_kernel::mem::page_table::test", LevelFilter::Debug)
+            .with_module_level("wasabi_test", LevelFilter::Info)
+            .with_module_level("wasabi_kernel::mem::page_table::test", LevelFilter::Info)
             // comment to move ; to separate line - easy uncomment of module log levels
             ;
     }

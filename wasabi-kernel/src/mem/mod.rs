@@ -252,6 +252,7 @@ macro_rules! map_page {
         #[allow(unused_imports)]
         use x86_64::structures::paging::{
             mapper::{Mapper, RecursivePageTable},
+            page_table::PageTableFlags,
             Page, PhysFrame,
         };
         #[allow(unused_imports)]
@@ -261,9 +262,10 @@ macro_rules! map_page {
 
         let page: Page<$size> = $page;
         let frame: PhysFrame<$size> = $frame;
-        // FIXME: this sets parent table flags as user accessible. We don't want that in the kernel
+        let table_flags: PageTableFlags =
+            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
         kernel_page_table
-            .map_to(page, frame, $flags, $frame_alloc)
+            .map_to_with_table_flags(page, frame, $flags, table_flags, $frame_alloc)
             .map_err(|e| PageTableMapError::from(e))
             .map(|flusher| flusher.flush())
     }};
