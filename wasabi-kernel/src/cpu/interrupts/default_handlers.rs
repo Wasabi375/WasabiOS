@@ -43,7 +43,7 @@ exception_page_fault_fn!(pub(super) page_fault_handler, stack_frame, page_fault,
     let vaddr = Cr2::read().expect("Cr2 is not a valid addr");
     if let TranslateResult::Mapped { frame, offset, flags } = page_table.translate(vaddr) {
         log::warn!(
-            "PAGE FAULT: {:p}: frame: {:?}, offset: {:#X}, flags: {:#b}",
+            "PAGE FAULT: {:p}: frame: {:?}, offset: {:#X}, flags: {:?}",
             vaddr,
             frame,
             offset,
