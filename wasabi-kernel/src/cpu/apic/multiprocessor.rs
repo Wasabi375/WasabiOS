@@ -39,7 +39,7 @@ use crate::{
         MemError,
     },
     time::{self, Duration},
-    DEFAULT_STACK_PAGE_COUNT, DEFAULT_STACK_SIZE,
+    todo_warn, DEFAULT_STACK_PAGE_COUNT, DEFAULT_STACK_SIZE,
 };
 
 /// The start phys/virt addr for the ap startup trampoline.
@@ -175,6 +175,8 @@ pub fn reserve_pages(allocator: &mut PageAllocator) {
     }
 }
 
+// TODO temp
+#[allow(unreachable_code, unused_mut, unused_variables)]
 pub fn ap_startup() {
     info!("Starting APs");
     debug!("ap trampoline size: {}", BOOTSTRAP_CODE.len());
@@ -193,6 +195,9 @@ pub fn ap_startup() {
     assert_eq!(1, get_ready_core_count(Ordering::SeqCst));
 
     let mut stack = ApStack::alloc().expect("failed to alloc ap stack");
+
+    todo_warn!("AP-startup not working");
+    return;
 
     {
         trace!("Sending INIT SIPI SIPI: {:#x}", sipi.payload());
