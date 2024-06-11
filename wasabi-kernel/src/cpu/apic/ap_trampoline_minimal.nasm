@@ -1,59 +1,67 @@
 ; Trampoline for APs
-ORG 0x0000
-SECTION .text
+ORG 0x8000
 USE16
+SECTION .text
 
-nop
-ALIGN 32, nop
-entry:
-    cld
+startup_ap:
     cli
-
-    ; Magic sequence so that we can overwrite cx with a segment value
-    ; that actually describes our code position in memory
-    nop
-    nop
-    mov cx, 0xabcd
-    nop
-    nop
-
-    mov ds, cx
-    
-    ; calculate trampoline base addr based on ds and store in edx
-    mov edx, ecx
-    shl edx, 4
-
-    ; Set the stack to an invalid address for now. We'll figure out our stack later.
     xor ax, ax
-    mov sp, ax
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    
+    ; Set the stack to an invalid address for now. We'll figure out our stack later.
+    mov sp, 0
 
-    ; set code segment for indirect far jump
-    mov ax, gdt_protected.code
-    mov [ds:protected_mode_ap_far_jmp + 0], ax
-    ; set eip for indirect far jump
-    mov eax, edx
-    add eax, protected_mode_ap
-    mov [ds:protected_mode_ap_far_jmp + 2], eax
+    ; cr3 holds pointer to PML4
+    mov edi, [trampoline.page_table]
+    mov cr3, edi
 
-    mov ebx, eax
 
-    lgdt [ds:gdtr_protected]
-
-    ; Enter protected mode, without paging. 
-    ; only enable paging when we enter long mode
-    ; 0: Protected Mode
+    ; enable FPU
     mov eax, cr0
-    or eax, 1 
-    mov cr0, eax
+    and al, 11110011b ; Clear task switched (3) and emulation (2)
+    or al, 00100010b ; Set numeric error (5) monitor co-processor (1)
+    mov cr0, eax    ; Initialize the FPU
 
-    ; Far jump into protected mode
-    jmp far dword [protected_mode_ap_far_jmp]
+    ; 9: FXSAVE/FXRSTOR
+    ; 7: Page Global
+    ; 5: Page Address Extension
+    ; 4: Page Size Extension
+    mov eax, cr4
+    or eax, 1 << 9 | 1 << 7 | 1 << 5 | 1 << 4
+    mov cr4, eax
 
+    ; init floating point registers
+    fninit
 
-ALIGN 8, nop
-USE32
-protected_mode_ap:
-    hlt
+    ; load protected mode GDT
+    lgdt [gdtr]
+ 
+    ; mask to disable some cr0 bits
+    mov eax, 1 << 30 | 1 << 29
+    not eax
+
+    ; enable long mode
+    mov ecx, 0xC0000080               ; Read from the EFER MSR.
+    rdmsr
+    or eax,  1 << 8 | 1 << 11         ; Set the Long-Mode-Enable and NXE bit.
+    wrmsr
+
+    ; enabling paging and protection simultaneously
+    mov ebx, cr0
+    and ebx, eax
+    ; 31: Paging
+    ; 16: write protect kernel
+    ; 0: Protected Mode
+    or ebx, 1 << 31  | 1
+    mov cr0, ebx    ;; This instruction here cause a tripple fault
+    
+    ; far jump to enable Long Mode and load CS with 64 bit segment
+    jmp gdt.kernel_code:long_mode_ap
+
+USE64
+long_mode_ap:
 
 halt_loop:
     cli
@@ -62,37 +70,32 @@ halt_loop:
     hlt
     hlt
 
-ALIGN 64, nop
+
+
 SECTION .data
 
-; temporary GDT for protected mode
-; see https://wiki.osdev.org/Global_descriptor_table
-gdt_protected:
-.null dq 0
-.code equ $ - gdt_protected
-    dw 0xffff       ; limit
-    dw 0x0          ; base
-    db 0x0          ; base
-    db 0b10011010   ; access bits: present + code segment + excecut + readable + accessed
-    db 0b11001111   ; 4bit flags: 4KiB limit + protected - 4bit limit
-    db 0x0          ; base
-.data equ $ - gdt_protected
-    dw 0xffff       ; limit
-    dw 0x0          ; base
-    db 0x0          ; base
-    db 0b10010010   ; access bits: present + code segment + excecut + readable + accessed
-    db 0b11001111   ; 4bit flags: 4KiB limit + protected - 4bit limit
-    db 0x0          ; base
-.end equ $ - gdt_protected
-ALIGN 4, db 0
-gdtr_protected:
-    dw gdt_protected.end - 1     ; size
-    dd gdt_protected ; offset
+gdt:
+.null equ $ - gdt
+    dq 0
+.kernel_code equ $ - gdt
+    ; 53: Long mode
+    ; 47: Present
+    ; 44: Code/data segment
+    ; 43: Executable
+    ; 41: Readable code segment
+    dq 0x00209A0000000000             ; 64-bit code descriptor (exec/read).
+.kernel_data equ $ - gdt
+    ; 47: Present
+    ; 44: Code/data segment
+    ; 41: Writable data segment
+    dq 0x0000920000000000             ; 64-bit data descriptor (read/write).
 
+.end equ $ - gdt
 ALIGN 4, db 0
-protected_mode_ap_far_jmp:
-    times 6 db 0xab
-    times 2 db 0x0
+gdtr:
+    dw gdt.end - 1 ; size
+    dq gdt  ; offset
+
 
 ALIGN 8, nop
 trampoline:

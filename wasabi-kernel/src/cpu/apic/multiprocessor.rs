@@ -6,7 +6,7 @@ use core::{
     hint::spin_loop,
     marker::PhantomData,
     mem,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use shared::{
     lockcell::LockCell,
@@ -15,7 +15,10 @@ use shared::{
 use static_assertions::const_assert;
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
+    structures::paging::{
+        page_table::{PageTableEntry, PageTableLevel},
+        Page, PageSize, PageTableFlags, PhysFrame, Size4KiB,
+    },
     PhysAddr, VirtAddr,
 };
 
@@ -33,33 +36,16 @@ use crate::{
     },
     locals, map_page,
     mem::{
-        frame_allocator::{PhysAllocator, WasabiFrameAllocator},
+        frame_allocator::PhysAllocator,
         page_allocator::PageAllocator,
+        page_table::KERNEL_PAGE_TABLE,
+        page_table_debug_ext::PageTableDebugExt,
         structs::{GuardedPages, Mapped, Unmapped},
         MemError,
     },
     time::{self, Duration},
-    todo_warn, DEFAULT_STACK_PAGE_COUNT, DEFAULT_STACK_SIZE,
+    DEFAULT_STACK_PAGE_COUNT, DEFAULT_STACK_SIZE,
 };
-
-/// The start phys/virt addr for the ap startup trampoline.
-///
-/// 0 represents an empty state.
-///
-/// # Safety:
-///
-/// When changing this value the following guarantees must be held:
-///     * It must either be set to 0
-///     * When setting it to !0 the Page and Frame of size 4KiB must
-///         be reserved und unused
-static AP_STARTUP_VECTOR: AtomicU64 = AtomicU64::new(0);
-
-/// The ptr to the end of the stack for the next ap to boot
-///
-/// This is 0 when there is no stack available for an ap to boot.
-/// Each ap will loop until this is a valid ptr at which point they
-/// will use a atomic cmpexchg to take this and replace it with a 0.
-static AP_STACK_PTR: AtomicU64 = AtomicU64::new(0);
 
 mod bsp_ctrl_regs {
     use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -85,6 +71,8 @@ mod bsp_ctrl_regs {
         BSP_CR4.store(Cr4::read_raw(), Ordering::Release);
         BSP_EFER.store(Efer::read_raw(), Ordering::Release);
         BSP_REGS_STORED.store(true, Ordering::SeqCst);
+        trace!("cr0: {:?}", Cr0::read());
+        trace!("cr4: {:?}", Cr0::read());
     }
 
     /// Restore control registers from bsp to ap
@@ -93,7 +81,6 @@ mod bsp_ctrl_regs {
     /// The caller must guarantee that the bsp regs read with [store_bsp_regs]
     /// are still valid
     pub unsafe fn set_regs() {
-        trace!("restoring bsp ctrl regs to ap");
         // Safety:
         //  we just restore the values used in bsp so this should be safe,
         //  assuming they are not stale.
@@ -103,105 +90,103 @@ mod bsp_ctrl_regs {
             Cr4::write_raw(BSP_CR4.load(Ordering::Acquire));
             Efer::write_raw(BSP_EFER.load(Ordering::Acquire));
         }
+        trace!("restoring bsp ctrl regs to ap");
     }
 }
 
-const BOOTSTRAP_CODE: &[u8] = include_bytes!(concat!(
+/// The ptr to the end of the stack for the next ap to boot
+///
+/// This is 0 when there is no stack available for an ap to boot.
+/// Each ap will loop until this is a valid ptr at which point they
+/// will use a atomic cmpexchg to take this and replace it with a 0.
+static AP_STACK_PTR: AtomicU64 = AtomicU64::new(0);
+
+static AP_FRAME_ALLOCATED: AtomicBool = AtomicBool::new(false);
+static AP_PAGE_ALLOCATED: AtomicBool = AtomicBool::new(false);
+
+const TRAMPOLINE_CODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/src/cpu/apic/ap_trampoline_minimal.bin"
 ));
-const_assert!(BOOTSTRAP_CODE.len() as u64 <= Size4KiB::SIZE);
+const_assert!(TRAMPOLINE_CODE.len() as u64 <= Size4KiB::SIZE);
+const TEST_COUNTER_OFFSET: u64 = 4;
 const PAGE_TABLE_OFFSET: u64 = 3;
 const STACK_PTR_OFFSET: u64 = 2;
 const ENTRY_POINT_OFFSET: u64 = 1;
 const BASE_ADDR_OFFSET: u64 = 0;
+const TRAMPOLINE_PHYS_ADDR: u64 = 0x8_000;
 
 /// Reserves the pyhs frame in the lower 0xff000 range of ram
 /// for ap startup trampoline
-///
-/// # Safety:
-/// this must be called during bsp boot and [reserve_pages] must also be called
-/// after this finished and before ap startup is executed
 pub fn reserve_phys_frames(allocator: &mut PhysAllocator) {
-    {
-        let mut boot_range = RangeSet::new();
-        boot_range.insert(Range {
-            start: 0,
-            end: Size4KiB::SIZE,
-        });
-
-        let frame = allocator
-            .alloc_in_range::<Size4KiB>(RegionRequest::Forced(&boot_range))
-            .expect("Failed to allocate 0 frame");
-        warn!("Zero Frame: {:?}", frame);
+    if AP_FRAME_ALLOCATED.load(Ordering::Acquire) {
+        panic!("ap trampoline frame already allocated");
     }
 
     let mut boot_range = RangeSet::new();
     boot_range.insert(Range {
-        start: 0x01000,
-        end: 0xff000 + Size4KiB::SIZE,
+        start: TRAMPOLINE_PHYS_ADDR,
+        end: TRAMPOLINE_PHYS_ADDR + Size4KiB::SIZE,
     });
 
     let frame = allocator
         .alloc_in_range::<Size4KiB>(RegionRequest::Forced(&boot_range))
         .expect("Failed to allocate multiboot start frame");
-    AP_STARTUP_VECTOR.store(frame.start_address().as_u64(), Ordering::Release);
+    info!("ap startup trampoline frame allocated: {:?}", frame);
 
-    debug!("Multiboot start frame reserved at {frame:?}");
+    AP_FRAME_ALLOCATED.store(true, Ordering::Release);
 }
 
 /// Rserves the page for the identity map of the phys frame used for the
 /// ap startup trampoline.
-///
-/// # Safety
-/// this must be called after [reserve_phys_frames] during bsp boot
-/// and before ap startup
 pub fn reserve_pages(allocator: &mut PageAllocator) {
-    let paddr = AP_STARTUP_VECTOR.load(Ordering::Acquire);
-    if paddr == 0 {
-        panic!("AP_STARTUP_VECTOR is empty. Can't reserve virt page for identity mapping");
+    if AP_PAGE_ALLOCATED.load(Ordering::Acquire) {
+        panic!("AP trampoline page already allcoated");
     }
-    // we want an identity map so this is save
-    let vaddr = VirtAddr::new(paddr);
+
+    let vaddr = VirtAddr::new(TRAMPOLINE_PHYS_ADDR);
     let page = Page::<Size4KiB>::from_start_address(vaddr)
         .expect("identity mapping for AP_START_VECTOR must be valid");
     match allocator.try_allocate_page(page) {
-        Ok(_) => debug!("Mutliboot start page reserved at {page:?}"),
+        Ok(_) => debug!("ap startup trampoline page reserved at {page:?}"),
         // TODO I could retry with a new startup vector?
         Err(err) => panic!(
             "failed to identity map AP_STARTUP_VECTOR({:p}): {}",
             vaddr, err
         ),
     }
+
+    AP_PAGE_ALLOCATED.store(true, Ordering::Release);
 }
 
 /// Start all application processors.
 ///
 /// After this function exits, the kernel is executed on all cores
 /// in the machine
-// TODO temp
-#[allow(unreachable_code, unused_mut, unused_variables)]
 pub fn ap_startup() {
     info!("Starting APs");
-    debug!("ap trampoline size: {}", BOOTSTRAP_CODE.len());
+    debug!("ap trampoline size: {}", TRAMPOLINE_CODE.len());
+    debug!(
+        "ap trampoline asm: {}",
+        concat!(env!("OUT_DIR"), "/src/cpu/apicap_trampoline_minimal.bin")
+    );
 
     bsp_ctrl_regs::store_bsp_regs();
 
     // NOTE: dropping this will free the trampoline bytecode, so don't drop
     // this until the end of ap_startup
-    let mut sipi = SipiPayload::new();
-
-    if log::log_enabled!(log::Level::Debug) {
-        info!("Sipi Trampoline code: ");
-        sipi.dump_assembly();
-    }
+    let sipi = SipiPayload::new();
 
     assert_eq!(1, get_ready_core_count(Ordering::SeqCst));
 
     let mut stack = ApStack::alloc().expect("failed to alloc ap stack");
 
-    todo_warn!("AP-startup not working");
-    return;
+    {
+        let vaddr = VirtAddr::new(0x805a);
+        let mut table = KERNEL_PAGE_TABLE.lock();
+        table.print_table_entries_for_vaddr(vaddr, log::Level::Debug, None);
+        table.print_page_table_for_vaddr(vaddr, PageTableLevel::Four, log::Level::Debug, None);
+    }
 
     {
         trace!("Sending INIT SIPI SIPI: {:#x}", sipi.payload());
@@ -243,11 +228,9 @@ pub fn ap_startup() {
     // there should be exactly 1 more stack than aps, so
     // we can free that stack now. Any ap that did not enter startup
     // by now will be stuck waiting for a stack. Therefor we can just
-    // they don't exits
+    // assume they don't exits
     trace!("dropping final unused ap stack");
     drop(stack);
-    info!("test count: {:#X}", sipi.read_value(4));
-    sipi.dump_assembly();
 
     timer = time::read_tsc();
     loop {
@@ -264,6 +247,11 @@ pub fn ap_startup() {
         } else {
             panic!("somehow {ready_count} cores are ready, but only {known_started} were started");
         }
+    }
+
+    if log::log_enabled!(log::Level::Debug) {
+        let test_counter = sipi.read_value(TEST_COUNTER_OFFSET);
+        debug!("AP Startup test counter: {test_counter}");
     }
 }
 
@@ -417,9 +405,6 @@ impl SipiPayloadState for Ready {}
 ///
 /// This holds a single page worth of memory at [Self::phys] and [Self::virt],
 /// which is allocated in [Self::new] and "freed" during [Drop].
-///
-/// The phisical frame is released back to [AP_STARTUP_VECTOR] unless it already
-/// contains a frame in which case it is freed back to the frame allocator
 struct SipiPayload<S: SipiPayloadState = Ready> {
     /// phys addr of the startup vector
     phys: PhysAddr,
@@ -435,31 +420,20 @@ struct SipiPayload<S: SipiPayloadState = Ready> {
 
 impl SipiPayload<Ready> {
     /// constructs a new sipi payload.
-    ///
-    /// This panics if [AP_STARTUP_VECTOR] is `0` and will take "ownership" of
-    /// that memory, so only 1 instance of SipiPayload can exist unless a new
-    /// vector is written to [AP_STARTUP_VECTOR] after a call to [Self::new].
-    ///
-    /// It will also create a memory mapping for that frame and
-    /// will panic if the mapping fails
     fn new() -> SipiPayload<Ready> {
-        let phys = AP_STARTUP_VECTOR.load(Ordering::Acquire);
-        if phys == 0 {
-            panic!("Can't create SipiPayload. AP_STARTUP_VECTOR is 0");
+        if !AP_FRAME_ALLOCATED.load(Ordering::Acquire) && !AP_PAGE_ALLOCATED.load(Ordering::Acquire)
+        {
+            panic!(
+                "ap trampoline frame and page need to be allocated before ap_startup can be called"
+            );
         }
-        let phys = match AP_STARTUP_VECTOR.compare_exchange(
-            phys,
-            0,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        ) {
-            Ok(phys) => PhysAddr::new(phys),
-            Err(_) => panic!("Can't create SipiPayload. Lost race for AP_STARTUP_VECTOR"),
-        };
+
+        let phys = PhysAddr::new(TRAMPOLINE_PHYS_ADDR);
+
         let frame = PhysFrame::from_start_address(phys)
             .expect("Expected valid phys addr in AP_STARTUP_VECTOR");
 
-        // trampoline must be identity mapped
+        // trampoline will be identity mapped. We reserved this page earlier
         let virt = VirtAddr::new(phys.as_u64());
         let page = Page::<Size4KiB>::from_start_address(virt)
             .expect("identity mapping for AP_START_VECTOR must be valid");
@@ -491,7 +465,6 @@ impl SipiPayload<Ready> {
         sipi.set_page_table();
         sipi.set_entry_point();
         sipi.set_base_addr();
-        sipi.set_real_mode_data_segment();
         sipi.set_stack_end_ptr();
 
         let result = SipiPayload {
@@ -518,74 +491,6 @@ impl SipiPayload<Ready> {
                     This should have been caught earlier",
         )
     }
-
-    // thanks to https://github.com/jasoncouture/oxidized/blob/main/kernel/src/arch/arch_x86_64/cpu/mod.rs#L90
-    fn dump_assembly(&self) {
-        use alloc::{format, string::String};
-        use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, Mnemonic, NasmFormatter};
-
-        let mut buffer = [0u8; 4096];
-        const HEXBYTES_COLUMN_BYTE_LENGTH: usize = 10;
-
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self.virt.as_ptr(),
-                buffer.as_mut_ptr(),
-                BOOTSTRAP_CODE.len(),
-            );
-        }
-
-        let buffer = &buffer[0..BOOTSTRAP_CODE.len()];
-        let mut decoder = Decoder::with_ip(16, buffer, 0, DecoderOptions::NONE);
-
-        // Formatters: Masm*, Nasm*, Gas* (AT&T) and Intel* (XED).
-        // For fastest code, see `SpecializedFormatter` which is ~3.3x faster. Use it if formatting
-        // speed is more important than being able to re-assemble formatted instructions.
-        let mut formatter = NasmFormatter::new();
-
-        // Change some options, there are many more
-        formatter.options_mut().set_digit_separator("`");
-        formatter.options_mut().set_first_operand_char_index(10);
-
-        // String implements FormatterOutput
-        let mut output = String::new();
-
-        let mut instruction = Instruction::default();
-
-        while decoder.can_decode() {
-            // There's also a decode() method that returns an instruction but that also
-            // means it copies an instruction (40 bytes):
-            //     instruction = decoder.decode();
-            decoder.decode_out(&mut instruction);
-            // The first jump we hit in 16 bit mode, is the jump to 64 bit mode.
-            // Update the decoder accordingly.
-            if instruction.code().mnemonic() == Mnemonic::Jmp && decoder.bitness() == 16 {
-                decoder = Decoder::with_ip(64, buffer, 0, DecoderOptions::NONE);
-                let rip = instruction.ip() as usize + instruction.len();
-                decoder.set_position(rip).unwrap();
-                decoder.set_ip(rip as u64);
-            }
-
-            // Format the instruction ("disassemble" it)
-            output.clear();
-            formatter.format(&instruction, &mut output);
-            let mut final_output: String = String::new();
-            final_output.push_str(format!("{:016X}: ", instruction.ip()).as_str());
-            let start_index = (instruction.ip()) as usize;
-            let instr_bytes = &buffer[start_index..start_index + instruction.len()];
-            for b in instr_bytes.iter() {
-                final_output.push_str(format!("{:02X}", b).as_str());
-            }
-            if instr_bytes.len() < HEXBYTES_COLUMN_BYTE_LENGTH {
-                for _ in 0..HEXBYTES_COLUMN_BYTE_LENGTH - instr_bytes.len() {
-                    final_output.push_str("  ");
-                }
-            }
-            final_output.push_str(format!(" {}", output).as_str());
-            debug!("{}", final_output);
-            //debug!("{:016X} {}", instruction.ip(), output);
-        }
-    }
 }
 
 impl SipiPayload<Construction> {
@@ -604,7 +509,7 @@ impl SipiPayload<Construction> {
         //      src and dst can't overlap because we allocate dst in a unused
         //      phys frame
         unsafe {
-            core::ptr::copy_nonoverlapping(BOOTSTRAP_CODE.as_ptr(), dst, BOOTSTRAP_CODE.len())
+            core::ptr::copy_nonoverlapping(TRAMPOLINE_CODE.as_ptr(), dst, TRAMPOLINE_CODE.len())
         }
     }
 
@@ -617,12 +522,15 @@ impl SipiPayload<Construction> {
                 out(reg) page_table
             }
         }
-        trace!("store page table in sipi payload");
+        trace!("store page table({:x}) in sipi payload", page_table);
         self.set_value(PAGE_TABLE_OFFSET, page_table);
     }
 
     fn set_entry_point(&mut self) {
-        trace!("store entry point in sipi payload");
+        trace!(
+            "store entry point({:x}) in sipi payload",
+            ap_entry as *const () as u64
+        );
         self.set_value(ENTRY_POINT_OFFSET, ap_entry as *const () as u64);
     }
 
@@ -636,31 +544,6 @@ impl SipiPayload<Construction> {
         self.set_value(STACK_PTR_OFFSET, AP_STACK_PTR.as_ptr() as u64);
     }
 
-    fn set_real_mode_data_segment(&mut self) {
-        const DS_MAGIC: &[u8] = &[0x90, 0x90, 0xB9, 0xCD, 0xAB, 0x90, 0x90];
-        let memory: *mut u8 = self.virt.as_mut_ptr();
-        let memory = unsafe {
-            // Safety:
-            //  virt is a valid ptr for 4KiB and BOOTSTRAP_CODE is shorter than 4KiB
-            core::slice::from_raw_parts_mut(memory, BOOTSTRAP_CODE.len())
-        };
-        let ds_magic_index = memory
-            .windows(7)
-            .enumerate()
-            .find(|(_indx, it)| *it == DS_MAGIC)
-            .map(|(i, _)| i)
-            .expect("Could not find DS_MAGIC in ap trampoline");
-        let ds_index = ds_magic_index + 3;
-
-        let ds_value = self.virt.as_u64();
-        let ds_value = ds_value >> 4;
-        assert!(ds_value & !0xff00 == 0);
-
-        trace!("store real mode ds({:#X})", ds_value);
-        memory[ds_index] = (ds_value & 0xff) as u8;
-        memory[ds_index + 1] = ((ds_value >> 8) & 0xff) as u8;
-    }
-
     /// sets a value in the payload at offset relative to the end of the payload
     ///
     /// Offset is given in number of u64 from the end of the payload going backwards so
@@ -670,7 +553,7 @@ impl SipiPayload<Construction> {
         use core::mem::{align_of, size_of};
         const WORD_SIZE: u64 = size_of::<u64>() as u64;
 
-        let end = self.virt + BOOTSTRAP_CODE.len() as u64 - WORD_SIZE;
+        let end = self.virt + TRAMPOLINE_CODE.len() as u64 - WORD_SIZE;
         let target = end - offset * WORD_SIZE;
         trace!("write value({:#x}) to trampoline at {:p}", value, target);
         unsafe {
@@ -691,11 +574,12 @@ impl<S: SipiPayloadState> SipiPayload<S> {
     /// Offset is given in number of u64 from the end of the payload going backwards so
     /// an offset of 0 would read the last u64 of the payload and a payload of 1
     /// would read the u64 before that, etc
+    #[allow(dead_code)]
     fn read_value(&self, offset: u64) -> u64 {
         use core::mem::{align_of, size_of};
         const WORD_SIZE: u64 = size_of::<u64>() as u64;
 
-        let end = self.virt + BOOTSTRAP_CODE.len() as u64 - WORD_SIZE;
+        let end = self.virt + TRAMPOLINE_CODE.len() as u64 - WORD_SIZE;
         let target = end - offset * WORD_SIZE;
         unsafe {
             let ptr: *const u64 = target.as_ptr();
@@ -709,29 +593,20 @@ impl<S: SipiPayloadState> SipiPayload<S> {
     }
 }
 
+use x86_64::structures::paging::mapper::Mapper;
+
 impl<S: SipiPayloadState> Drop for SipiPayload<S> {
     fn drop(&mut self) {
+        let mut table = KERNEL_PAGE_TABLE.lock();
+        let (_frame, _flags, flush) = table
+            .unmap(self.page)
+            .expect("Failed to unmap ap trampoline during drop");
+        flush.flush();
         PageAllocator::get_kernel_allocator()
             .lock()
             .free_page(self.page);
-
-        let phys = self.phys.as_u64();
-        match AP_STARTUP_VECTOR.compare_exchange(0, phys, Ordering::AcqRel, Ordering::Relaxed) {
-            Ok(_) => {
-                trace!("released frame back to AP_STARTUP_VECTOR");
-            }
-            Err(_) => {
-                debug!("AP_STARTUP_VECTOR is full. Freeing frame isntaed");
-                unsafe {
-                    // SAFETY:
-                    //  the frame is no longer used, because we just freed the page.
-                    //  It is also no longer accessible via PhysAddr because we
-                    //  couldn't store it in AP_STARTUP_VECTOR
-                    WasabiFrameAllocator::<Size4KiB>::get_for_kernel()
-                        .lock()
-                        .free(self.frame)
-                }
-            }
-        }
+        debug!("ap trampoline unmapped and freed");
+        AP_FRAME_ALLOCATED.store(false, Ordering::Release);
+        AP_PAGE_ALLOCATED.store(false, Ordering::Release);
     }
 }
