@@ -63,6 +63,7 @@ startup_ap:
 USE64
 long_mode_ap:
 
+    LOCK inc dword [trampoline.test_counter]
 halt_loop:
     cli
     hlt
@@ -99,6 +100,7 @@ gdtr:
 
 ALIGN 8, nop
 trampoline:
+    .test_counter: dq 0x0; -4
     .page_table: dq 0xFFFFFFFFFFFFFFFF ; -3
     .stack_end_ptr: dq 0xFFFFFFFFFFFFFFFF ; -2
     .ap_entry: dq 0xFFFFFFFFFFFFFFFF ; -1

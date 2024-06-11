@@ -49,7 +49,7 @@ impl Default for QemuConfig<'_> {
             devices: "",
             serial: vec!["stdio"],
             kill_on_drop: true,
-            processor_count: 2, // FIXME I want at least 4 processors once smp is working
+            processor_count: 4,
             debug_log: None,
         }
     }

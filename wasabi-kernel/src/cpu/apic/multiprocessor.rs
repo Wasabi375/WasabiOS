@@ -109,12 +109,19 @@ const TRAMPOLINE_CODE: &[u8] = include_bytes!(concat!(
     "/src/cpu/apic/ap_trampoline_minimal.bin"
 ));
 const_assert!(TRAMPOLINE_CODE.len() as u64 <= Size4KiB::SIZE);
+
 const TEST_COUNTER_OFFSET: u64 = 4;
 const PAGE_TABLE_OFFSET: u64 = 3;
 const STACK_PTR_OFFSET: u64 = 2;
 const ENTRY_POINT_OFFSET: u64 = 1;
 const BASE_ADDR_OFFSET: u64 = 0;
-const TRAMPOLINE_PHYS_ADDR: u64 = 0x8_000;
+
+/// AP trampoline address
+///
+/// This must be a valid page and frame start address,
+/// that can be accessed in 16bit mode that functions as
+/// the start address for all APs.
+const TRAMPOLINE_ADDR: u64 = 0x8_000;
 
 /// Reserves the pyhs frame in the lower 0xff000 range of ram
 /// for ap startup trampoline
@@ -125,8 +132,8 @@ pub fn reserve_phys_frames(allocator: &mut PhysAllocator) {
 
     let mut boot_range = RangeSet::new();
     boot_range.insert(Range {
-        start: TRAMPOLINE_PHYS_ADDR,
-        end: TRAMPOLINE_PHYS_ADDR + Size4KiB::SIZE,
+        start: TRAMPOLINE_ADDR,
+        end: TRAMPOLINE_ADDR + Size4KiB::SIZE,
     });
 
     let frame = allocator
@@ -144,12 +151,11 @@ pub fn reserve_pages(allocator: &mut PageAllocator) {
         panic!("AP trampoline page already allcoated");
     }
 
-    let vaddr = VirtAddr::new(TRAMPOLINE_PHYS_ADDR);
+    let vaddr = VirtAddr::new(TRAMPOLINE_ADDR);
     let page = Page::<Size4KiB>::from_start_address(vaddr)
-        .expect("identity mapping for AP_START_VECTOR must be valid");
+        .expect("TRAMPOLINE_ADDR must be valid page start");
     match allocator.try_allocate_page(page) {
         Ok(_) => debug!("ap startup trampoline page reserved at {page:?}"),
-        // TODO I could retry with a new startup vector?
         Err(err) => panic!(
             "failed to identity map AP_STARTUP_VECTOR({:p}): {}",
             vaddr, err
@@ -163,6 +169,8 @@ pub fn reserve_pages(allocator: &mut PageAllocator) {
 ///
 /// After this function exits, the kernel is executed on all cores
 /// in the machine
+// TODO should this be unsafe. Thechincally this could lead to UB if we start this
+// from within an interrupt while this is already running, but not done.
 pub fn ap_startup() {
     info!("Starting APs");
     debug!("ap trampoline size: {}", TRAMPOLINE_CODE.len());
@@ -180,13 +188,6 @@ pub fn ap_startup() {
     assert_eq!(1, get_ready_core_count(Ordering::SeqCst));
 
     let mut stack = ApStack::alloc().expect("failed to alloc ap stack");
-
-    {
-        let vaddr = VirtAddr::new(0x805a);
-        let mut table = KERNEL_PAGE_TABLE.lock();
-        table.print_table_entries_for_vaddr(vaddr, log::Level::Debug, None);
-        table.print_page_table_for_vaddr(vaddr, PageTableLevel::Four, log::Level::Debug, None);
-    }
 
     {
         trace!("Sending INIT SIPI SIPI: {:#x}", sipi.payload());
@@ -428,7 +429,7 @@ impl SipiPayload<Ready> {
             );
         }
 
-        let phys = PhysAddr::new(TRAMPOLINE_PHYS_ADDR);
+        let phys = PhysAddr::new(TRAMPOLINE_ADDR);
 
         let frame = PhysFrame::from_start_address(phys)
             .expect("Expected valid phys addr in AP_STARTUP_VECTOR");
@@ -597,6 +598,8 @@ use x86_64::structures::paging::mapper::Mapper;
 
 impl<S: SipiPayloadState> Drop for SipiPayload<S> {
     fn drop(&mut self) {
+        // FIXME: freeing this can lead to tripple fault if AP starts after
+        //  the drop. Do I care? I mean they should all have started at this time.
         let mut table = KERNEL_PAGE_TABLE.lock();
         let (_frame, _flags, flush) = table
             .unmap(self.page)
