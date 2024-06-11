@@ -1,6 +1,9 @@
 //! Debug extensions for the page table and paging
 
-use core::fmt::Write;
+use core::{
+    fmt::Write,
+    mem::{transmute, transmute_copy},
+};
 use log::{log, Level};
 use staticvec::StaticString;
 use x86_64::{
@@ -21,18 +24,23 @@ use crate::mem::page_table::{recursive_index, PageTableKernelFlags, RecursivePag
 /// Debug extensions for page tables
 pub trait PageTableDebugExt {
     /// print the page table flags for the given vaddr
-    fn print_page_flags_for_vaddr(&mut self, vaddr: VirtAddr, level: Level, message: Option<&str>);
+    fn print_page_flags_for_vaddr(
+        &mut self,
+        vaddr: VirtAddr,
+        log_level: Level,
+        message: Option<&str>,
+    );
 
     /// print info for all table entries related to the given vaddr
     fn print_table_entries_for_vaddr(
         &mut self,
         vaddr: VirtAddr,
-        level: Level,
+        log_level: Level,
         message: Option<&str>,
     );
 
     /// print all mapped memory regions
-    fn print_all_mapped_regions(&mut self, ignore_cpu_flags: bool, level: Level);
+    fn print_all_mapped_regions(&mut self, ignore_cpu_flags: bool, log_level: Level);
 
     /// prints all entries of the page table
     fn print_page_table_for_vaddr(
@@ -112,11 +120,18 @@ impl<'a> PageTableDebugExt for RecursivePageTable<'a> {
             if entry.is_unused() {
                 continue;
             }
+
+            let raw_bits: u64 = unsafe {
+                // Safety: entry is repr transparent u64
+                transmute_copy(entry)
+            };
+
             log::log!(
                 log_level,
-                "[{index}]: PageTableEntry: {:p}, {:?}",
+                "[{index}]: PageTableEntry: {:p}, {:?} : {:#x}",
                 entry.addr(),
-                entry.flags()
+                entry.flags(),
+                raw_bits
             );
         }
     }
@@ -233,22 +248,28 @@ impl<'a> PageTableDebugExt for RecursivePageTable<'a> {
         fn print_table_entry(entry: &PageTableEntry, vaddr: VirtAddr, level: Level, msg: &str) {
             let frame = entry.frame().ok();
             let flags = entry.flags();
+            let raw_bits: u64 = unsafe {
+                // Safety: entry is repr transparent u64
+                transmute_copy(entry)
+            };
 
             match frame {
                 Some(frame) => log!(
                     level,
-                    "{}: Table: Vaddr {:p}:   Frame {:p} | Entry-Flags: {:?}",
+                    "{}: Table: Vaddr {:p}:   Frame {:p} : Entry-Flags: {:?} : Raw-Entry {:#x}",
                     msg,
                     vaddr,
                     frame.start_address(),
                     flags,
+                    raw_bits
                 ),
                 None => log!(
                     level,
-                    "{}: Table: Vaddr {:p} | Entry-Flags: {:?}",
+                    "{}: Table: Vaddr {:p} : Entry-Flags: {:?} : Raw-Entry {:#x}",
                     msg,
                     vaddr,
                     flags,
+                    raw_bits
                 ),
             }
         }

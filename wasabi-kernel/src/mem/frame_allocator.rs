@@ -37,6 +37,19 @@ static KERNEL_FRAME_ALLOCATOR_1G: UnwrapTicketLock<WasabiFrameAllocator<Size1GiB
 pub fn init(regions: &MemoryRegions) {
     let mut ranges = RangeSet::<{ PhysAllocator::N }>::new();
 
+    if log::log_enabled!(log::Level::Trace) {
+        trace!("regions: ");
+        for region in regions.iter() {
+            trace!(
+                "    {:?}: {:#X} - {:#X} | Size: {}",
+                region.kind,
+                region.start,
+                region.end - 1,
+                region.end - 1 - region.start
+            );
+        }
+    }
+
     for region in regions
         .iter()
         .filter(|r| r.kind == MemoryRegionKind::Usable)
@@ -47,6 +60,18 @@ pub fn init(regions: &MemoryRegions) {
         };
 
         ranges.insert(range);
+    }
+
+    if log::log_enabled!(log::Level::Debug) {
+        info!("Available Physical Ranges:");
+        for entry in ranges.entries() {
+            debug!(
+                "    {:#X} - {:#X} | Size: {}",
+                entry.start,
+                entry.end,
+                entry.end - entry.start
+            );
+        }
     }
 
     let mut allocator = PhysAllocator {
