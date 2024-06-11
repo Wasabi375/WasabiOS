@@ -80,6 +80,8 @@ pub async fn test(uefi: &Path, mut args: TestArgs) -> Result<()> {
         devices: "isa-debug-exit,iobase=0xf4,iosize=0x04",
         ..QemuConfig::default()
     };
+    // TODO make path unique each time we execute qemu during tests
+    qemu_config.debug_log = args.qemu.qemu_log.as_ref().map(|p| p.as_path());
 
     let tcp_string = format!("tcp::{},server=on", args.tcp_port);
     qemu_config.add_serial(&tcp_string)?;

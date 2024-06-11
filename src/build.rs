@@ -74,7 +74,7 @@ pub async fn build(args: BuildArgs) -> Result<()> {
     }
 
     match args.run {
-        Some(RunCommand::Run) => run(&to_run).await,
+        Some(RunCommand::Run(args)) => run(&to_run, args).await,
         Some(RunCommand::Test(args)) => test(&to_run, args).await,
         _ => Ok(()),
     }

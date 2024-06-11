@@ -1,5 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::ffi::{OsStr, OsString};
+use std::{
+    ffi::{OsStr, OsString},
+    path::PathBuf,
+};
 
 use crate::build::KernelBinary;
 
@@ -31,14 +34,37 @@ pub enum BuildCommand {
 #[derive(Debug, Subcommand)]
 pub enum RunCommand {
     /// run the kernel in qemu
-    Run,
+    Run(RunArgs),
     /// run kernel tests in qemu
     Test(TestArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct QemuOptions {
+    /// This enables the qemu log
+    ///
+    /// the logging options are "-d int,cpu_reset,unimp,guest_errors"
+    /// and the log is stored to the given path
+    ///
+    /// TODO test will run qemu multiple times, we should make log paths somewhat unique
+    #[arg(long)]
+    pub qemu_log: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct RunArgs {
+    /// the options used for starting qemu
+    #[command(flatten)]
+    pub qemu: QemuOptions,
 }
 
 /// The required arguments to run the test kernel
 #[derive(Args, Debug)]
 pub struct TestArgs {
+    /// the options used for starting qemu
+    #[command(flatten)]
+    pub qemu: QemuOptions,
+
     /// fails qemu instance after `timeout` seconds.
     ///
     /// Depending on the settings, qemu might be started multiple times to finishe testing

@@ -39,6 +39,7 @@ pub struct QemuConfig<'a> {
     pub serial: Vec<&'a str>,
     pub kill_on_drop: bool,
     pub processor_count: u8,
+    pub debug_log: Option<&'a Path>,
 }
 
 impl Default for QemuConfig<'_> {
@@ -48,7 +49,8 @@ impl Default for QemuConfig<'_> {
             devices: "",
             serial: vec!["stdio"],
             kill_on_drop: true,
-            processor_count: 4,
+            processor_count: 2, // FIXME I want at least 4 processors once smp is working
+            debug_log: None,
         }
     }
 }
@@ -102,11 +104,14 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
         }
     }
 
-    if host_arch.is_windows() {
-        cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
-        cmd.arg("-cpu").arg("max,vmx=off");
-    } else {
-        cmd.arg("-enable-kvm");
+    if qemu.debug_log.is_none() {
+        if host_arch.is_windows() {
+            cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
+            cmd.arg("-cpu").arg("max,vmx=off");
+        } else {
+            cmd.arg("-enable-kvm");
+            cmd.arg("-cpu").arg("host");
+        }
     }
 
     cmd.arg("-m").arg(qemu.memory);
@@ -116,7 +121,17 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
     if !qemu.devices.is_empty() {
         cmd.arg("-device").arg(qemu.devices);
     }
+
+    if let Some(log_path) = qemu.debug_log {
+        cmd.arg("-d").arg("int,cpu_reset,unimp,guest_errors");
+        cmd.arg("-D").arg(log_path);
+    }
+    cmd.arg("-no-reboot");
+
     cmd.kill_on_drop(qemu.kill_on_drop);
+
+    log::info!("{:?}", cmd);
+
     cmd.spawn().context("failed to spawn qemu")
 }
 

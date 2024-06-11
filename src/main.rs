@@ -9,7 +9,7 @@ mod qemu;
 mod test;
 
 use anyhow::{Context, Result};
-use args::{Arguments, BuildCommand, LatestArgs, Profile, RunCommand, Target};
+use args::{Arguments, BuildCommand, LatestArgs, Profile, RunArgs, RunCommand, Target};
 use build::{build, check, clean, expand};
 use clap::Parser;
 use log::LevelFilter;
@@ -54,13 +54,14 @@ pub fn latest_path(bin_name: &OsStr, target: &Target, profile: &Profile) -> Path
 }
 
 /// runs the kernel in qemu
-pub async fn run(uefi: &Path) -> Result<()> {
+pub async fn run(uefi: &Path, args: RunArgs) -> Result<()> {
     let kernel = Kernel {
         path: &uefi,
         uefi: true,
     };
 
-    let qemu = QemuConfig::default();
+    let mut qemu = QemuConfig::default();
+    qemu.debug_log = args.qemu.qemu_log.as_ref().map(|p| p.as_path());
 
     launch_qemu(&kernel, &qemu)
         .await
@@ -75,7 +76,7 @@ pub async fn run(uefi: &Path) -> Result<()> {
 /// execute [BuildCommand::Latest]
 pub async fn latests(args: LatestArgs) -> Result<()> {
     let mut bin_name = OsString::from_str(match args.run {
-        RunCommand::Run => "wasabi-kernel",
+        RunCommand::Run(_) => "wasabi-kernel",
         RunCommand::Test(_) => "wasabi-test",
     })
     .unwrap();
@@ -85,7 +86,7 @@ pub async fn latests(args: LatestArgs) -> Result<()> {
     bin_name.push("_uefi.img");
     path.push(&bin_name);
     match args.run {
-        RunCommand::Run => run(&path).await,
+        RunCommand::Run(args) => run(&path, args).await,
         RunCommand::Test(args) => test(&path, args).await,
     }
 }
