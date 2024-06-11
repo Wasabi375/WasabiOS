@@ -198,6 +198,7 @@ macro_rules! map_frame {
 /// [PageSize](x86_64::structures::paging::PageSize),
 /// [PageTableFlags], [PageTableKernelFlags], [PageAllocator],
 /// [WasabiFrameAllocator]
+// TODO inline use statments in macro
 #[macro_export]
 macro_rules! map_page {
     ($size: ident, $flags: expr) => {{
@@ -262,8 +263,7 @@ macro_rules! map_page {
 
         let page: Page<$size> = $page;
         let frame: PhysFrame<$size> = $frame;
-        let table_flags: PageTableFlags =
-            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
+        let table_flags: PageTableFlags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
         kernel_page_table
             .map_to_with_table_flags(page, frame, $flags, table_flags, $frame_alloc)
             .map_err(|e| PageTableMapError::from(e))
