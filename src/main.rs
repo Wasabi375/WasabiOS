@@ -60,8 +60,7 @@ pub async fn run(uefi: &Path, args: RunArgs) -> Result<()> {
         uefi: true,
     };
 
-    let mut qemu = QemuConfig::default();
-    qemu.debug_log = args.qemu.qemu_log.as_ref().map(|p| p.as_path());
+    let qemu = QemuConfig::from_options(&args.qemu);
 
     launch_qemu(&kernel, &qemu)
         .await

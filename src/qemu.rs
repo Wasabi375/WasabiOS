@@ -14,6 +14,8 @@ use tokio::{
     time,
 };
 
+use crate::args::QemuOptions;
+
 pub enum Arch {
     X86_64,
 }
@@ -42,15 +44,15 @@ pub struct QemuConfig<'a> {
     pub debug_log: Option<&'a Path>,
 }
 
-impl Default for QemuConfig<'_> {
-    fn default() -> Self {
+impl<'a> QemuConfig<'a> {
+    pub fn from_options(args: &'a QemuOptions) -> Self {
         Self {
             memory: "4G",
             devices: "",
             serial: vec!["stdio"],
             kill_on_drop: true,
-            processor_count: 4,
-            debug_log: None,
+            processor_count: args.processor_count,
+            debug_log: args.qemu_log.as_ref().map(|p| p.as_path()),
         }
     }
 }

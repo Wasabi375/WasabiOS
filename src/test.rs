@@ -78,10 +78,9 @@ pub async fn test(uefi: &Path, mut args: TestArgs) -> Result<()> {
 
     let mut qemu_config = QemuConfig {
         devices: "isa-debug-exit,iobase=0xf4,iosize=0x04",
-        ..QemuConfig::default()
+        ..QemuConfig::from_options(&args.qemu)
     };
-    // TODO make path unique each time we execute qemu during tests
-    qemu_config.debug_log = args.qemu.qemu_log.as_ref().map(|p| p.as_path());
+    // TODO make qemu_lgo path unique each time we execute qemu during tests
 
     let tcp_string = format!("tcp::{},server=on", args.tcp_port);
     qemu_config.add_serial(&tcp_string)?;
@@ -604,7 +603,7 @@ async fn tests_no_tcp(uefi: &Path, args: TestArgs) -> Result<()> {
 
     let qemu = QemuConfig {
         devices: "isa-debug-exit,iobase=0xf4,iosize=0x04",
-        ..QemuConfig::default()
+        ..QemuConfig::from_options(&args.qemu)
     };
 
     let exit_status = launch_with_timeout(Duration::from_secs(args.timeout), &kernel, &qemu)

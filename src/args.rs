@@ -49,6 +49,10 @@ pub struct QemuOptions {
     /// TODO test will run qemu multiple times, we should make log paths somewhat unique
     #[arg(long)]
     pub qemu_log: Option<PathBuf>,
+
+    /// The number of processors simulated by qemu
+    #[arg(short, long, default_value_t = 4)]
+    pub processor_count: u8,
 }
 
 #[derive(Args, Debug)]
