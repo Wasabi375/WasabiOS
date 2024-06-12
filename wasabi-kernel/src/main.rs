@@ -32,7 +32,7 @@ use wasabi_kernel::{
         apic::{self, timer::TimerConfig},
         interrupts::InterruptVector,
     },
-    kernel_init, time,
+    time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
@@ -48,9 +48,7 @@ fn timer_int_handler(_vec: InterruptVector, _isf: InterruptStackFrame) -> Result
 }
 
 /// the main entry point for the kernel. Called by the bootloader.
-fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    kernel_init(boot_info);
-
+fn kernel_main() -> ! {
     let startup_time = time::time_since_startup().to_millis();
     info!("tsc clock rate {}MHz", time::tsc_tickrate());
     info!("kernel boot took {:?} - {}", startup_time, startup_time);
@@ -84,4 +82,4 @@ const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
     let config = bootloader_api::BootloaderConfig::new_default();
     bootloader_config_common(config)
 };
-bootloader_api::entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
+wasabi_kernel::entry_point!(kernel_main, boot_config = &BOOTLOADER_CONFIG);

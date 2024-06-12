@@ -65,7 +65,14 @@ pub unsafe fn boot_info() -> &'static mut BootInfo {
 }
 
 /// initializes the kernel.
-pub fn kernel_init(boot_info: &'static mut BootInfo) {
+pub fn kernel_main<F>(
+    boot_info: &'static mut BootInfo,
+    kernel_config: KernelConfig,
+    kernel_start: F,
+) -> !
+where
+    F: Fn() -> !,
+{
     // Safety: TODO: boot info handling not really save, but it's fine for now
     // we are still single core and don't really care
     unsafe {
@@ -75,10 +82,6 @@ pub fn kernel_init(boot_info: &'static mut BootInfo) {
     // Safety:
     // `init` is only called once per core and `core_boot`
     let core_id = unsafe { core_boot() };
-
-    if !core_id.is_bsp() {
-        panic!("not bsp");
-    }
 
     time::calibrate_tsc();
     unsafe {
@@ -112,10 +115,14 @@ pub fn kernel_init(boot_info: &'static mut BootInfo) {
 
     apic::init().unwrap();
 
-    apic::ap_startup::ap_startup();
+    if kernel_config.start_aps {
+        apic::ap_startup::ap_startup();
+    }
 
     assert!(locals!().interrupts_enabled());
     info!("Kernel initialized");
+
+    kernel_start();
 }
 
 /// The default stack size used by the kernel
@@ -128,6 +135,12 @@ const_assert!(DEFAULT_STACK_SIZE & 0xfff == 0);
 /// Calculated from [DEFAULT_STACK_SIZE]
 pub const DEFAULT_STACK_PAGE_COUNT: u64 = DEFAULT_STACK_SIZE / Size4KiB::SIZE;
 
+/// Configuration for the kernel start
+pub struct KernelConfig {
+    /// if set, application processors will be started as part of kernel start
+    pub start_aps: bool,
+}
+
 /// fills in bootloader configuration that is shared between normal and test mode
 pub const fn bootloader_config_common(
     mut config: bootloader_api::BootloaderConfig,
@@ -135,4 +148,75 @@ pub const fn bootloader_config_common(
     config.mappings.page_table_recursive = Some(Mapping::Dynamic);
     config.kernel_stack_size = DEFAULT_STACK_SIZE;
     config
+}
+
+/// creates a default [KernelConfig].
+pub const fn default_kernel_config() -> KernelConfig {
+    KernelConfig { start_aps: true }
+}
+
+/// Creates the kernel entry point, which after initializing the kernel
+/// will run the given function.
+///
+/// # Examples
+/// ```
+/// fn kernel_main() -> ! {
+///     loop {}
+/// }
+/// const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
+///     let config = bootloader_api::BootloaderConfig::new_default();
+///     bootloader_config_common(config)
+/// };
+/// entry_point!(kernel_main);
+/// entry_point!(kernel_main, boot_config = &BOOTLOADER_CONFIG);
+/// entry_point!(kernel_main, kernel_config = default_kernel_config());
+/// entry_point!(kernel_main, boot_config = ..., kernel_config = ...);
+/// ```
+#[macro_export]
+macro_rules! entry_point {
+    ($path:path) => {
+        const _: () = {
+            const __BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
+                let config = bootloader_api::BootloaderConfig::new_default();
+                bootloader_config_common(config)
+            };
+            $crate::entry_point!(
+                $path,
+                boot_config = __BOOTLOADER_CONFIG,
+                kernel_config = $crate::default_kernel_config(),
+            );
+        };
+    };
+    ($path:path, boot_config = $config:expr $(,)?) => {
+        $crate::entry_point!(
+            $path,
+            boot_config = $config,
+            kernel_config = $crate::default_kernel_config(),
+        );
+    };
+    ($path:path, kernel_config = $config:expr $(,)?) => {
+        const _: () = {
+            const __BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
+                let config = bootloader_api::BootloaderConfig::new_default();
+                bootloader_config_common(config)
+            };
+            $crate::entry_point!(
+                $path,
+                boot_config = __BOOTLOADER_CONFIG,
+                kernel_config = $config,
+            );
+        };
+    };
+    ($path:path, kernel_config = $k_conf:expr, boot_config = $b_conf:expr $(,)?) => {
+        $crate::entry_point!($path, boot_config = $b_conf, kernel_config = $k_conf);
+    };
+    ($path:path, boot_config = $b_conf:expr, kernel_config = $k_conf:expr $(,)?) => {
+        #[doc(hidden)]
+        fn __impl_kernel_start(boot_info: &'static mut BootInfo) -> ! {
+            let kernel_conf: $crate::KernelConfig = $k_conf;
+            let kernel_start: fn() -> ! = $path;
+            $crate::kernel_main(boot_info, kernel_conf, kernel_start);
+        }
+        bootloader_api::entry_point!(__impl_kernel_start, config = &BOOTLOADER_CONFIG);
+    };
 }
