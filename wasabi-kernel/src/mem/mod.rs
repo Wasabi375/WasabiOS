@@ -202,12 +202,7 @@ macro_rules! map_frame {
 #[macro_export]
 macro_rules! map_page {
     ($size: ident, $flags: expr) => {{
-        #[allow(unused_imports)]
-        use $crate::mem::page_allocator::PageAllocator;
-        #[allow(unused_imports)]
-        use $crate::mem::MemError;
-
-        let page = PageAllocator::get_kernel_allocator()
+        let page = $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
             .lock()
             .allocate_page::<$size>();
         match page {
@@ -216,7 +211,7 @@ macro_rules! map_page {
                 // so the mapping is save
                 match map_page!(page, $size, $flags) {
                     Ok(_) => Ok(page),
-                    Err(err) => Err(MemError::PageTableMap(err)),
+                    Err(err) => Err($crate::mem::MemError::PageTableMap(err)),
                 }
             },
             Err(err) => Err(err),
@@ -224,50 +219,46 @@ macro_rules! map_page {
     }};
 
     ($page: expr, $size: ident, $flags: expr) => {{
-        #[allow(unused_imports)]
-        use x86_64::structures::paging::PhysFrame;
-        #[allow(unused_imports)]
-        use $crate::mem::frame_allocator::WasabiFrameAllocator;
-        #[allow(unused_imports)]
-        use $crate::mem::page_table::PageTableMapError;
-
-        let frame_alloc: &mut WasabiFrameAllocator<$size> =
-            &mut WasabiFrameAllocator::<$size>::get_for_kernel().lock();
-        let frame: Option<PhysFrame<$size>> = frame_alloc.alloc();
+        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
+            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
+                .lock();
+        let frame: Option<x86_64::structures::paging::PhysFrame<$size>> = frame_alloc.alloc();
 
         frame
-            .ok_or_else(|| PageTableMapError::FrameAllocationFailed)
+            .ok_or_else(|| $crate::mem::page_table::PageTableMapError::FrameAllocationFailed)
             .map(|frame| map_page!($page, $size, $flags, frame, frame_alloc))
             .flatten()
     }};
 
     ($page: expr, $size: ident, $flags: expr, $frame: expr) => {{
-        #[allow(unused_imports)]
-        use $crate::mem::frame_allocator::WasabiFrameAllocator;
-        let frame_alloc: &mut WasabiFrameAllocator<$size> =
-            &mut WasabiFrameAllocator::<$size>::get_for_kernel().lock();
+        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
+            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
+                .lock();
         map_page!($page, $size, $flags, $frame, frame_alloc)
     }};
 
     ($page: expr, $size: ident, $flags: expr, $frame: expr, $frame_alloc: expr) => {{
-        #[allow(unused_imports)]
-        use x86_64::structures::paging::{
-            mapper::{Mapper, RecursivePageTable},
-            page_table::PageTableFlags,
-            Page, PhysFrame,
-        };
-        #[allow(unused_imports)]
-        use $crate::mem::page_table::{PageTableMapError, KERNEL_PAGE_TABLE};
+        let kernel_page_table: &mut x86_64::structures::paging::mapper::RecursivePageTable<
+            'static,
+        > = &mut $crate::mem::page_table::KERNEL_PAGE_TABLE.lock();
 
-        let kernel_page_table: &mut RecursivePageTable<'static> = &mut KERNEL_PAGE_TABLE.lock();
+        let page: x86_64::structures::paging::Page<$size> = $page;
+        let frame: x86_64::structures::paging::PhysFrame<$size> = $frame;
 
-        let page: Page<$size> = $page;
-        let frame: PhysFrame<$size> = $frame;
-        let table_flags: PageTableFlags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
-        kernel_page_table
-            .map_to_with_table_flags(page, frame, $flags, table_flags, $frame_alloc)
-            .map_err(|e| PageTableMapError::from(e))
-            .map(|flusher| flusher.flush())
+        let table_flags: x86_64::structures::paging::page_table::PageTableFlags =
+            x86_64::structures::paging::page_table::PageTableFlags::PRESENT
+                | x86_64::structures::paging::page_table::PageTableFlags::WRITABLE;
+
+        x86_64::structures::paging::Mapper::map_to_with_table_flags(
+            kernel_page_table,
+            page,
+            frame,
+            $flags,
+            table_flags,
+            $frame_alloc,
+        )
+        .map_err(|e| $crate::mem::page_table::PageTableMapError::from(e))
+        .map(|flusher| flusher.flush())
     }};
 }
 

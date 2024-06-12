@@ -15,7 +15,7 @@ use shared::{
 use static_assertions::const_assert;
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Page, PageSize, PhysFrame, Size4KiB},
+    structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
     PhysAddr, VirtAddr,
 };
 

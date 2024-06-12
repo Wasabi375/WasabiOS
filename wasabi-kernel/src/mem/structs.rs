@@ -4,6 +4,7 @@ use core::assert_matches::assert_matches;
 use core::ops::{Deref, DerefMut};
 use log::trace;
 use shared::lockcell::LockCell;
+use x86_64::structures::paging::PageTableFlags;
 use x86_64::{
     structures::paging::{
         mapper::{UnmapError, UnmappedFrame},
