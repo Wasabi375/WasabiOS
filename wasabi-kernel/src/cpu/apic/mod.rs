@@ -25,8 +25,8 @@ use self::{
     timer::{Timer, TimerData},
 };
 
+pub mod ap_startup;
 pub mod ipi;
-pub mod multiprocessor;
 pub mod timer;
 
 /// MSR address of the local apic base.

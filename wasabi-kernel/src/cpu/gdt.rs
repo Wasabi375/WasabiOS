@@ -52,7 +52,8 @@ struct GDTInner {
 }
 
 impl GDTInfo {
-    pub const fn uninit() -> GDTInfo {
+    /// Creates a new uninitalized GDT
+    pub const fn new_uninit() -> GDTInfo {
         GDTInfo {
             inner: UnsafeCell::new(GDTInner {
                 gdt: MaybeUninit::uninit(),
@@ -68,7 +69,7 @@ impl GDTInfo {
     ///
     /// must only ever be called once for each processor during startup
     /// requires core_locals and logging and memory to be initialized
-    pub unsafe fn init(&'static self) {
+    pub unsafe fn init_and_load(&'static self) {
         let inner: &'static mut GDTInner = unsafe {
             // Safety: see outer safety
             &mut *self.inner.get()

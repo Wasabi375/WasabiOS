@@ -1817,10 +1817,10 @@ dependencies = [
 [[package]]
 name = "x86_64"
 version = "0.15.1"
+source = "git+https://github.com/Wasabi375/x86_64?branch=page_not_present#ec292d1f28d05095e88c076ccfda1a2d948e4eb0"
 dependencies = [
  "bit_field",
  "bitflags 2.5.0",
- "log",
  "rustversion",
  "volatile",
 ]

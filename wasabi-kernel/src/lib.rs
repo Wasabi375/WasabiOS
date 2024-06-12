@@ -46,7 +46,7 @@ use x86_64::structures::paging::{PageSize, Size4KiB};
 
 use crate::{
     core_local::core_boot,
-    cpu::{apic, cpuid, gdt, interrupts},
+    cpu::{apic, cpuid, interrupts},
 };
 use bootloader_api::{config::Mapping, BootInfo};
 use core::ptr::null_mut;
@@ -102,7 +102,7 @@ pub fn kernel_init(boot_info: &'static mut BootInfo) {
 
         // Safety:
         // only called here for bsp and we have just init core_locals and logging and mem
-        locals!().gdt.init();
+        locals!().gdt.init_and_load();
 
         // Safety: bsp during `init` and locks, logging and alloc are working
         graphics::init(true);
@@ -112,7 +112,7 @@ pub fn kernel_init(boot_info: &'static mut BootInfo) {
 
     apic::init().unwrap();
 
-    apic::multiprocessor::ap_startup();
+    apic::ap_startup::ap_startup();
 
     assert!(locals!().interrupts_enabled());
     info!("Kernel initialized");

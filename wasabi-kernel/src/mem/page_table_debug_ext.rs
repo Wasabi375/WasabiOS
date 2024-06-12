@@ -1,9 +1,6 @@
 //! Debug extensions for the page table and paging
 
-use core::{
-    fmt::Write,
-    mem::{transmute, transmute_copy},
-};
+use core::{fmt::Write, mem::transmute_copy};
 use log::{log, Level};
 use staticvec::StaticString;
 use x86_64::{

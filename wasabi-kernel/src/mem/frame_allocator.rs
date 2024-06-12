@@ -105,7 +105,7 @@ pub fn init(regions: &MemoryRegions) {
 }
 
 fn reserve_phys_frames(allocator: &mut PhysAllocator) {
-    crate::apic::multiprocessor::reserve_phys_frames(allocator);
+    crate::apic::ap_startup::reserve_phys_frames(allocator);
 }
 
 /// A wrapper around a RangeSet that allows allocation and deallocation of

@@ -1,4 +1,4 @@
-//! kernel utilities/handlers for interrupts
+//! kernelutilities/handlers for interrupts
 
 use core::fmt;
 
@@ -14,15 +14,9 @@ use crate::{
 };
 use interrupt_fn_builder::exception_fn;
 use lazy_static::lazy_static;
-use shared::{
-    lockcell::{LockCell, RWLockCell},
-    KiB,
-};
+use shared::lockcell::{LockCell, RWLockCell};
 use thiserror::Error;
-use x86_64::structures::{
-    idt::{InterruptDescriptorTable, InterruptStackFrame},
-    paging::{PageSize, Size4KiB},
-};
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 
 /// The function type used for interrupt handlers
 pub type InterruptFn =

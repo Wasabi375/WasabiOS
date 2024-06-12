@@ -7,7 +7,7 @@ use shared::lockcell::LockCell;
 use x86_64::{
     structures::paging::{
         mapper::{UnmapError, UnmappedFrame},
-        Mapper, Page, PageSize, PageTableFlags, Size4KiB,
+        Mapper, Page, PageSize, Size4KiB,
     },
     VirtAddr,
 };

@@ -126,6 +126,14 @@ pub struct CoreLocals {
     /// [cpu::apic::init] must be called before this can be used
     pub apic: UnwrapTicketLock<Apic>,
 
+    /// The gdt for this core.
+    ///
+    /// Also contains memory for TSS.
+    ///
+    /// # Safety:
+    ///
+    /// [GDTInfo::init_and_load] needs to be called before this is
+    /// useable
     pub gdt: GDTInfo,
 
     /// Core locals used by tests
@@ -149,7 +157,7 @@ impl CoreLocals {
 
             apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
 
-            gdt: GDTInfo::uninit(),
+            gdt: GDTInfo::new_uninit(),
 
             #[cfg(feature = "test")]
             test_local: TestCoreLocals::new(),
@@ -308,7 +316,7 @@ pub unsafe fn init(core_id: CoreId) {
         interrupts_disable_count: AtomicU64::new(1),
         apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
 
-        gdt: GDTInfo::uninit(),
+        gdt: GDTInfo::new_uninit(),
 
         #[cfg(feature = "test")]
         test_local: TestCoreLocals::new(),

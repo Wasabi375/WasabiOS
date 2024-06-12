@@ -15,10 +15,7 @@ use shared::{
 use static_assertions::const_assert;
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{
-        page_table::{PageTableEntry, PageTableLevel},
-        Page, PageSize, PageTableFlags, PhysFrame, Size4KiB,
-    },
+    structures::paging::{Page, PageSize, PhysFrame, Size4KiB},
     PhysAddr, VirtAddr,
 };
 
@@ -32,7 +29,7 @@ use crate::{
             self,
             ipi::{self, Ipi},
         },
-        cpuid, gdt, halt, interrupts,
+        cpuid, halt, interrupts,
     },
     locals, map_page,
     mem::{
@@ -105,12 +102,11 @@ static AP_STACK_PTR: AtomicU64 = AtomicU64::new(0);
 static AP_FRAME_ALLOCATED: AtomicBool = AtomicBool::new(false);
 static AP_PAGE_ALLOCATED: AtomicBool = AtomicBool::new(false);
 
-const TRAMPOLINE_CODE: &[u8] = include_bytes!(concat!(
-    env!("OUT_DIR"),
-    "/src/cpu/apic/ap_trampoline_minimal.bin"
-));
+const TRAMPOLINE_CODE: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/src/cpu/apic/ap_trampoline.bin"));
 const_assert!(TRAMPOLINE_CODE.len() as u64 <= Size4KiB::SIZE);
 
+#[allow(dead_code)]
 const TEST_COUNTER_OFFSET: u64 = 4;
 const PAGE_TABLE_OFFSET: u64 = 3;
 const STACK_PTR_OFFSET: u64 = 2;
@@ -175,10 +171,6 @@ pub fn reserve_pages(allocator: &mut PageAllocator) {
 pub fn ap_startup() {
     info!("Starting APs");
     debug!("ap trampoline size: {}", TRAMPOLINE_CODE.len());
-    debug!(
-        "ap trampoline asm: {}",
-        concat!(env!("OUT_DIR"), "/src/cpu/apicap_trampoline_minimal.bin")
-    );
 
     bsp_ctrl_regs::store_bsp_regs();
 
@@ -249,11 +241,6 @@ pub fn ap_startup() {
         } else {
             panic!("somehow {ready_count} cores are ready, but only {known_started} were started");
         }
-    }
-
-    if log::log_enabled!(log::Level::Debug) {
-        let test_counter = sipi.read_value(TEST_COUNTER_OFFSET);
-        debug!("AP Startup test counter: {test_counter}");
     }
 }
 
@@ -380,7 +367,7 @@ unsafe extern "C" fn ap_entry() -> ! {
         core_local::init(core_id);
 
         // Safety: only called once for ap and log and mem are initialized by bsp
-        locals!().gdt.init();
+        locals!().gdt.init_and_load();
 
         interrupts::init();
 

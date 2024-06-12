@@ -145,7 +145,7 @@ pub fn init(page_table: &mut RecursivePageTable) {
 }
 
 fn reserve_pages(page_allocator: &mut PageAllocator) {
-    crate::apic::multiprocessor::reserve_pages(page_allocator);
+    crate::apic::ap_startup::reserve_pages(page_allocator);
 }
 
 /// A page allocator
