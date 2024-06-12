@@ -19,7 +19,10 @@ use shared::{
     KiB,
 };
 use thiserror::Error;
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+use x86_64::structures::{
+    idt::{InterruptDescriptorTable, InterruptStackFrame},
+    paging::{PageSize, Size4KiB},
+};
 
 /// The function type used for interrupt handlers
 pub type InterruptFn =
@@ -170,15 +173,15 @@ exception_fn!(breakpoint_handler, stack_frame, {
     warn!("breakpoint hit at\n{stack_frame:#?}");
 });
 
-/// the stack size for the double fault exception stack
+/// the number of pages for the double fault exception stack
 ///
 /// DF uses a separate stack, in case DF was caused by a stack overflow
-pub const DOUBLE_FAULT_STACK_SIZE: u64 = KiB!(4 * 5);
+pub const DOUBLE_FAULT_STACK_PAGE_COUNT: u64 = 2;
 
-/// the stack size for the page fault exception stack
+/// the number of pages for the page fault exception stack
 ///
 /// PF uses a separate stack, in case PF was caused by a stack overflow
-pub const PAGE_FAULT_STACK_SIZE: u64 = KiB!(4 * 5);
+pub const PAGE_FAULT_STACK_PAGE_COUNT: u64 = 2;
 
 /// generic interrupt handler, that is called for any interrupt handler with
 /// `interrupt_vector >= 32`.

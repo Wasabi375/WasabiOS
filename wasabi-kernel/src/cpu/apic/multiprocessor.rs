@@ -39,7 +39,6 @@ use crate::{
         frame_allocator::PhysAllocator,
         page_allocator::PageAllocator,
         page_table::KERNEL_PAGE_TABLE,
-        page_table_debug_ext::PageTableDebugExt,
         structs::{GuardedPages, Mapped, Unmapped},
         MemError,
     },
@@ -71,8 +70,9 @@ mod bsp_ctrl_regs {
         BSP_CR4.store(Cr4::read_raw(), Ordering::Release);
         BSP_EFER.store(Efer::read_raw(), Ordering::Release);
         BSP_REGS_STORED.store(true, Ordering::SeqCst);
-        trace!("cr0: {:?}", Cr0::read());
-        trace!("cr4: {:?}", Cr0::read());
+        trace!("bsp cr0: {:?}", Cr0::read());
+        trace!("bsp cr4: {:?}", Cr0::read());
+        trace!("bsp efer: {:?}", Efer::read());
     }
 
     /// Restore control registers from bsp to ap
@@ -291,7 +291,7 @@ impl ApStack {
         assert_eq!(pages.0.size(), DEFAULT_STACK_SIZE);
 
         let start = pages.0.start_addr();
-        let end = pages.0.end_addr() + 1;
+        let end = pages.0.end_addr().align_down(Self::STACK_ALIGN);
 
         assert!(
             start.is_aligned(Self::STACK_ALIGN),
@@ -379,7 +379,9 @@ unsafe extern "C" fn ap_entry() -> ! {
         // Safety: after core_boot and mem+logging is initialized already by bsp
         core_local::init(core_id);
 
-        gdt::init();
+        // Safety: only called once for ap and log and mem are initialized by bsp
+        locals!().gdt.init();
+
         interrupts::init();
 
         apic::init().unwrap();

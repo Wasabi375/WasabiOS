@@ -32,7 +32,7 @@ use wasabi_kernel::{
         apic::{self, timer::TimerConfig},
         interrupts::InterruptVector,
     },
-    init, time,
+    kernel_init, time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
@@ -49,7 +49,7 @@ fn timer_int_handler(_vec: InterruptVector, _isf: InterruptStackFrame) -> Result
 
 /// the main entry point for the kernel. Called by the bootloader.
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    init(boot_info);
+    kernel_init(boot_info);
 
     let startup_time = time::time_since_startup().to_millis();
     info!("tsc clock rate {}MHz", time::tsc_tickrate());

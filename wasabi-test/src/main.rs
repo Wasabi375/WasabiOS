@@ -107,7 +107,7 @@ use shared::lockcell::LockCell;
 use testing::description::{KernelTestDescription, KernelTestFn, TestExitState, KERNEL_TESTS};
 use uart_16550::SerialPort;
 use wasabi_kernel::{
-    bootloader_config_common, init,
+    bootloader_config_common, kernel_init,
     serial::SERIAL2,
     testing::{panic::use_custom_panic_handler, qemu},
 };
@@ -142,7 +142,7 @@ fn wait_for_test_ready_handshake(serial: &mut SerialPort) {
 
 /// the main entry point for the kernel in test mode
 fn kernel_test_main(boot_info: &'static mut BootInfo) -> ! {
-    init(boot_info);
+    kernel_init(boot_info);
 
     unsafe {
         locals!().disable_interrupts();

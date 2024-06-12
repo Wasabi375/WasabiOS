@@ -10,7 +10,7 @@ use log::{debug, info, trace, warn};
 use crate::{test_locals, testing::core_local::TestCoreLocals};
 
 use crate::{
-    cpu::{self, apic::Apic, cpuid},
+    cpu::{self, apic::Apic, cpuid, gdt::GDTInfo},
     locals,
     prelude::UnwrapTicketLock,
 };
@@ -126,6 +126,8 @@ pub struct CoreLocals {
     /// [cpu::apic::init] must be called before this can be used
     pub apic: UnwrapTicketLock<Apic>,
 
+    pub gdt: GDTInfo,
+
     /// Core locals used by tests
     #[cfg(feature = "test")]
     pub test_local: TestCoreLocals,
@@ -146,6 +148,8 @@ impl CoreLocals {
             interrupts_disable_count: AtomicU64::new(1),
 
             apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
+
+            gdt: GDTInfo::uninit(),
 
             #[cfg(feature = "test")]
             test_local: TestCoreLocals::new(),
@@ -243,7 +247,8 @@ impl CoreLocals {
 ///
 /// # Safety
 ///
-/// this function must only be called once per CPU core, at the start of the execution.
+/// this functon must only be called once per CPU core, at the start of the execution.
+/// Also [`locals!`] does not return a static ref before [`init`] finished.
 pub unsafe fn core_boot() -> CoreId {
     let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::AcqRel).into();
 
@@ -302,6 +307,8 @@ pub unsafe fn init(core_id: CoreId) {
         exception_count: AutoRefCounter::new(0),
         interrupts_disable_count: AtomicU64::new(1),
         apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
+
+        gdt: GDTInfo::uninit(),
 
         #[cfg(feature = "test")]
         test_local: TestCoreLocals::new(),
