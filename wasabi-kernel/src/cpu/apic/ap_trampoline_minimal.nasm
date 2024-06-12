@@ -64,6 +64,36 @@ USE64
 long_mode_ap:
 
     LOCK inc dword [trampoline.test_counter]
+
+    xor rcx, rcx
+
+    ;; load the addr of the stack end ptr into rdi
+    mov rdi, [trampoline.stack_end_ptr]
+    
+    ;; load the stack end into rax
+    ;; loop until stack end is not 0
+wait_for_stack
+    mov rax, [rdi]
+    cmp rax, rcx
+    je wait_for_stack
+
+    ; cmp rax with [rdi], if equal load rcx into [rdi] and set ZF
+    ; otherwise load [rdi] into rax
+    lock cmpxchg [rdi], rcx
+    ; we want to load the stack ptr (not 0) into rax so we repeat
+    ; if [rdi] equals rcx(0)
+    jne wait_for_stack
+
+    ;; load stack end into rsp 
+    ;; we have taken ownership 
+    mov rsp, rax
+    
+    LOCK inc dword [trampoline.test_counter]
+    ;jmp halt_loop
+
+    mov rbx, [trampoline.ap_entry]
+    jmp [trampoline.ap_entry]
+
 halt_loop:
     cli
     hlt

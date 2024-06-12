@@ -81,6 +81,8 @@ mod bsp_ctrl_regs {
     /// The caller must guarantee that the bsp regs read with [store_bsp_regs]
     /// are still valid
     pub unsafe fn set_regs() {
+        // NOTE logging is not yet initialized in AP when this is called
+
         // Safety:
         //  we just restore the values used in bsp so this should be safe,
         //  assuming they are not stale.
@@ -90,7 +92,6 @@ mod bsp_ctrl_regs {
             Cr4::write_raw(BSP_CR4.load(Ordering::Acquire));
             Efer::write_raw(BSP_EFER.load(Ordering::Acquire));
         }
-        trace!("restoring bsp ctrl regs to ap");
     }
 }
 
@@ -362,6 +363,7 @@ impl Drop for ApStack {
     }
 }
 
+#[allow(unused)]
 unsafe extern "C" fn ap_entry() -> ! {
     // TODO unify with kernel_init
     unsafe {
@@ -523,25 +525,28 @@ impl SipiPayload<Construction> {
                 out(reg) page_table
             }
         }
-        trace!("store page table({:x}) in sipi payload", page_table);
+        debug!("store page table({:#x}) in sipi payload", page_table);
         self.set_value(PAGE_TABLE_OFFSET, page_table);
     }
 
     fn set_entry_point(&mut self) {
-        trace!(
-            "store entry point({:x}) in sipi payload",
+        debug!(
+            "store entry point({:#x}) in sipi payload",
             ap_entry as *const () as u64
         );
         self.set_value(ENTRY_POINT_OFFSET, ap_entry as *const () as u64);
     }
 
     fn set_base_addr(&mut self) {
-        trace!("store base addr in sipi payload");
+        debug!("store base addr({:p}) in sipi payload", self.virt);
         self.set_value(BASE_ADDR_OFFSET, self.virt.as_u64());
     }
 
     fn set_stack_end_ptr(&mut self) {
-        trace!("store stack end ptr in sipi payload!");
+        debug!(
+            "store stack end ptr({:p}) in sipi payload!",
+            AP_STACK_PTR.as_ptr()
+        );
         self.set_value(STACK_PTR_OFFSET, AP_STACK_PTR.as_ptr() as u64);
     }
 
