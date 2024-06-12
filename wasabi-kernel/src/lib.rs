@@ -46,10 +46,13 @@ use x86_64::structures::paging::{PageSize, Size4KiB};
 
 use crate::{
     core_local::core_boot,
-    cpu::{apic, cpuid, interrupts},
+    cpu::{apic, cpuid, halt, interrupts},
 };
 use bootloader_api::{config::Mapping, BootInfo};
 use core::ptr::null_mut;
+
+/// The main function called for each Core after the kernel is initialized
+static mut KERNEL_MAIN: fn() -> ! = halt;
 
 /// Contains the [BootInfo] provided by the Bootloader
 /// TODO: this breaks rust uniquness guarantee
@@ -64,19 +67,29 @@ pub unsafe fn boot_info() -> &'static mut BootInfo {
     unsafe { &mut *BOOT_INFO }
 }
 
-/// initializes the kernel.
-pub fn kernel_main<F>(
+/// enters the main kernel function, specified by the [entry_point] macro.
+pub fn enter_kernel_main() -> ! {
+    unsafe {
+        // Safety: this is only written once during bsp start.
+        // There is no way this is currently being modified
+        KERNEL_MAIN()
+    }
+}
+
+/// initializes the kernel and calls `kernel_start`.
+pub fn kernel_bsp_entry(
     boot_info: &'static mut BootInfo,
     kernel_config: KernelConfig,
-    kernel_start: F,
-) -> !
-where
-    F: Fn() -> !,
-{
+    kernel_start: fn() -> !,
+) -> ! {
     // Safety: TODO: boot info handling not really save, but it's fine for now
     // we are still single core and don't really care
     unsafe {
         BOOT_INFO = boot_info;
+    }
+    unsafe {
+        // Safety: only written once here, and bsp_entry is only executed once
+        KERNEL_MAIN = kernel_start;
     }
 
     // Safety:
@@ -122,7 +135,7 @@ where
     assert!(locals!().interrupts_enabled());
     info!("Kernel initialized");
 
-    kernel_start();
+    enter_kernel_main()
 }
 
 /// The default stack size used by the kernel
@@ -214,8 +227,8 @@ macro_rules! entry_point {
         #[doc(hidden)]
         fn __impl_kernel_start(boot_info: &'static mut BootInfo) -> ! {
             let kernel_conf: $crate::KernelConfig = $k_conf;
-            let kernel_start: fn() -> ! = $path;
-            $crate::kernel_main(boot_info, kernel_conf, kernel_start);
+            let kernel_main: fn() -> ! = $path;
+            $crate::kernel_bsp_entry(boot_info, kernel_conf, kernel_main);
         }
         bootloader_api::entry_point!(__impl_kernel_start, config = &BOOTLOADER_CONFIG);
     };

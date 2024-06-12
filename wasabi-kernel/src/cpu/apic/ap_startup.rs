@@ -29,9 +29,9 @@ use crate::{
             self,
             ipi::{self, Ipi},
         },
-        cpuid, halt, interrupts,
+        cpuid, interrupts,
     },
-    locals, map_page,
+    enter_kernel_main, locals, map_page,
     mem::{
         frame_allocator::PhysAllocator,
         page_allocator::PageAllocator,
@@ -378,8 +378,7 @@ unsafe extern "C" fn ap_entry() -> ! {
         info!("Core {} online", core_id);
     }
 
-    // TODO somehow call into kernel main function
-    halt();
+    enter_kernel_main();
 }
 
 const WAIT_FOR_START_TIMEOUT: Duration = Duration::new_millis(2000);

@@ -53,6 +53,7 @@ fn kernel_main() -> ! {
     info!("tsc clock rate {}MHz", time::tsc_tickrate());
     info!("kernel boot took {:?} - {}", startup_time, startup_time);
 
+    // TODO broken in smp
     // start_timer();
 
     info!("OS Done! cpu::halt()");

@@ -108,6 +108,7 @@ use testing::description::{KernelTestDescription, KernelTestFn, TestExitState, K
 use uart_16550::SerialPort;
 use wasabi_kernel::{
     bootloader_config_common,
+    cpu::halt,
     serial::SERIAL2,
     testing::{panic::use_custom_panic_handler, qemu},
     KernelConfig,
@@ -150,6 +151,10 @@ fn wait_for_test_ready_handshake(serial: &mut SerialPort) {
 fn kernel_test_main() -> ! {
     unsafe {
         locals!().disable_interrupts();
+    }
+    if !locals!().is_bsp() {
+        todo_warn!("Test do not support multiple cores");
+        halt();
     }
 
     let mut serial = SERIAL2.lock();

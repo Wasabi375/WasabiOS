@@ -49,6 +49,7 @@ lazy_static! {
 /// The index into the array is `interrupt_vector - 32`. We don't store
 /// handlers for the first 32 interrupts, as those are used as exceptions handlers
 /// by the OS and have a different function signature.
+// FIXME: this should be in core locals
 static INTERRUPT_HANDLERS: ReadWriteCell<[Option<InterruptFn>; 256 - 32]> =
     ReadWriteCell::new_non_preemtable([None; 256 - 32]);
 
