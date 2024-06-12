@@ -43,17 +43,17 @@
 //! OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 //! USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::{default_colors, LogSetup, TryLog};
+use crate::{default_colors, write_record, LogSetup, TryLog, WriteOpts};
 use core::{
     fmt::{self, Error, Write},
     marker::PhantomData,
 };
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
-use shared::lockcell::LockCell;
-use staticvec::{StaticString, StaticVec};
+use shared::{lockcell::LockCell, CoreInfo};
+use staticvec::StaticVec;
 
 #[cfg(feature = "color")]
-use colored::{Color, ColoredString, Colorize};
+use colored::Color;
 
 /// Implements [`Log`] and a set of simple builder methods for configuration.
 ///
@@ -65,7 +65,7 @@ use colored::{Color, ColoredString, Colorize};
 ///
 /// This logger does not use any heap allocations. All data is stored in place.
 /// It can only store [`LevelFilter`]s for `N` log targets/modules and `R` rename mappings
-pub struct RefLogger<'a, W, L, const N: usize = 126, const R: usize = 126> {
+pub struct RefLogger<'a, W, L, CI, const N: usize = 126, const R: usize = 126> {
     /// The default logging level
     default_level: LevelFilter,
 
@@ -84,14 +84,17 @@ pub struct RefLogger<'a, W, L, const N: usize = 126, const R: usize = 126> {
     writer: &'a L,
     _phantom_writer: PhantomData<W>,
 
+    _phantom_core_info: PhantomData<CI>,
+
     #[cfg(feature = "color")]
     level_colors: [Color; 6],
 }
 
-unsafe impl<W, L: Sync, const N: usize, const R: usize> Sync for RefLogger<'_, W, L, N, R> {}
-unsafe impl<W, L: Send, const N: usize, const R: usize> Send for RefLogger<'_, W, L, N, R> {}
+unsafe impl<W, L: Sync, CI, const N: usize, const R: usize> Sync for RefLogger<'_, W, L, CI, N, R> {}
+unsafe impl<W, L: Send, CI, const N: usize, const R: usize> Send for RefLogger<'_, W, L, CI, N, R> {}
 
-impl<'a, W, L: LockCell<W>, const N: usize, const R: usize> RefLogger<'a, W, L, N, R>
+impl<'a, W, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
+    RefLogger<'a, W, L, CI, N, R>
 where
     W: fmt::Write,
 {
@@ -115,6 +118,7 @@ where
             module_rename_mapping: StaticVec::new(),
             writer,
             _phantom_writer: PhantomData,
+            _phantom_core_info: PhantomData,
             #[cfg(feature = "color")]
             level_colors: default_colors(),
         }
@@ -186,7 +190,9 @@ where
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> RefLogger<'a, W, L, N, R> {
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
+    RefLogger<'a, W, L, CI, N, R>
+{
     /// 'Init' the actual logger, instantiate it and configure it,
     pub fn init(&mut self) {
         /* Sort all module levels from most specific to least specific. The length of the module
@@ -215,52 +221,22 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> RefLogger<'a,
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> RefLogger<'a, W, L, N, R> {
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
+    RefLogger<'a, W, L, CI, N, R>
+{
     pub fn try_log(&self, record: &Record) -> Result<(), Error> {
         if !self.enabled(record.metadata()) {
             return Ok(());
         }
 
+        let opts = WriteOpts::<'_, CI> {
+            level_colors: &self.level_colors,
+            module_rename_mapping: &self.module_rename_mapping,
+            _core_info: PhantomData,
+        };
+
         let mut writer = self.writer.lock();
-
-        let level = record.level();
-        if cfg!(feature = "color") {
-            let color = self.level_colors[level as usize];
-            let mut level_str: StaticString<6> = StaticString::new();
-            write!(level_str, "{:<5}", level.as_str())
-                .expect("StaticString of size 6 should be enough for the level");
-            let level: ColoredString<50> = level_str
-                .as_str()
-                .color(color)
-                .expect("StaticString of size 50 should be enough for the level + color");
-
-            writer.write_fmt(format_args!("{}", level))?;
-        } else {
-            writer.write_fmt(format_args!("{:<5}", level))?;
-        };
-
-        let target = if !record.target().is_empty() {
-            record.target()
-        } else {
-            record.module_path().unwrap_or_default()
-        };
-
-        let mut target_renamed = false;
-        for (old_name, new_name) in &self.module_rename_mapping {
-            if target.starts_with(old_name) {
-                target_renamed = true;
-                let rest = &target[old_name.len()..];
-                writer.write_fmt(format_args!(" [{}{}]", new_name, rest))?;
-                break;
-            }
-        }
-        if !target_renamed {
-            writer.write_fmt(format_args!(" [{target}]"))?;
-        }
-
-        writer.write_fmt(format_args!(" {}\n", record.args()))?;
-
-        Ok(())
+        write_record(writer.as_mut(), record, opts)
     }
 
     pub fn enabled(&self, metadata: &Metadata) -> bool {
@@ -277,8 +253,8 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> RefLogger<'a,
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
-    for RefLogger<'a, W, L, N, R>
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize> Log
+    for RefLogger<'a, W, L, CI, N, R>
 {
     fn enabled(&self, metadata: &Metadata) -> bool {
         self.enabled(metadata)
@@ -293,8 +269,8 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> Log
     fn flush(&self) {}
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> TryLog
-    for RefLogger<'a, W, L, N, R>
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize> TryLog
+    for RefLogger<'a, W, L, CI, N, R>
 {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         self.enabled(metadata)
@@ -309,8 +285,8 @@ impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> TryLog
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, const N: usize, const R: usize> LogSetup
-    for RefLogger<'a, W, L, N, R>
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize> LogSetup
+    for RefLogger<'a, W, L, CI, N, R>
 {
     fn with_module_rename(&mut self, target: &'static str, rename: &'static str) -> &mut Self {
         self.module_rename_mapping.push((target, rename));

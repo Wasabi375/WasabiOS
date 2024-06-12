@@ -7,12 +7,17 @@ pub mod dispatch;
 mod own_logger;
 mod ref_logger;
 
+use core::{fmt::Write, marker::PhantomData};
+
 #[cfg(feature = "color")]
-use colored::Color;
+use colored::{Color, ColoredString, Colorize};
 
 pub use dispatch::DispatchLogger;
+use log::Record;
 pub use own_logger::OwnLogger;
 pub use ref_logger::RefLogger;
+use shared::CoreInfo;
+use staticvec::StaticString;
 
 pub struct FlushError {}
 
@@ -41,4 +46,85 @@ pub const fn default_colors() -> [Color; 6] {
         Color::Blue,
         Color::White,
     ]
+}
+
+struct WriteOpts<'a, CI> {
+    #[cfg(feature = "color")]
+    level_colors: &'a [Color; 6],
+
+    module_rename_mapping: &'a [(&'a str, &'a str)],
+
+    _core_info: PhantomData<CI>,
+}
+
+fn write_record<W: Write, CI: CoreInfo>(
+    writer: &mut W,
+    record: &Record,
+    opts: WriteOpts<'_, CI>,
+) -> Result<(), core::fmt::Error> {
+    write_processor::<W, CI>(writer)?;
+    writer.write_char(' ')?;
+    write_log_level(record, &opts, writer)?;
+    writer.write_char(' ')?;
+    write_target(record, opts, writer)?;
+    writer.write_char(' ')?;
+
+    writer.write_fmt(format_args!("{}\n", record.args()))?;
+
+    Ok(())
+}
+
+fn write_processor<W: Write, CI: CoreInfo>(writer: &mut W) -> Result<(), core::fmt::Error> {
+    if CI::is_bsp() {
+        writer.write_str("(BSP)")
+    } else {
+        writer.write_fmt(format_args!("(AP: {})", CI::core_id()))
+    }
+}
+
+fn write_target<W: Write, CI>(
+    record: &Record<'_>,
+    opts: WriteOpts<'_, CI>,
+    writer: &mut W,
+) -> Result<(), core::fmt::Error> {
+    let target = if !record.target().is_empty() {
+        record.target()
+    } else {
+        record.module_path().unwrap_or_default()
+    };
+    let mut target_renamed = false;
+    for (old_name, new_name) in opts.module_rename_mapping {
+        if target.starts_with(old_name) {
+            target_renamed = true;
+            let rest = &target[old_name.len()..];
+            writer.write_fmt(format_args!(" [{}{}]", new_name, rest))?;
+            break;
+        }
+    }
+    Ok(if !target_renamed {
+        writer.write_fmt(format_args!("[{target}]"))?;
+    })
+}
+
+fn write_log_level<W: Write, CI>(
+    record: &Record<'_>,
+    opts: &WriteOpts<'_, CI>,
+    writer: &mut W,
+) -> Result<(), core::fmt::Error> {
+    let level = record.level();
+    if cfg!(feature = "color") {
+        let color = opts.level_colors[level as usize];
+        let mut level_str: StaticString<6> = StaticString::new();
+        write!(level_str, "{:<5}", level.as_str())
+            .expect("StaticString of size 6 should be enough for the level");
+        let level: ColoredString<50> = level_str
+            .as_str()
+            .color(color)
+            .expect("StaticString of size 50 should be enough for the level + color");
+
+        writer.write_fmt(format_args!("{}", level))?;
+    } else {
+        writer.write_fmt(format_args!("{:<5}", level))?;
+    };
+    Ok(())
 }

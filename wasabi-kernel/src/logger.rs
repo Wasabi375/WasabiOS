@@ -33,7 +33,14 @@ pub static mut LOGGER: Option<DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LE
 
 /// the static serial logger.
 static mut SERIAL_LOGGER: Option<
-    RefLogger<'static, SerialPort, UnwrapTicketLock<SerialPort>, 0, MAX_RENAME_MAPPINGS>,
+    RefLogger<
+        'static,
+        SerialPort,
+        UnwrapTicketLock<SerialPort>,
+        CoreInterruptState,
+        0,
+        MAX_RENAME_MAPPINGS,
+    >,
 > = None;
 
 /// setup module renames for any static logger

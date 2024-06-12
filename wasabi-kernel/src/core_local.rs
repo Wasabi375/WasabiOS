@@ -24,6 +24,7 @@ use core::{
 use shared::{
     lockcell::{InterruptState, LockCellInternal},
     types::CoreId,
+    CoreInfo,
 };
 use x86_64::VirtAddr;
 
@@ -343,6 +344,16 @@ pub unsafe fn init(core_id: CoreId) {
 /// See [InterruptState]
 pub struct CoreInterruptState;
 
+impl CoreInfo for CoreInterruptState {
+    fn core_id() -> CoreId {
+        locals!().core_id
+    }
+
+    fn is_bsp() -> bool {
+        locals!().is_bsp()
+    }
+}
+
 impl InterruptState for CoreInterruptState {
     fn in_interrupt() -> bool {
         locals!().in_interrupt()
@@ -350,10 +361,6 @@ impl InterruptState for CoreInterruptState {
 
     fn in_exception() -> bool {
         locals!().in_exception()
-    }
-
-    fn core_id() -> CoreId {
-        locals!().core_id
     }
 
     unsafe fn enter_lock(disable_interrupts: bool) {

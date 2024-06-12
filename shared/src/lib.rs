@@ -17,6 +17,22 @@ pub mod rangeset;
 #[cfg(feature = "alloc")]
 pub mod reforbox;
 
+pub trait CoreInfo: 'static {
+    /// Gets the ID of the running core. It's required that this core ID is
+    /// unique to the core.
+    fn core_id() -> types::CoreId;
+
+    /// Returns `true` if the current processor is the bootstrap processor.
+    fn is_bsp() -> bool;
+
+    /// Returns `true` if the current processor is an application processor.
+    ///
+    /// This is `true`  if [Self::is_bsp] is `false`
+    fn is_ap() -> bool {
+        !Self::is_bsp()
+    }
+}
+
 /// common type definitions
 pub mod types {
     use core::{

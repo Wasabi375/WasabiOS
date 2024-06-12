@@ -21,6 +21,7 @@ use self::{
     kernel_font::BitFont,
 };
 use crate::{
+    core_local::CoreInterruptState,
     graphics::canvas::Canvas,
     logger::{setup_logger_module_rename, LOGGER},
     prelude::TicketLock,
@@ -109,7 +110,8 @@ fn init_framebuffer_logger() {
 
     let canvas_lock = TicketLock::new_non_preemtable(canvas_writer);
 
-    let mut fb_logger: OwnLogger<CanvasWriter<Framebuffer>, _> = OwnLogger::new(canvas_lock);
+    let mut fb_logger: OwnLogger<CanvasWriter<Framebuffer>, _, CoreInterruptState> =
+        OwnLogger::new(canvas_lock);
     setup_logger_module_rename(&mut fb_logger);
 
     if let Some(dispatch_logger) = unsafe { LOGGER.as_ref() } {

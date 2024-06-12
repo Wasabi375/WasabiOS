@@ -9,7 +9,7 @@
 
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 
-use crate::types::CoreId;
+use crate::CoreInfo;
 use core::{
     cell::UnsafeCell,
     fmt::Display,
@@ -769,17 +769,13 @@ impl<T: Send, L: RWLockCell<MaybeUninit<T>>> RWCellInternal<T> for UnwrapLock<T,
 /// Trait that allows access to OS-level constructs defining interrupt state,
 /// exception state, unique core IDs, and enter/exit lock (for interrupt
 /// disabling and enabling) primitives.
-pub trait InterruptState: 'static {
+pub trait InterruptState: CoreInfo + 'static {
     /// Returns `true` if we're currently in an interrupt
     fn in_interrupt() -> bool;
 
     /// Returns `true` if we're currently in an exception. Which indicates that
     /// a lock cannot be held as we may have pre-empted a non-preemptable lock
     fn in_exception() -> bool;
-
-    /// Gets the ID of the running core. It's required that this core ID is
-    /// unique to the core.
-    fn core_id() -> CoreId;
 
     /// Signal the kernel that a lock was taken. If `disable_interrupts` the
     /// lock does not support being interrupted and therefor we must disable
