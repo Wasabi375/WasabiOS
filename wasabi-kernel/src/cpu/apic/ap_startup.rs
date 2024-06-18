@@ -39,6 +39,7 @@ use crate::{
         structs::{GuardedPages, Mapped, Unmapped},
         MemError,
     },
+    processor_init,
     time::{self, Duration},
     DEFAULT_STACK_PAGE_COUNT, DEFAULT_STACK_SIZE,
 };
@@ -96,7 +97,11 @@ mod bsp_ctrl_regs {
 ///
 /// This is 0 when there is no stack available for an ap to boot.
 /// Each ap will loop until this is a valid ptr at which point they
-/// will use a atomic cmpexchg to take this and replace it with a 0.
+/// will use a atomic cmpexchg to take this and replace it with a 0,
+/// at which point the bsp will allocate a new stack for the next thread.
+///
+/// Once AP startup is completed the bsp will check if there is a unused
+/// stack left here and free it.
 static AP_STACK_PTR: AtomicU64 = AtomicU64::new(0);
 
 static AP_FRAME_ALLOCATED: AtomicBool = AtomicBool::new(false);
@@ -352,30 +357,14 @@ impl Drop for ApStack {
 
 #[allow(unused)]
 unsafe extern "C" fn ap_entry() -> ! {
-    // TODO unify with kernel_init
     unsafe {
         // Safety: this is safe during ap_startup
         bsp_ctrl_regs::set_regs();
-        // Safety: for ap only called in ap_entry
-        let core_id = core_local::core_boot();
-        // Safety: inherently unsafe and can crash, but if cpuid isn't supported
-        // we will crash at some point in the future anyways, so we might as well
-        // crash early
-        cpuid::check_cpuid_usable();
 
-        // Safety: after core_boot and mem+logging is initialized already by bsp
-        core_local::init(core_id);
+        // Saftey: only called once for each ap, right here
+        processor_init();
 
-        // Safety: only called once for ap and log and mem are initialized by bsp
-        locals!().gdt.init_and_load();
-
-        interrupts::init();
-
-        apic::init().unwrap();
-
-        assert!(locals!().interrupts_enabled());
-
-        info!("Core {} online", core_id);
+        info!("Core {} online", locals!().core_id);
     }
 
     enter_kernel_main();

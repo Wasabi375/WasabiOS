@@ -38,10 +38,12 @@ pub mod time;
 
 extern crate alloc;
 
+use core_local::get_ready_core_count;
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
 use shared::KiB;
 use static_assertions::const_assert;
+use time::{read_tsc, time_since_tsc, Duration};
 use x86_64::structures::paging::{PageSize, Size4KiB};
 
 use crate::{
@@ -49,7 +51,11 @@ use crate::{
     cpu::{apic, cpuid, halt, interrupts},
 };
 use bootloader_api::{config::Mapping, BootInfo};
-use core::ptr::null_mut;
+use core::{
+    hint::spin_loop,
+    ptr::null_mut,
+    sync::atomic::{AtomicU8, Ordering},
+};
 
 /// The main function called for each Core after the kernel is initialized
 static mut KERNEL_MAIN: fn() -> ! = halt;
@@ -67,8 +73,24 @@ pub unsafe fn boot_info() -> &'static mut BootInfo {
     unsafe { &mut *BOOT_INFO }
 }
 
+static KERNEL_MAIN_SEMAPHORE: AtomicU8 = AtomicU8::new(0);
+
 /// enters the main kernel function, specified by the [entry_point] macro.
 pub fn enter_kernel_main() -> ! {
+    KERNEL_MAIN_SEMAPHORE.fetch_add(1, Ordering::SeqCst);
+    let spin_start = read_tsc();
+    while KERNEL_MAIN_SEMAPHORE.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
+        spin_loop();
+        if time_since_tsc(spin_start) > Duration::new_seconds(5) {
+            warn!("waiting for all cores to reach kernel_main");
+        }
+        if time_since_tsc(spin_start) > Duration::new_seconds(30) {
+            panic!("cancel waiting fo rall cores to reach kernel_main");
+        }
+    }
+    if locals!().is_bsp() {
+        info!("all cores reached kernel_main!");
+    }
     unsafe {
         // Safety: this is only written once during bsp start.
         // There is no way this is currently being modified
@@ -92,41 +114,11 @@ pub fn kernel_bsp_entry(
         KERNEL_MAIN = kernel_start;
     }
 
-    // Safety:
-    // `init` is only called once per core and `core_boot`
-    let core_id = unsafe { core_boot() };
-
     time::calibrate_tsc();
+
     unsafe {
-        // Safety: bsp during `init`
-        serial::init_serial_ports();
-
-        // Safety: bsp during `init` after serial::init_serial_ports
-        logger::init();
-
-        // Safety: inherently unsafe and can crash, but if cpuid isn't supported
-        // we will crash at some point in the future anyways, so we might as well
-        // crash early
-        cpuid::check_cpuid_usable();
-
-        // Safety: bsp during `init` and locks and logging are working
-        mem::init();
-
-        // Safety:
-        // this is called after `core_boot()` and we have initialized memory and logging
-        core_local::init(core_id);
-
-        // Safety:
-        // only called here for bsp and we have just init core_locals and logging and mem
-        locals!().gdt.init_and_load();
-
-        // Safety: bsp during `init` and locks, logging and alloc are working
-        graphics::init(true);
+        processor_init();
     }
-
-    interrupts::init();
-
-    apic::init().unwrap();
 
     if kernel_config.start_aps {
         apic::ap_startup::ap_startup();
@@ -136,6 +128,50 @@ pub fn kernel_bsp_entry(
     info!("Kernel initialized");
 
     enter_kernel_main()
+}
+
+/// Safety: should only be called once, right at the start
+/// of the start of the processor
+pub unsafe fn processor_init() {
+    unsafe {
+        // Safety: `init` is only called once per core and `core_boot`
+        let core_id = core_boot();
+
+        if core_id.is_bsp() {
+            // Safety: bsp during `init`
+            serial::init_serial_ports();
+
+            // Safety: bsp during `init` after serial::init_serial_ports
+            logger::init();
+        }
+
+        // Safety: inherently unsafe and can crash, but if cpuid isn't supported
+        // we will crash at some point in the future anyways, so we might as well
+        // crash early
+        cpuid::check_cpuid_usable();
+
+        if core_id.is_bsp() {
+            // Safety: bsp during `init` and locks and logging are working
+            mem::init();
+        }
+
+        // Safety:
+        // this is called after `core_boot()` and we have initialized memory and logging
+        core_local::init(core_id);
+
+        // Safety:
+        // only called here for bsp and we have just init core_locals and logging and mem
+        locals!().gdt.init_and_load();
+
+        if core_id.is_bsp() {
+            // Safety: bsp during `init` and locks, logging and alloc are working
+            graphics::init(true);
+        }
+    }
+
+    interrupts::init();
+
+    apic::init().unwrap();
 }
 
 /// The default stack size used by the kernel
