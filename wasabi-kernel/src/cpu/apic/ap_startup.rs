@@ -23,14 +23,8 @@ use x86_64::{
 use log::{debug, error, info, trace, warn};
 
 use crate::{
-    core_local::{self, get_ready_core_count, get_started_core_count},
-    cpu::{
-        apic::{
-            self,
-            ipi::{self, Ipi},
-        },
-        cpuid, interrupts,
-    },
+    core_local::{get_ready_core_count, get_started_core_count},
+    cpu::apic::ipi::{self, Ipi},
     enter_kernel_main, locals, map_page,
     mem::{
         frame_allocator::PhysAllocator,
@@ -365,9 +359,10 @@ unsafe extern "C" fn ap_entry() -> ! {
         processor_init();
 
         info!("Core {} online", locals!().core_id);
-    }
 
-    enter_kernel_main();
+        // Safety: core is initialized
+        enter_kernel_main();
+    }
 }
 
 const WAIT_FOR_START_TIMEOUT: Duration = Duration::new_millis(2000);

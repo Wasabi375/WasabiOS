@@ -76,7 +76,11 @@ pub unsafe fn boot_info() -> &'static mut BootInfo {
 static KERNEL_MAIN_SEMAPHORE: AtomicU8 = AtomicU8::new(0);
 
 /// enters the main kernel function, specified by the [entry_point] macro.
-pub fn enter_kernel_main() -> ! {
+///
+/// # Safety:
+///
+/// the processor must be in a valid state that does not randomly cause UB
+pub unsafe fn enter_kernel_main() -> ! {
     KERNEL_MAIN_SEMAPHORE.fetch_add(1, Ordering::SeqCst);
     let spin_start = read_tsc();
     while KERNEL_MAIN_SEMAPHORE.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
@@ -127,7 +131,10 @@ pub fn kernel_bsp_entry(
     assert!(locals!().interrupts_enabled());
     info!("Kernel initialized");
 
-    enter_kernel_main()
+    unsafe {
+        // Safety: core is initialized
+        enter_kernel_main()
+    }
 }
 
 /// Safety: should only be called once, right at the start
@@ -167,9 +174,9 @@ pub unsafe fn processor_init() {
             // Safety: bsp during `init` and locks, logging and alloc are working
             graphics::init(true);
         }
-    }
 
-    interrupts::init();
+        interrupts::init();
+    }
 
     apic::init().unwrap();
 }

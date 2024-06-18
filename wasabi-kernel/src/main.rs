@@ -49,12 +49,13 @@ fn timer_int_handler(_vec: InterruptVector, _isf: InterruptStackFrame) -> Result
 
 /// the main entry point for the kernel. Called by the bootloader.
 fn kernel_main() -> ! {
-    let startup_time = time::time_since_startup().to_millis();
-    info!("tsc clock rate {}MHz", time::tsc_tickrate());
-    info!("kernel boot took {:?} - {}", startup_time, startup_time);
+    if locals!().is_bsp() {
+        let startup_time = time::time_since_startup().to_millis();
+        info!("tsc clock rate {}MHz", time::tsc_tickrate());
+        info!("kernel boot took {:?} - {}", startup_time, startup_time);
+    }
 
-    // TODO broken in smp
-    // start_timer();
+    start_timer();
 
     info!("OS Done! cpu::halt()");
     cpu::halt();

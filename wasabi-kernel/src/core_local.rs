@@ -10,7 +10,7 @@ use log::{debug, info, trace, warn};
 use crate::{test_locals, testing::core_local::TestCoreLocals};
 
 use crate::{
-    cpu::{self, apic::Apic, cpuid, gdt::GDTInfo},
+    cpu::{self, apic::Apic, cpuid, gdt::GDTInfo, interrupts::InterruptHandlerState},
     locals,
     prelude::UnwrapTicketLock,
 };
@@ -118,6 +118,9 @@ pub struct CoreLocals {
     /// interrupts once this hits 0. This is decremented in [Self::enable_interrupts].
     interrupts_disable_count: AtomicU64,
 
+    /// Interrupt state related to handling interrupts
+    pub interrupt_state: InterruptHandlerState,
+
     /// A lock holding the local apic. This can be [None] if the apic has not been
     /// initialized.
     ///
@@ -154,6 +157,8 @@ impl CoreLocals {
             // interrupts disbale count is 1, because the boot section does not allow
             // for interrupts, after all we have not initialized them.
             interrupts_disable_count: AtomicU64::new(1),
+
+            interrupt_state: InterruptHandlerState::new(),
 
             apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
 
@@ -307,19 +312,16 @@ pub unsafe fn init(core_id: CoreId) {
     let apic_id = cpuid::apic_id().into();
 
     let mut core_local = Box::new(CoreLocals {
-        virt_addr: VirtAddr::zero(),
         boot_lock: AtomicU8::new(core_id.0),
         core_id,
         apic_id,
         interrupt_count: AutoRefCounter::new(0),
         exception_count: AutoRefCounter::new(0),
+        // interrupts disbale count is 1, because the boot section does not allow
+        // for interrupts, after all we have not initialized them.
         interrupts_disable_count: AtomicU64::new(1),
-        apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
 
-        gdt: GDTInfo::new_uninit(),
-
-        #[cfg(feature = "test")]
-        test_local: TestCoreLocals::new(),
+        ..CoreLocals::empty()
     });
 
     core_local.virt_addr = VirtAddr::from_ptr(core_local.as_ref());

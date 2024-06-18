@@ -1,6 +1,6 @@
 //! kernelutilities/handlers for interrupts
 
-use core::fmt;
+use core::{cell::UnsafeCell, fmt};
 
 #[allow(unused_imports)]
 use log::{debug, error, info, warn};
@@ -13,7 +13,6 @@ use crate::{
     prelude::ReadWriteCell,
 };
 use interrupt_fn_builder::exception_fn;
-use lazy_static::lazy_static;
 use shared::lockcell::{LockCell, RWLockCell};
 use thiserror::Error;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
@@ -22,13 +21,52 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 pub type InterruptFn =
     fn(interrupt_vector: InterruptVector, stack_frame: InterruptStackFrame) -> Result<(), ()>;
 
-lazy_static! {
-    /// The interrupt descriptor table used by this kernel
-    static ref IDT: InterruptDescriptorTable = {
-        let mut idt = InterruptDescriptorTable::new();
+/// An interrupt vector is 8bits so there are `256` total interrupts.
+/// However the first `32` are for exceptions that are handled in a special
+/// way, therefore we only allow `256 - 32 = 224` handlers.
+pub const MAX_INTERRUPT_HANDLER_COUNT: usize = 256 - 32;
+
+/// A struct containing all state related to handling interrupts by the kernel
+pub struct InterruptHandlerState {
+    /// RW locked array holding all interrupt handlers or None.
+    ///
+    /// The index into the array is `interrupt_vector - 32`. We don't store
+    /// handlers for the first 32 interrupts, as those are used as exceptions handlers
+    /// by the CPU and have a different function signature.
+    handlers: ReadWriteCell<[Option<InterruptFn>; MAX_INTERRUPT_HANDLER_COUNT]>,
+    /// The kernel idt used by a processor
+    idt: UnsafeCell<InterruptDescriptorTable>,
+}
+
+impl InterruptHandlerState {
+    /// Creates a new [InterruptHandlerState]
+    ///
+    /// containing memory for an IDT and the handler function pointers
+    pub const fn new() -> Self {
+        InterruptHandlerState {
+            handlers: ReadWriteCell::new([None; MAX_INTERRUPT_HANDLER_COUNT]),
+            idt: UnsafeCell::new(InterruptDescriptorTable::new()),
+        }
+    }
+
+    fn idt(&self) -> &InterruptDescriptorTable {
+        // Saftey: the only time this is accessed as mutable is during `interrupts::init`
+        // which does not alias this
+        unsafe { &*self.idt.get() }
+    }
+
+    /// Initializes IDT
+    ///
+    /// # Safety:
+    ///
+    /// `&self` must be fullfill all guarantees of `&mut self`
+    unsafe fn init(&self) {
+        // Saftey: see [Self::init]
+        let idt = unsafe { &mut *self.idt.get() };
+
         // init_all_default must be called first or otherwise, this will
         // override any interrupts
-        default_handlers::init_all_default_interrupt_handlers(&mut idt);
+        default_handlers::init_all_default_interrupt_handlers(idt);
         idt.breakpoint.set_handler_fn(breakpoint_handler);
         unsafe {
             // we have to manually set double_fault and page fault in order to set the stack index
@@ -37,26 +75,28 @@ lazy_static! {
                 .set_stack_index(DOUBLE_FAULT_IST_INDEX);
 
             idt.page_fault
-               .set_handler_fn(default_handlers::page_fault_handler)
-               .set_stack_index(PAGE_FAULT_IST_INDEX);
+                .set_handler_fn(default_handlers::page_fault_handler)
+                .set_stack_index(PAGE_FAULT_IST_INDEX);
         }
-        idt
-    };
+    }
 }
 
-/// RW locked array holding all interrupt handlers or None.
-///
-/// The index into the array is `interrupt_vector - 32`. We don't store
-/// handlers for the first 32 interrupts, as those are used as exceptions handlers
-/// by the OS and have a different function signature.
-// FIXME: this should be in core locals
-static INTERRUPT_HANDLERS: ReadWriteCell<[Option<InterruptFn>; 256 - 32]> =
-    ReadWriteCell::new_non_preemtable([None; 256 - 32]);
-
 /// setup idt and enable interrupts
-pub fn init() {
+///
+/// # Safety:
+///
+/// must be called during processor startup, after logging and core_locals
+/// are initialized
+pub unsafe fn init() {
     info!("Load IDT");
-    IDT.load();
+
+    let interrupt_state = &locals!().interrupt_state;
+    unsafe {
+        // we have uniuq access here, becasue we are in a processor startup
+        interrupt_state.init();
+    }
+
+    interrupt_state.idt().load();
 
     unsafe {
         debug!("interrupts are enabled starting now");
@@ -103,7 +143,7 @@ pub fn register_interrupt_handler(
     handler: InterruptFn,
 ) -> Result<(), InterruptRegistrationError> {
     check_interrupt_vector(vector);
-    let mut handler_guard = INTERRUPT_HANDLERS.lock();
+    let mut handler_guard = locals!().interrupt_state.handlers.lock();
     let handlers = &mut handler_guard;
 
     let index = (vector as u8 - 32) as usize;
@@ -125,7 +165,7 @@ pub fn unregister_interrupt_handler(
     vector: InterruptVector,
 ) -> Result<InterruptFn, InterruptRegistrationError> {
     check_interrupt_vector(vector);
-    let mut handler_guard = INTERRUPT_HANDLERS.lock();
+    let mut handler_guard = locals!().interrupt_state.handlers.lock();
     let handlers = &mut handler_guard;
 
     let index = (vector as u8 - 32) as usize;
@@ -146,7 +186,7 @@ pub fn get_interrupt_handler(vector: InterruptVector) -> Option<InterruptFn> {
 
     let vector = vector as u8;
     let index = (vector - 32) as usize;
-    INTERRUPT_HANDLERS.read()[index]
+    locals!().interrupt_state.handlers.read()[index]
 }
 
 /// asserts that the `vector` is a valid interrupt handler.
