@@ -155,7 +155,7 @@ impl Timer<'_> {
     const MASK_BIT: usize = 16;
     const MODE_BITS: RangeInclusive<usize> = 17..=18;
     const DIVIDER_BITS: RangeInclusive<usize> = 0..=4;
-    const VECTOR_BIST: RangeInclusive<usize> = 0..=7;
+    const VECTOR_BITS: RangeInclusive<usize> = 0..=7;
 
     /// returns `true` if the timer is running at a constant rate.
     ///
@@ -190,14 +190,14 @@ impl Timer<'_> {
     ) -> Result<(), InterruptRegistrationError> {
         interrupts::register_interrupt_handler(vector, handler)?;
 
-        let apic = &mut self.apic;
-        apic.offset_mut(Offset::TimerLocalVectorTableEntry)
+        self.apic.timer.interrupt_vector = Some(vector);
+
+        self.apic
+            .offset_mut(Offset::TimerLocalVectorTableEntry)
             .update(|vte| {
                 vte.set_bit(Timer::MASK_BIT, false);
-                vte.set_bits(Timer::VECTOR_BIST, vector as u8 as u32);
+                vte.set_bits(Timer::VECTOR_BITS, vector as u8 as u32);
             });
-
-        self.apic.timer.interrupt_vector = Some(vector);
 
         Ok(())
     }
@@ -207,11 +207,12 @@ impl Timer<'_> {
     /// # Errors
     /// see [interrupts::unregister_interrupt_handler]
     pub fn unregister_interrupt_handler(&mut self) -> Result<(), InterruptRegistrationError> {
+        log::warn!("unregister timer handler");
         let apic = &mut self.apic;
         apic.offset_mut(Offset::TimerLocalVectorTableEntry)
             .update(|vte| {
                 vte.set_bit(Timer::MASK_BIT, true);
-                vte.set_bits(Timer::VECTOR_BIST, 0);
+                vte.set_bits(Timer::VECTOR_BITS, 0);
             });
         let vector = apic
             .timer
@@ -230,6 +231,9 @@ impl Timer<'_> {
             TimerMode::Stopped => self.stop(),
             TimerMode::OneShot(config) | TimerMode::Periodic(config) => {
                 let has_vector = apic.timer.interrupt_vector.is_some();
+                if !has_vector {
+                    log::warn!("start timer without vector!");
+                }
                 apic.offset_mut(Offset::TimerDivideConfiguration)
                     .update(|div| {
                         div.set_bits(Timer::DIVIDER_BITS, config.divider.into());
@@ -239,8 +243,15 @@ impl Timer<'_> {
                         tlvte.set_bit(Timer::MASK_BIT, !has_vector);
                         tlvte.set_bits(Timer::MODE_BITS, mode.vector_table_entry_bits());
                     });
+                assert_eq!(
+                    apic.offset(Offset::TimerLocalVectorTableEntry)
+                        .read()
+                        .get_bit(Timer::MASK_BIT),
+                    !has_vector
+                );
                 apic.offset_mut(Offset::TimerInitialCount)
                     .write(config.duration);
+                apic.timer.mode = mode;
             }
             TimerMode::TscDeadline => {
                 assert!(
@@ -252,6 +263,33 @@ impl Timer<'_> {
         }
     }
 
+    /// debug logs the current timer register states
+    pub fn debug_registers(&self) {
+        let initial = self.apic.offset(Offset::TimerInitialCount).read();
+        let current = self.apic.offset(Offset::TimerCurrentCount).read();
+        let divide = self.apic.offset(Offset::TimerDivideConfiguration).read();
+
+        log::debug!(
+            "Apic Timer: Initial: {}, Current: {}, Divide: {:b}",
+            initial,
+            current,
+            divide
+        );
+        let entry = self.apic.offset(Offset::TimerLocalVectorTableEntry).read();
+        let mask = entry.get_bit(Timer::MASK_BIT);
+        let mode = entry.get_bits(Timer::MODE_BITS);
+        let divider = entry.get_bits(Timer::DIVIDER_BITS);
+        let vector = entry.get_bits(Timer::VECTOR_BITS);
+
+        log::debug!(
+            "Apic Timer Entry: {}: Mask: {}, Mode: {}, Divider: {}, Vector: {}",
+            entry,
+            mask,
+            mode,
+            divider,
+            vector
+        );
+    }
     /// restarts the timer.
     ///
     /// Resets the timer counter to `reset`. See [TimerConfig::duration]

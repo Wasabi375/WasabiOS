@@ -18,32 +18,20 @@
 #[macro_use]
 extern crate wasabi_kernel;
 
-use core::sync::atomic::{AtomicU64, Ordering};
-
 #[allow(unused_imports)]
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
 use shared::lockcell::LockCell;
 use wasabi_kernel::{
     bootloader_config_common,
-    cpu::{
-        self,
-        apic::{self, timer::TimerConfig},
-        interrupts::InterruptVector,
-    },
+    cpu::{self, apic, apic::timer::TimerConfig, interrupts::InterruptVector},
     time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
-static LAST_TIMER_TSC: AtomicU64 = AtomicU64::new(0);
 fn timer_int_handler(_vec: InterruptVector, _isf: InterruptStackFrame) -> Result<(), ()> {
-    let last_tsc = LAST_TIMER_TSC.load(Ordering::Relaxed);
-    let now = time::read_tsc();
-    LAST_TIMER_TSC.store(now, Ordering::Relaxed);
-
-    let duration = time::time_between_tsc(last_tsc, now);
-    info!(target: "Timer", "[Core: {}] Duration since last tick: {}", locals!().core_id, duration);
+    info!(target: "Timer", "tick");
     Ok(())
 }
 
@@ -54,7 +42,6 @@ fn kernel_main() -> ! {
         info!("tsc clock rate {}MHz", time::tsc_tickrate());
         info!("kernel boot took {:?} - {}", startup_time, startup_time);
     }
-
     start_timer();
 
     info!("OS Done! cpu::halt()");
@@ -66,17 +53,18 @@ fn start_timer() {
     use apic::timer::{TimerDivider, TimerMode};
 
     let mut apic = locals!().apic.lock();
-    apic.timer().calibrate();
-    info!("apic timer: {:#?}", apic.timer());
+    let mut timer = apic.timer();
 
-    apic.timer()
+    timer
         .register_interrupt_handler(InterruptVector::Timer, timer_int_handler)
         .unwrap();
-    let apic_rate = apic.timer().rate_mhz() as u32;
-    apic.timer().start(TimerMode::Periodic(TimerConfig {
+    let apic_rate = timer.rate_mhz() as u32;
+    timer.start(TimerMode::Periodic(TimerConfig {
         divider: TimerDivider::DivBy2,
         duration: apic_rate * 1_000_000 / 2,
     }));
+    info!("apic timer: {:#?}", timer);
+    timer.debug_registers();
 }
 
 /// configuration for the bootloader

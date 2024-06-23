@@ -1,12 +1,12 @@
 //! Local Apic implementation
 
 use crate::{
-    cpu::cpuid::cpuid,
+    cpu::{cpuid::cpuid, interrupts::register_interrupt_handler},
     locals, map_frame,
     mem::{MemError, VirtAddrExt},
+    prelude::TicketLock,
 };
 use bit_field::BitField;
-use log::{debug, info, trace};
 use shared::lockcell::LockCell;
 use thiserror::Error;
 use volatile::{
@@ -16,7 +16,10 @@ use volatile::{
 use x86_64::{
     instructions::port::Port,
     registers::model_specific::Msr,
-    structures::paging::{PageTableFlags, PhysFrame, Size4KiB},
+    structures::{
+        idt::InterruptStackFrame,
+        paging::{PageTableFlags, PhysFrame, Size4KiB},
+    },
     PhysAddr, VirtAddr,
 };
 
@@ -25,17 +28,23 @@ use self::{
     timer::{Timer, TimerData},
 };
 
+#[allow(unused_imports)]
+use log::{debug, info, trace};
+
+use super::interrupts::{InterruptRegistrationError, InterruptVector};
+
 pub mod ap_startup;
 pub mod ipi;
 pub mod timer;
 
-/// MSR address of the local apic base.
-const IA32_APIC_BASE: Msr = Msr::new(0x1b);
+/// MSR for the apic base.
+static IA32_APIC_BASE: TicketLock<Msr> = TicketLock::new(Msr::new(0x1b));
 
 /// initializes the apic and stores it in [CoreLocals](crate::core_local::CoreLocals)
 pub fn init() -> Result<(), ApicCreationError> {
     info!("Init Apic...");
 
+    let mut apic_base = IA32_APIC_BASE.lock();
     let mut local_apic = locals!().apic.lock_uninit();
 
     disable_pic();
@@ -43,19 +52,18 @@ pub fn init() -> Result<(), ApicCreationError> {
     let cpuid_apci_info = cpuid(1, None);
 
     assert!(
-        cpuid_apci_info.edx & 1 << 9 != 0,
-        "Chip does not support apic"
+        cpuid_apci_info.edx.get_bit(9),
+        "Chip does not support local apic"
     );
-    trace!("Apic detected");
 
     let local_apic_id: u8 = cpuid_apci_info
         .ebx
         .get_bits(24..)
         .try_into()
         .unwrap_or_else(|_| panic!("local apic id does not fit in u8"));
-    debug!("local apic id: {local_apic_id}");
+    debug!("local apic id based on cpuid: {local_apic_id}");
 
-    let apic = Apic::create_from_msr(IA32_APIC_BASE)?;
+    let mut apic = Apic::create_from_msr(apic_base.as_mut())?;
 
     let id_reg = apic.id();
     assert_eq!(
@@ -69,8 +77,7 @@ pub fn init() -> Result<(), ApicCreationError> {
         "apic id in locals()! did not match apic provided id"
     );
 
-    // TODO: ensure that software enable bit in SIV register (bit 8) is set
-    //  otherwise apic will mask all interrupts except for INIT, NMI, SMI, SIPI
+    apic.timer().calibrate();
 
     local_apic.write(apic);
     info!("Apic initialized");
@@ -92,14 +99,16 @@ pub struct Apic {
 #[allow(missing_docs)]
 pub enum ApicCreationError {
     #[error("{0}")]
-    Mem(MemError),
+    Mem(#[from] MemError),
     #[error("Invalid Physical Base {0:p}")]
     InvalidBase(PhysAddr),
+    #[error("Failed to register interrupt handler")]
+    RegisterInterruptHandler(#[from] InterruptRegistrationError),
 }
 
 impl Apic {
     /// create a [Apic] reading it's address from the [Msr]
-    fn create_from_msr(apic_base: Msr) -> Result<Self, ApicCreationError> {
+    fn create_from_msr(apic_base: &mut Msr) -> Result<Self, ApicCreationError> {
         // Safety: reading apic base is ok
         let apic_base_data = unsafe { apic_base.read() };
         let apic_enabled = apic_base_data.get_bit(11);
@@ -129,8 +138,7 @@ impl Apic {
 
         let page = unsafe {
             // Safety: new page with apic frame (only used here) and is therefor safe
-            map_frame!(Size4KiB, apic_table_flags, phys_frame)
-                .map_err(|e| ApicCreationError::Mem(e))?
+            map_frame!(Size4KiB, apic_table_flags, phys_frame)?
         };
 
         let virt_base = page.start_address();
@@ -143,6 +151,13 @@ impl Apic {
 
         // stop the timer in case the bootloader used the apic timer
         apic.timer().stop();
+
+        register_interrupt_handler(InterruptVector::Spurious, spurious_int_handler)?;
+        apic.offset_mut(Offset::SpuriousInterruptVector)
+            .update(|siv| {
+                siv.set_bit(8, true);
+                siv.set_bits(0..=7, InterruptVector::Spurious as u8 as u32);
+            });
 
         Ok(apic)
     }
@@ -272,6 +287,10 @@ impl Id {
             .try_into()
             .expect("Apic id should fit into u8")
     }
+}
+
+fn spurious_int_handler(_vec: InterruptVector, stack_frame: InterruptStackFrame) -> Result<(), ()> {
+    panic!("spurious interrupt: \n{stack_frame:#x?}");
 }
 
 /// disables the 8259 pic

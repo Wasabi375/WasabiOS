@@ -113,7 +113,11 @@ pub unsafe fn init() {
 #[repr(u8)]
 #[allow(missing_docs)]
 pub enum InterruptVector {
+    // NOTE: all values must be >= 32
     Timer = 55,
+    // for some older processors the lower 4 bits must be 1, 63 is the lowest number >=32 matching
+    // this condition
+    Spurious = 63,
     Test = 255,
 }
 
