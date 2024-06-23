@@ -42,6 +42,7 @@ pub struct QemuConfig<'a> {
     pub kill_on_drop: bool,
     pub processor_count: u8,
     pub debug_log: Option<&'a Path>,
+    pub debug_info: &'a str,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -53,6 +54,7 @@ impl<'a> QemuConfig<'a> {
             kill_on_drop: true,
             processor_count: args.processor_count,
             debug_log: args.qemu_log.as_ref().map(|p| p.as_path()),
+            debug_info: args.qemu_info.as_str(),
         }
     }
 }
@@ -111,8 +113,8 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
             cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
             cmd.arg("-cpu").arg("max,vmx=off");
         } else {
-            cmd.arg("-enable-kvm");
-            cmd.arg("-cpu").arg("host");
+            // cmd.arg("-enable-kvm");
+            // cmd.arg("-cpu").arg("host");
         }
     }
 
@@ -125,7 +127,7 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
     }
 
     if let Some(log_path) = qemu.debug_log {
-        cmd.arg("-d").arg("int,cpu_reset,unimp,guest_errors");
+        cmd.arg("-d").arg(qemu.debug_info);
         cmd.arg("-D").arg(log_path);
     }
     cmd.arg("-no-reboot");

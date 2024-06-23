@@ -43,12 +43,18 @@ pub enum RunCommand {
 pub struct QemuOptions {
     /// This enables the qemu log
     ///
-    /// the logging options are "-d int,cpu_reset,unimp,guest_errors"
+    /// the logging options are defined using `qemu-info`
     /// and the log is stored to the given path
     ///
     /// TODO test will run qemu multiple times, we should make log paths somewhat unique
     #[arg(long)]
     pub qemu_log: Option<PathBuf>,
+
+    /// the qemu info to log
+    ///
+    /// this is only used if `qemu-log` is set
+    #[arg(long, default_value = "int,cpu_reset,unimp,guest_errors")]
+    pub qemu_info: String,
 
     /// The number of processors simulated by qemu
     #[arg(short, long, default_value_t = 4)]
