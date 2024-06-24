@@ -1,6 +1,6 @@
 //! The timer provided by the APIC
 use bit_field::BitField;
-use log::info;
+use log::{info, trace};
 use shared::{cpu::time::timestamp_now_tsc, types::TscTimestamp};
 
 use crate::{
@@ -332,6 +332,10 @@ impl Timer<'_> {
 
         info!("calibrating apic timer");
 
+        // TODO set nop vector for interrupts
+        // TODO function to set existing handler via vector
+        //  this differs from register, because it uses an already registered handler
+
         self.apic.timer.startup_tsc_time = timestamp_now_tsc();
         self.apic.timer.supports_tsc_deadline = cpuid(0x1, None).ecx.get_bit(24);
 
@@ -356,9 +360,11 @@ impl Timer<'_> {
         // stop calibration timer, we don't need it anymore
         self.stop();
 
-        info!(
+        trace!(
             "timer {}, counted {} ticks in {} seconds",
-            timer, elapsed_ticks, elapsed_seconds
+            timer,
+            elapsed_ticks,
+            elapsed_seconds
         );
 
         // rate in mhz

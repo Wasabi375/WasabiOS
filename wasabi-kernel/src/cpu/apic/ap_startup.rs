@@ -367,8 +367,8 @@ unsafe extern "C" fn ap_entry() -> ! {
     }
 }
 
-const WAIT_FOR_START_TIMEOUT: Duration = Duration::new_millis(2000);
-const WAIT_FOR_READY_TIMEOUT: Duration = Duration::new_millis(5000);
+const WAIT_FOR_START_TIMEOUT: Duration = Duration::new_millis(50);
+const WAIT_FOR_READY_TIMEOUT: Duration = Duration::new_millis(100);
 
 trait SipiPayloadState {}
 

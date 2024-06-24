@@ -22,11 +22,15 @@ extern crate wasabi_kernel;
 use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
-use shared::sync::lockcell::LockCell;
+use shared::{sync::lockcell::LockCell, types::Duration};
 use wasabi_kernel::{
     bootloader_config_common,
-    cpu::{self, apic, apic::timer::TimerConfig, interrupts::InterruptVector},
-    time,
+    cpu::{
+        self,
+        apic::{self, timer::TimerConfig},
+        interrupts::InterruptVector,
+    },
+    time::{self, sleep_tsc},
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
@@ -40,9 +44,14 @@ fn kernel_main() -> ! {
     if locals!().is_bsp() {
         let startup_time = time::time_since_startup().to_millis();
         info!("tsc clock rate {}MHz", time::tsc_tickrate());
-        info!("kernel boot took {:?} - {}", startup_time, startup_time);
+        warn!("kernel boot took {:?} - {}", startup_time, startup_time);
     }
     start_timer();
+
+    if locals!().core_id.0 == 2 {
+        sleep_tsc(Duration::Seconds(5));
+        panic!("test panic!");
+    }
 
     info!("OS Done! cpu::halt()");
     cpu::halt();
@@ -63,8 +72,7 @@ fn start_timer() {
         divider: TimerDivider::DivBy2,
         duration: apic_rate * 1_000_000 / 2,
     }));
-    info!("apic timer: {:#?}", timer);
-    timer.debug_registers();
+    trace!("apic timer: {:#?}", timer);
 }
 
 /// configuration for the bootloader

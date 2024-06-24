@@ -41,7 +41,7 @@ extern crate alloc;
 use core_local::get_ready_core_count;
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
-use shared::{cpu::time::read_tsc, types::Duration, KiB};
+use shared::{cpu::time::timestamp_now_tsc, types::Duration, KiB};
 use static_assertions::const_assert;
 use time::time_since_tsc;
 use x86_64::structures::paging::{PageSize, Size4KiB};
@@ -88,7 +88,7 @@ pub fn in_kernel_main() -> bool {
 /// the processor must be in a valid state that does not randomly cause UB
 pub unsafe fn enter_kernel_main() -> ! {
     KERNEL_MAIN_BARRIER.fetch_add(1, Ordering::SeqCst);
-    let spin_start = read_tsc();
+    let spin_start = timestamp_now_tsc();
     while KERNEL_MAIN_BARRIER.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
         spin_loop();
         if time_since_tsc(spin_start) > Duration::new_seconds(5) {
