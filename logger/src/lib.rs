@@ -16,7 +16,7 @@ pub use dispatch::DispatchLogger;
 use log::Record;
 pub use own_logger::OwnLogger;
 pub use ref_logger::RefLogger;
-use shared::CoreInfo;
+use shared::sync::CoreInfo;
 use staticvec::StaticString;
 
 pub struct FlushError {}

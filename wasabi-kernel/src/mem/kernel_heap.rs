@@ -18,7 +18,7 @@ use core::{
     ptr::{null_mut, NonNull},
 };
 use linked_list_allocator::Heap as LinkedHeap;
-use shared::{lockcell::LockCellInternal, KiB};
+use shared::{sync::lockcell::LockCellInternal, KiB};
 use x86_64::{
     structures::paging::{Mapper, PageSize, PageTableFlags, Size4KiB},
     VirtAddr,

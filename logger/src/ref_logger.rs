@@ -49,7 +49,7 @@ use core::{
     marker::PhantomData,
 };
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
-use shared::{lockcell::LockCell, CoreInfo};
+use shared::sync::{lockcell::LockCell, CoreInfo};
 use staticvec::StaticVec;
 
 #[cfg(feature = "color")]

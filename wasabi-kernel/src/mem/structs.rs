@@ -3,7 +3,7 @@
 use core::assert_matches::assert_matches;
 use core::ops::{Deref, DerefMut};
 use log::trace;
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 use x86_64::structures::paging::PageTableFlags;
 use x86_64::{
     structures::paging::{
@@ -262,7 +262,7 @@ impl<S: PageSize> PartialOrd for PagesIter<S> {
 #[cfg(feature = "test")]
 #[doc(hidden)]
 mod test {
-    use shared::lockcell::LockCell;
+    use shared::sync::lockcell::LockCell;
     use testing::{
         kernel_test, t_assert, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt,
         KernelTestError, TestUnwrapExt,

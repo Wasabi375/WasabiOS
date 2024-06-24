@@ -1,10 +1,11 @@
 //! The timer provided by the APIC
 use bit_field::BitField;
 use log::info;
+use shared::{cpu::time::timestamp_now_tsc, types::TscTimestamp};
 
 use crate::{
     cpu::interrupts::{self, InterruptFn, InterruptRegistrationError, InterruptVector},
-    time::{calibration_tick, read_tsc},
+    time::calibration_tick,
 };
 
 use super::{cpuid, Apic, Offset};
@@ -130,7 +131,7 @@ pub struct TimerData {
     /// the current [TimerMode]
     mode: TimerMode,
     /// the tsc time, when the timer was calibrated
-    startup_tsc_time: u64,
+    startup_tsc_time: TscTimestamp,
     /// `true` if the hardware supports deadline mode
     supports_tsc_deadline: bool,
 }
@@ -331,7 +332,7 @@ impl Timer<'_> {
 
         info!("calibrating apic timer");
 
-        self.apic.timer.startup_tsc_time = read_tsc();
+        self.apic.timer.startup_tsc_time = timestamp_now_tsc();
         self.apic.timer.supports_tsc_deadline = cpuid(0x1, None).ecx.get_bit(24);
 
         self.apic.timer.constant_rate = cpuid(0x6, None).eax.get_bit(2);

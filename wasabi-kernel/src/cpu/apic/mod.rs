@@ -7,7 +7,7 @@ use crate::{
     prelude::TicketLock,
 };
 use bit_field::BitField;
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 use thiserror::Error;
 use volatile::{
     access::{ReadOnly, ReadWrite},
@@ -227,7 +227,7 @@ impl Apic {
     /// and that this is only executed once per interrupt
     pub unsafe fn eoi() {
         unsafe {
-            use shared::lockcell::LockCellInternal;
+            use shared::sync::lockcell::LockCellInternal;
 
             // Safety: this is only safe, because we execute an atomic operation
             // on the apic register, therefor we can ignore the lock here.

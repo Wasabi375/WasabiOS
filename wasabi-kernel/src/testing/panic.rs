@@ -3,17 +3,13 @@
 use alloc::boxed::Box;
 use log::{debug, error, trace};
 
-use crate::{
-    panic::{panic_disable_cores, recreate_framebuffer, recreate_logger},
-    prelude::TicketLock,
-    testing::qemu,
-};
+use crate::{prelude::TicketLock, testing::qemu};
 use core::{
     marker::PhantomData,
     panic::PanicInfo,
     sync::atomic::{AtomicU8, Ordering},
 };
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 
 /// Function Type for custom panic handlers
 type CustomPanicHandler = dyn (FnOnce(&PanicInfo) -> !) + Send + 'static;
@@ -25,17 +21,12 @@ static CUSTOM_PANIC: TicketLock<Option<Box<CustomPanicHandler>>> = TicketLock::n
 static PANIC_RECURSION_MARKER: AtomicU8 = AtomicU8::new(0);
 
 /// panic handler used during tests
-pub fn test_panic_handler(info: &PanicInfo) -> ! {
+///
+/// # Safety:
+///
+/// requires all other cores to be disabled and that the logger and framebuffer are working
+pub unsafe fn test_panic_handler(info: &PanicInfo) -> ! {
     let panic_recursion = PANIC_RECURSION_MARKER.fetch_add(1, Ordering::SeqCst);
-
-    // Safety: we are in a panic handler
-    unsafe {
-        panic_disable_cores();
-
-        recreate_framebuffer();
-
-        recreate_logger();
-    };
 
     if let Some(custom_panic_handler) = CUSTOM_PANIC.lock().take() {
         trace!("Custom panic handler detected");

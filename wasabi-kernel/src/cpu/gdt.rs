@@ -3,7 +3,7 @@
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use log::{debug, info, trace};
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 use x86_64::{
     instructions::tables::load_tss,
     registers::segmentation::{Segment, CS, SS},

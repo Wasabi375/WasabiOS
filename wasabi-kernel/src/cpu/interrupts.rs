@@ -13,7 +13,7 @@ use crate::{
     prelude::ReadWriteCell,
 };
 use interrupt_fn_builder::exception_fn;
-use shared::lockcell::{LockCell, RWLockCell};
+use shared::sync::lockcell::{LockCell, RWLockCell};
 use thiserror::Error;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 

@@ -41,9 +41,9 @@ extern crate alloc;
 use core_local::get_ready_core_count;
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
-use shared::KiB;
+use shared::{cpu::time::read_tsc, types::Duration, KiB};
 use static_assertions::const_assert;
-use time::{read_tsc, time_since_tsc, Duration};
+use time::time_since_tsc;
 use x86_64::structures::paging::{PageSize, Size4KiB};
 
 use crate::{
@@ -73,7 +73,13 @@ pub unsafe fn boot_info() -> &'static mut BootInfo {
     unsafe { &mut *BOOT_INFO }
 }
 
-static KERNEL_MAIN_SEMAPHORE: AtomicU8 = AtomicU8::new(0);
+static KERNEL_MAIN_BARRIER: AtomicU8 = AtomicU8::new(0);
+
+/// Returns true after the kernel is initialized and has entered it's main
+/// function
+pub fn in_kernel_main() -> bool {
+    KERNEL_MAIN_BARRIER.load(Ordering::Acquire) == get_ready_core_count(Ordering::Acquire)
+}
 
 /// enters the main kernel function, specified by the [entry_point] macro.
 ///
@@ -81,9 +87,9 @@ static KERNEL_MAIN_SEMAPHORE: AtomicU8 = AtomicU8::new(0);
 ///
 /// the processor must be in a valid state that does not randomly cause UB
 pub unsafe fn enter_kernel_main() -> ! {
-    KERNEL_MAIN_SEMAPHORE.fetch_add(1, Ordering::SeqCst);
+    KERNEL_MAIN_BARRIER.fetch_add(1, Ordering::SeqCst);
     let spin_start = read_tsc();
-    while KERNEL_MAIN_SEMAPHORE.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
+    while KERNEL_MAIN_BARRIER.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
         spin_loop();
         if time_since_tsc(spin_start) > Duration::new_seconds(5) {
             warn!("waiting for all cores to reach kernel_main");

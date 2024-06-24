@@ -13,7 +13,7 @@ use crate::prelude::TicketLock;
 use bootloader_api::info::FrameBuffer as BootFrameBuffer;
 use bootloader_api::info::FrameBufferInfo;
 use bootloader_api::info::PixelFormat;
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 use x86_64::structures::paging::PageSize;
 use x86_64::structures::paging::Size4KiB;
 use x86_64::VirtAddr;

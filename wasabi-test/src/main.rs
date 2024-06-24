@@ -103,7 +103,7 @@ use core::{
     str::FromStr,
 };
 use itertools::Itertools;
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 use testing::description::{KernelTestDescription, KernelTestFn, TestExitState, KERNEL_TESTS};
 use uart_16550::SerialPort;
 use wasabi_kernel::{
@@ -505,7 +505,7 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
     let test_fn: KernelTestFn = test.test_fn;
 
     let _panic_handler_guard = use_custom_panic_handler(|_info| {
-        use shared::lockcell::LockCellInternal;
+        use shared::sync::lockcell::LockCellInternal;
         // Safety: we are in a panic handler so we are the only running code
         let serial2 = unsafe { SERIAL2.get_mut() }.as_mut().unwrap();
         info!("Test paniced as expected");

@@ -22,7 +22,7 @@ extern crate wasabi_kernel;
 use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 use wasabi_kernel::{
     bootloader_config_common,
     cpu::{self, apic, apic::timer::TimerConfig, interrupts::InterruptVector},

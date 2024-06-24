@@ -5,7 +5,10 @@
 use core::fmt::Display;
 
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
-use shared::lockcell::{InterruptState, RWLockCell, ReadWriteCell};
+use shared::sync::{
+    lockcell::{RWLockCell, ReadWriteCell},
+    InterruptState,
+};
 use staticvec::StaticVec;
 
 use crate::{FlushError, TryLog};

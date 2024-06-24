@@ -1,7 +1,7 @@
 //! Utiltities for accessing the serial port
 
 use crate::prelude::{TicketLock, UnwrapTicketLock};
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 use uart_16550::SerialPort;
 
 /// address of the first IO port

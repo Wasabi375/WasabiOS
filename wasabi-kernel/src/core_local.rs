@@ -22,9 +22,8 @@ use core::{
     sync::atomic::{AtomicU64, AtomicU8, Ordering},
 };
 use shared::{
-    lockcell::{InterruptState, LockCellInternal},
+    sync::{lockcell::LockCellInternal, CoreInfo, InterruptState},
     types::CoreId,
-    CoreInfo,
 };
 use x86_64::VirtAddr;
 

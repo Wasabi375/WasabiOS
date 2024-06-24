@@ -9,8 +9,10 @@ use core::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use shared::{
-    lockcell::LockCell,
+    cpu::time,
     rangeset::{Range, RangeSet, RegionRequest},
+    sync::lockcell::LockCell,
+    types::Duration,
 };
 use static_assertions::const_assert;
 use thiserror::Error;
@@ -34,7 +36,7 @@ use crate::{
         MemError,
     },
     processor_init,
-    time::{self, Duration},
+    time::{sleep_tsc, time_since_tsc},
     DEFAULT_STACK_PAGE_COUNT, DEFAULT_STACK_SIZE,
 };
 
@@ -188,17 +190,17 @@ pub fn ap_startup() {
             mode: ipi::DeliveryMode::INIT,
             destination: ipi::Destination::AllExcludingSelf,
         });
-        time::sleep_tsc(Duration::new_millis(10));
+        sleep_tsc(Duration::new_millis(10));
         let sipi_ipi = Ipi {
             mode: ipi::DeliveryMode::SIPI(sipi.payload()),
             destination: ipi::Destination::AllExcludingSelf,
         };
         apic.send_ipi(sipi_ipi);
-        time::sleep_tsc(Duration::new_millis(100));
+        sleep_tsc(Duration::new_millis(100));
         apic.send_ipi(sipi_ipi);
     }
 
-    let mut timer = time::read_tsc();
+    let mut timer = time::timestamp_now_tsc();
     let mut known_started = 1;
     loop {
         let started = get_started_core_count(Ordering::SeqCst);
@@ -207,10 +209,10 @@ pub fn ap_startup() {
 
             stack = ApStack::alloc().expect("failed to alloc ap stack");
 
-            timer = time::read_tsc();
+            timer = time::timestamp_now_tsc();
             continue;
         } else {
-            if time::time_since_tsc(timer) > WAIT_FOR_START_TIMEOUT {
+            if time_since_tsc(timer) > WAIT_FOR_START_TIMEOUT {
                 // assume all cores are started
                 break;
             } else {
@@ -225,11 +227,11 @@ pub fn ap_startup() {
     trace!("dropping final unused ap stack");
     drop(stack);
 
-    timer = time::read_tsc();
+    timer = time::timestamp_now_tsc();
     loop {
         let ready_count = get_ready_core_count(Ordering::SeqCst);
         if ready_count < known_started {
-            if time::time_since_tsc(timer) > WAIT_FOR_READY_TIMEOUT {
+            if time_since_tsc(timer) > WAIT_FOR_READY_TIMEOUT {
                 panic!("Only {ready_count} cores are ready after timeout, but {known_started} cores weres started");
             } else {
                 spin_loop()

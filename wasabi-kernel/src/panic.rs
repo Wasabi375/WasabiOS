@@ -3,6 +3,7 @@
 use core::panic::PanicInfo;
 
 use log::error;
+use shared::sync::Barrier;
 
 use crate::{cpu, locals, logger::LOGGER, serial_println};
 
@@ -11,7 +12,7 @@ use crate::{cpu, locals, logger::LOGGER, serial_println};
 /// # Safety:
 ///
 /// This should only be called from panics
-pub unsafe fn panic_disable_cores() {
+unsafe fn panic_disable_cores() {
     unsafe {
         // Safety: we are in a panic state, so anything relying on interrupts is
         // done for anyways
@@ -30,7 +31,7 @@ pub unsafe fn panic_disable_cores() {
 ///
 /// This should onl be called from panics, after all multicore and interrupts are
 /// disabled and the framebuffer is useable
-pub unsafe fn recreate_logger() {
+unsafe fn recreate_logger() {
     // FIXME recreate loggers in panic
     //      without this logging during panic can deadlock
 }
@@ -41,7 +42,7 @@ pub unsafe fn recreate_logger() {
 ///
 /// This should onl be called from panics, after all multicore and interrupts are
 /// disabled. This function dose not require logging.
-pub unsafe fn recreate_framebuffer() {
+unsafe fn recreate_framebuffer() {
     // FIXME: implement
 }
 
@@ -49,16 +50,15 @@ pub unsafe fn recreate_framebuffer() {
 #[panic_handler]
 #[allow(unreachable_code)]
 fn panic(info: &PanicInfo) -> ! {
-    #[cfg(feature = "test")]
-    crate::testing::panic::test_panic_handler(info);
-
     // Safety: we are in a panic handler
     unsafe {
         panic_disable_cores();
-
         recreate_framebuffer();
-
         recreate_logger();
+
+        // Safety: cores disabled and framebuffer + logger recreated
+        #[cfg(feature = "test")]
+        crate::testing::panic::test_panic_handler(info);
     };
 
     // Saftey: [LOGGER] is only writen to during the boot process.
@@ -75,7 +75,7 @@ fn panic(info: &PanicInfo) -> ! {
 
 /// panic handler if we haven't initialized logging
 fn panic_no_logger(info: &PanicInfo) -> ! {
-    serial_println!("PANIC(no-logger): {}", info);
+    serial_println!("PANIC during init: {}", info);
 
     cpu::halt();
 }

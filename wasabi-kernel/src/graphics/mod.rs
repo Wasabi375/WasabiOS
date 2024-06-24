@@ -10,7 +10,7 @@ use alloc::boxed::Box;
 use core::slice;
 use log::{info, warn};
 use logger::{dispatch::TargetLogger, OwnLogger};
-use shared::lockcell::LockCell;
+use shared::sync::lockcell::LockCell;
 
 use self::{
     canvas::CanvasWriter,

@@ -205,7 +205,7 @@ mod test {
             page_table_debug_ext::PageTableDebugExt,
         },
     };
-    use shared::lockcell::LockCell;
+    use shared::sync::lockcell::LockCell;
     use testing::{
         kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
         TestUnwrapExt,
