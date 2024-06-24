@@ -1567,7 +1567,6 @@ dependencies = [
  "derive_builder",
  "iced-x86",
  "interrupt-fn-builder",
- "lazy_static",
  "linked_list_allocator",
  "linkme",
  "log",
