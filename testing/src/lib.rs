@@ -24,7 +24,7 @@ pub enum KernelTestError {
     Assert,
 }
 
-/// Extensio for the Result/Option type useful for tests
+/// Extension for the Result/Option type useful for tests
 pub trait TestUnwrapExt<T> {
     /// Same as `unwrap` but returns [KernelTestError]
     ///
@@ -45,33 +45,41 @@ pub trait TestUnwrapExt<T> {
 //  This probably also needs #[track_caller] and I might want
 //  to use #[inline]
 impl<T, E: Error> TestUnwrapExt<T> for Result<T, E> {
+    #[track_caller]
+    #[inline(always)]
     fn tunwrap(self) -> Result<T, KernelTestError> {
         match self {
             Ok(v) => Ok(v),
-            Err(err) => tfail!("{}", err),
+            Err(err) => tfail!(caller: "{}", err),
         }
     }
 
+    #[track_caller]
+    #[inline(always)]
     fn texpect(self, message: &str) -> Result<T, KernelTestError> {
         match self {
             Ok(v) => Ok(v),
-            Err(_err) => tfail!("{}", message),
+            Err(_err) => tfail!(caller: "{}", message),
         }
     }
 }
 
 impl<T> TestUnwrapExt<T> for Option<T> {
+    #[track_caller]
+    #[inline(always)]
     fn tunwrap(self) -> Result<T, KernelTestError> {
         match self {
             Some(v) => Ok(v),
-            None => tfail!("Expected Some found None"),
+            None => tfail!(caller: "Expected Some found None"),
         }
     }
 
+    #[track_caller]
+    #[inline(always)]
     fn texpect(self, message: &str) -> Result<T, KernelTestError> {
         match self {
             Some(v) => Ok(v),
-            None => tfail!("{}", message),
+            None => tfail!(caller: "{}", message),
         }
     }
 }
@@ -110,6 +118,15 @@ impl<T, E: Debug> DebugErrResultExt<T, E> for Result<T, E> {
 /// Only useable if function returns `Result<T, KernelTestError`
 #[macro_export]
 macro_rules! tfail {
+    (caller: $($arg:tt)+) => {{
+        log::error!(
+            target: "TEST",
+            "at {}\nFailure: {}",
+            $crate::caller_location_str!(),
+            $crate::__macro_internals::format_args!($($arg)+)
+        );
+        return Err($crate::KernelTestError::Fail)
+    }};
     () => {{
         log::error!(
             target: "TEST",
@@ -291,6 +308,15 @@ macro_rules! location_str {
             $crate::__macro_internals::column!()
         )
     };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! caller_location_str {
+    () => {{
+        let loc = core::panic::Location::caller();
+        $crate::__macro_internals::format_args!("{}:{}:{}", loc.file(), loc.line(), loc.column())
+    }};
 }
 
 #[doc(hidden)]

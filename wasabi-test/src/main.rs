@@ -525,7 +525,7 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
 mod test_tests {
     use testing::{
         description::TestExitState, kernel_test, t_assert, t_assert_eq, t_assert_ne, tfail,
-        KernelTestError,
+        KernelTestError, TestUnwrapExt,
     };
 
     #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
@@ -612,6 +612,14 @@ mod test_tests {
     fn test_t_assert_ne_fail_message() -> Result<(), KernelTestError> {
         let a = 42;
         t_assert_ne!(a, 2 * 21, "Some message {a}");
+
+        Ok(())
+    }
+
+    #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
+    fn test_t_unwrap_message() -> Result<(), KernelTestError> {
+        let o: Option<()> = None;
+        o.tunwrap()?;
 
         Ok(())
     }
