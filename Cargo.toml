@@ -59,7 +59,7 @@ x86_64 = { version = "0.15", git = "https://github.com/Wasabi375/x86_64", branch
 noto-sans-mono-bitmap = { version = "0.2.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
 
 # TODO use upstream once new version is released
-bootloader = { git = "https://github.com/Wasabi375/bootloader", branch = "protect_lower_1mb", version = "0.11", default-features = false, features = ["uefi"] }
+bootloader = { git = "https://github.com/Wasabi375/bootloader", rev = "bf950a4bee82764dac17b5e18f5c82f491c9799e", version = "0.11", default-features = false, features = ["uefi"] }
 # bootloader = { version = "0.11.8", default-features = false, features = ["uefi"] }
 # bootloader = { path = "/home/burkhard/programming/forks/bootloader", default-features = false, features = ["uefi"]}
 bootloader_api = { version = "0.11" }

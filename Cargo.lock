@@ -269,7 +269,7 @@ dependencies = [
 [[package]]
 name = "bootloader"
 version = "0.11.7"
-source = "git+https://github.com/Wasabi375/bootloader?branch=protect_lower_1mb#fdddff9c6629845109a9aae336aac4840e99f86f"
+source = "git+https://github.com/Wasabi375/bootloader?rev=bf950a4bee82764dac17b5e18f5c82f491c9799e#bf950a4bee82764dac17b5e18f5c82f491c9799e"
 dependencies = [
  "anyhow",
  "async-process",
@@ -286,7 +286,7 @@ dependencies = [
 [[package]]
 name = "bootloader-boot-config"
 version = "0.11.7"
-source = "git+https://github.com/Wasabi375/bootloader?branch=protect_lower_1mb#fdddff9c6629845109a9aae336aac4840e99f86f"
+source = "git+https://github.com/Wasabi375/bootloader?rev=bf950a4bee82764dac17b5e18f5c82f491c9799e#bf950a4bee82764dac17b5e18f5c82f491c9799e"
 dependencies = [
  "serde",
 ]
