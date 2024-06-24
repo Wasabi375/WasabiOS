@@ -89,8 +89,11 @@ unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> Option<BarrierTr
         mode: DeliveryMode::NMI,
         destination: Destination::AllExcludingSelf,
     };
-    // FIXME: deadlock if apic lock is held
-    locals!().apic.lock().send_ipi(nmi);
+    let apic = unsafe {
+        // Safety: We have unique access, because everything else is shut down
+        &mut *locals!().apic.shatter()
+    };
+    apic.send_ipi(nmi);
 
     // proceed even if waiting for other cores times out.
     match payload

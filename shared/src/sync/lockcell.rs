@@ -28,6 +28,13 @@ where
 {
     /// gives out access to the value of this lock. Blocks until access is granted.
     fn lock(&self) -> LockCellGuard<'_, T, Self>;
+
+    /// shater the lock and get a mut ptr to the underlying data
+    ///
+    /// This may make the lock inoperable
+    fn shatter(&self) -> *mut T {
+        unsafe { self.get_mut() as *mut T }
+    }
 }
 
 /// A trait representing a read write lock, that allows for either simultaneous
