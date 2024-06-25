@@ -188,10 +188,34 @@ impl Timer<'_> {
         &mut self,
         vector: InterruptVector,
         handler: InterruptFn,
-    ) -> Result<(), InterruptRegistrationError> {
+    ) -> Result<Option<InterruptVector>, InterruptRegistrationError> {
         interrupts::register_interrupt_handler(vector, handler)?;
 
-        self.apic.timer.interrupt_vector = Some(vector);
+        Ok(self.enable_interrupt_hander(vector))
+    }
+
+    /// unregister the current interrupt for the timer
+    ///
+    /// # Errors
+    /// see [interrupts::unregister_interrupt_handler]
+    pub fn unregister_interrupt_handler(
+        &mut self,
+    ) -> Result<Option<InterruptVector>, InterruptRegistrationError> {
+        let old_vector = self.disable_interrupt_handler();
+        let vector = self
+            .apic
+            .timer
+            .interrupt_vector
+            .ok_or(InterruptRegistrationError::NoRegisteredVector)?;
+
+        interrupts::unregister_interrupt_handler(vector)?;
+
+        Ok(old_vector)
+    }
+
+    /// enables an existing interrupt handler to handle timers
+    pub fn enable_interrupt_hander(&mut self, vector: InterruptVector) -> Option<InterruptVector> {
+        let old_vector = self.apic.timer.interrupt_vector.replace(vector);
 
         self.apic
             .offset_mut(Offset::TimerLocalVectorTableEntry)
@@ -200,29 +224,19 @@ impl Timer<'_> {
                 vte.set_bits(Timer::VECTOR_BITS, vector as u8 as u32);
             });
 
-        Ok(())
+        old_vector
     }
 
-    /// unregister the current interrupt for the timer
-    ///
-    /// # Errors
-    /// see [interrupts::unregister_interrupt_handler]
-    pub fn unregister_interrupt_handler(&mut self) -> Result<(), InterruptRegistrationError> {
-        log::warn!("unregister timer handler");
-        let apic = &mut self.apic;
-        apic.offset_mut(Offset::TimerLocalVectorTableEntry)
+    /// disables the currently enabled timer interrupt handler
+    pub fn disable_interrupt_handler(&mut self) -> Option<InterruptVector> {
+        log::trace!("disable timer handler");
+        self.apic
+            .offset_mut(Offset::TimerLocalVectorTableEntry)
             .update(|vte| {
                 vte.set_bit(Timer::MASK_BIT, true);
                 vte.set_bits(Timer::VECTOR_BITS, 0);
             });
-        let vector = apic
-            .timer
-            .interrupt_vector
-            .ok_or(InterruptRegistrationError::NoRegisteredVector)?;
-
-        interrupts::unregister_interrupt_handler(vector)?;
-
-        Ok(())
+        self.apic.timer.interrupt_vector.take()
     }
 
     /// starts the timer
@@ -332,9 +346,7 @@ impl Timer<'_> {
 
         info!("calibrating apic timer");
 
-        // TODO set nop vector for interrupts
-        // TODO function to set existing handler via vector
-        //  this differs from register, because it uses an already registered handler
+        let old_vector = self.enable_interrupt_hander(InterruptVector::Nop);
 
         self.apic.timer.startup_tsc_time = timestamp_now_tsc();
         self.apic.timer.supports_tsc_deadline = cpuid(0x1, None).ecx.get_bit(24);
@@ -359,6 +371,12 @@ impl Timer<'_> {
 
         // stop calibration timer, we don't need it anymore
         self.stop();
+
+        if let Some(vector) = old_vector {
+            self.enable_interrupt_hander(vector);
+        } else {
+            self.disable_interrupt_handler();
+        }
 
         trace!(
             "timer {}, counted {} ticks in {} seconds",

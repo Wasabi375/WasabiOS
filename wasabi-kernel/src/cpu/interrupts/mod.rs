@@ -87,6 +87,9 @@ impl InterruptHandlerState {
                 .set_handler_fn(default_handlers::page_fault_handler)
                 .set_stack_index(PAGE_FAULT_IST_INDEX);
         }
+
+        register_interrupt_handler(InterruptVector::Nop, |_, _| Ok(()))
+            .expect("Failed to register Nop interrupt handler");
     }
 }
 
@@ -127,7 +130,10 @@ pub enum InterruptVector {
     // for some older processors the lower 4 bits must be 1, 63 is the lowest number >=32 matching
     // this condition
     Spurious = 63,
-    // TODO I want a nop vector
+    /// No Op handler
+    ///
+    /// does nothing
+    Nop = 254,
     Test = 255,
 }
 
