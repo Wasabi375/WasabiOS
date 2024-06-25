@@ -505,9 +505,8 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
     let test_fn: KernelTestFn = test.test_fn;
 
     let _panic_handler_guard = use_custom_panic_handler(|_info| {
-        use shared::sync::lockcell::LockCellInternal;
         // Safety: we are in a panic handler so we are the only running code
-        let serial2 = unsafe { SERIAL2.get_mut() }.as_mut().unwrap();
+        let serial2 = unsafe { &mut *SERIAL2.shatter() }.as_mut().unwrap();
         info!("Test paniced as expected");
         let _ = writeln!(serial2, "test succeeded");
         qemu::exit(qemu::ExitCode::Success);
@@ -623,4 +622,16 @@ mod test_tests {
 
         Ok(())
     }
+
+    #[kernel_test(i)]
+    fn ignored_test() -> Result<(), KernelTestError> {
+        tfail!("ignored test should never execute");
+    }
+
+    // NOTE: this test needs to be commented out, otherwise it will be focused
+    // diabling all other tests
+    //    #[kernel_test(i, x)]
+    //    fn focused_ignore_test() -> Result<(), KernelTestError> {
+    //        Ok(())
+    //    }
 }

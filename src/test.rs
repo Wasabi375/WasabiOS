@@ -27,9 +27,10 @@ const QEMU_EXIT_FAILURE_CODE: i32 = 0x11 << 1 | 1;
 
 const QEMU_EOF_WAIT_TIMEOUT: Duration = Duration::from_millis(500);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 struct TestCount {
     success: usize,
+    ignored: usize,
     total: usize,
 }
 
@@ -39,6 +40,7 @@ impl Add for TestCount {
     fn add(self, rhs: Self) -> Self::Output {
         TestCount {
             success: self.success + rhs.success,
+            ignored: self.ignored + rhs.ignored,
             total: self.total + rhs.total,
         }
     }
@@ -46,8 +48,7 @@ impl Add for TestCount {
 
 impl AddAssign for TestCount {
     fn add_assign(&mut self, rhs: Self) {
-        self.success += rhs.success;
-        self.total += rhs.total;
+        *self = *self + rhs;
     }
 }
 
@@ -110,9 +111,10 @@ pub async fn test(uefi: &Path, mut args: TestArgs) -> Result<()> {
     };
     log::log!(
         level,
-        "{}/{} tests succeded\n",
+        "{}/{} tests succeded. {} ignored\n",
         test_count.success,
-        test_count.total
+        test_count.total,
+        test_count.ignored,
     );
 
     Ok(())
@@ -132,6 +134,11 @@ async fn run_combined_tests(
         .qcontext("query test count")
         .into_anyhow()?;
 
+    let ignore_count = get_ignored_count(&mut qemu, false)
+        .await
+        .qcontext("query ingore count")
+        .into_anyhow()?;
+
     qemu.write_all(b"test normal\n")
         .await
         .qcontext("send \"test normal\" command")
@@ -139,6 +146,7 @@ async fn run_combined_tests(
 
     let mut success = TestCount::default();
     success.total = test_count;
+    success.ignored = ignore_count;
 
     let mut current_test: usize = 0;
     while current_test < test_count {
@@ -248,6 +256,11 @@ async fn run_isolated_test(
         .qcontext("query test count")
         .into_anyhow()?;
 
+    let ignore_count = get_ignored_count(&mut qemu, panic_tests)
+        .await
+        .qcontext("query ingore count")
+        .into_anyhow()?;
+
     let start_test_cmd: &str = if panic_tests {
         "test panic\n"
     } else {
@@ -256,6 +269,7 @@ async fn run_isolated_test(
 
     let mut success = TestCount::default();
     success.total = test_count;
+    success.ignored = ignore_count;
 
     // temp store qemu in option, so we can move it out in the first iteration
     let mut first_iter_qemu = Some(qemu);
@@ -585,6 +599,21 @@ async fn get_test_count(qemu: &mut QemuInstance, panicing: bool) -> Result<usize
         b"count panic\n".as_ref()
     } else {
         b"count\n".as_ref()
+    };
+    qemu.write_all(cmd)
+        .await
+        .qcontext("failed to send \"count\" command")?;
+
+    parse_line(qemu)
+        .await
+        .qcontext("failed to recieve test count")
+}
+
+async fn get_ignored_count(qemu: &mut QemuInstance, panicing: bool) -> Result<usize, QemuError> {
+    let cmd: &[u8] = if panicing {
+        b"count ignored panic\n".as_ref()
+    } else {
+        b"count ignored\n".as_ref()
     };
     qemu.write_all(cmd)
         .await

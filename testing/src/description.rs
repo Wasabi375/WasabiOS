@@ -66,7 +66,7 @@ pub struct KernelTestDescription {
 
     /// Tests with this flag will only be executed, if they also have the
     /// [focus](KernelTestDescription::focus) flag
-    pub ignore: bool, // FIXME: this seems to be broken
+    pub ignore: bool,
 }
 
 /// The distributed slice, collecting all kernel testss marked with `#[kernel_test]`

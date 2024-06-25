@@ -1,4 +1,4 @@
-use proc_macro2::Ident;
+use proc_macro2::{Ident, Punct};
 use syn::{
     ext::IdentExt,
     parse::{Parse, ParseStream},
@@ -20,7 +20,8 @@ impl Parse for Args {
         let mut ignore = false;
 
         while !input.is_empty() {
-            if input.lookahead1().peek(Ident::peek_any) {
+            let lookahead = input.lookahead1();
+            if lookahead.peek(Ident::peek_any) {
                 let ident: Ident = input.parse()?;
                 match ident.to_string().as_str() {
                     "name" => {
@@ -61,6 +62,9 @@ impl Parse for Args {
                         ))
                     }
                 }
+            } else if lookahead.peek(Token![,]) {
+                // skip comma
+                let _: Punct = input.parse()?;
             } else {
                 let expr: Expr = input.parse()?;
 
