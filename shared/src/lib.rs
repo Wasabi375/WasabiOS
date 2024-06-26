@@ -1,3 +1,4 @@
+//! Implementation shared by all kernel packages
 #![no_std]
 #![feature(
     negative_impls,
@@ -6,6 +7,7 @@
     let_chains
 )]
 #![cfg_attr(feature = "alloc", feature(box_into_inner))]
+#![warn(missing_docs)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -20,6 +22,7 @@ pub mod reforbox;
 
 pub mod types;
 
+/// Calculat the number of bytes in n kilo bytes
 #[macro_export]
 macro_rules! KiB {
     ($v:expr) => {
@@ -27,6 +30,7 @@ macro_rules! KiB {
     };
 }
 
+/// Calculat the number of bytes in n mega bytes
 #[macro_export]
 macro_rules! MiB {
     ($v:expr) => {
@@ -34,6 +38,7 @@ macro_rules! MiB {
     };
 }
 
+/// Calculat the number of bytes in n giga bytes
 #[macro_export]
 macro_rules! GiB {
     ($v:expr) => {

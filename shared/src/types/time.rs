@@ -4,14 +4,17 @@ use core::{
     ops::{Add, Sub},
 };
 
+/// A timestamp based on the tsc counter
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TscTimestamp(u64);
 
 impl TscTimestamp {
+    /// Create a new timestamp
     pub const fn new(t: u64) -> Self {
         Self(t)
     }
 
+    /// convert the timsetamp to a u64
     pub const fn as_u64(self) -> u64 {
         self.0
     }
@@ -41,14 +44,17 @@ impl Sub<TscTimestamp> for TscTimestamp {
     }
 }
 
+/// A duration based on the tsc counter
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TscDuration(i64);
 
 impl TscDuration {
+    /// create a new duration
     pub const fn new(t: i64) -> Self {
         Self(t)
     }
 
+    /// convert the duration to an i64
     pub const fn as_i64(self) -> i64 {
         self.0
     }

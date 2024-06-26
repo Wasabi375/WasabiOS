@@ -634,4 +634,9 @@ mod test_tests {
     //    fn focused_ignore_test() -> Result<(), KernelTestError> {
     //        Ok(())
     //    }
+
+    #[kernel_test(mp)]
+    fn test_multiprocessor_empty() -> Result<(), KernelTestError> {
+        Ok(())
+    }
 }

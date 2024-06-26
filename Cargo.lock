@@ -1255,6 +1255,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "paste",
+ "thiserror-core",
  "x86_64",
 ]
 

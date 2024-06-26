@@ -33,7 +33,9 @@ use core::cmp;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct Range {
+    /// the inclusive range start
     pub start: u64,
+    /// the inclusive range end
     pub end: u64,
 }
 
@@ -79,6 +81,7 @@ impl<const N: usize> RangeSet<N> {
         }
     }
 
+    /// returns the capacity of the rangeset
     #[inline]
     pub const fn capacity(&self) -> usize {
         N

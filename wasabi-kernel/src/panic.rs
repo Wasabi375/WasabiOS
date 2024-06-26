@@ -9,7 +9,10 @@ use core::{
 use interrupt_fn_builder::exception_fn;
 use log::error;
 use shared::{
-    sync::{lockcell::LockCell, Barrier, BarrierTryFailure},
+    sync::{
+        barrier::{Barrier, BarrierTryError},
+        lockcell::LockCell,
+    },
     types::{CoreId, Duration},
 };
 
@@ -66,7 +69,7 @@ fn handle_other_core_panic(payload: &PanicNMIPayload) {
 /// This should only be called from panics.
 /// The caller must guarantee that `payload` has a static lifetime relative to
 /// the panic
-unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> Option<BarrierTryFailure> {
+unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> Option<BarrierTryError> {
     unsafe {
         // Safety: we are in a panic state, so anything relying on interrupts is
         // done for anyways

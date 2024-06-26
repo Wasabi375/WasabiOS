@@ -1,3 +1,5 @@
+//! Contains [RefOrBox] an enum that allows implementations of features
+//! to work equaly witha Box or just a reference to the underlying type
 use core::{borrow::Borrow, ops::Deref};
 
 use alloc::boxed::Box;
