@@ -4,7 +4,8 @@
     negative_impls,
     maybe_uninit_uninit_array,
     maybe_uninit_slice,
-    let_chains
+    let_chains,
+    downcast_unchecked
 )]
 #![cfg_attr(feature = "alloc", feature(box_into_inner))]
 #![warn(missing_docs)]
@@ -18,7 +19,7 @@ pub mod rangeset;
 pub mod sync;
 
 #[cfg(feature = "alloc")]
-pub mod reforbox;
+pub mod alloc_ext;
 
 pub mod types;
 

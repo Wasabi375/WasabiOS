@@ -14,7 +14,7 @@ use staticvec::StaticVec;
 use crate::{FlushError, TryLog};
 
 #[cfg(feature = "alloc")]
-use shared::reforbox::RefOrBox;
+use shared::alloc_ext::reforbox::RefOrBox;
 #[cfg(not(feature = "alloc"))]
 type RefOrBox<'a, T> = &'a T;
 
