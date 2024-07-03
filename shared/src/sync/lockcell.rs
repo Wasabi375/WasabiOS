@@ -17,7 +17,7 @@ use core::{
     marker::PhantomData,
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicI64, AtomicU16, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU64, Ordering},
 };
 use paste::paste;
 
@@ -77,13 +77,26 @@ pub trait LockCellInternal<T> {
     /// this [LockCell] is droped.
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>);
 
-    /// forces the mutex open, without needing access to the guard
-    /// FIXME: yeah this is bullshit. this is just "dropping" a guard without access to it
+    /// forces the mutex open, without needing access to the guard.
+    ///
+    /// This will reset the interrupt state, just like dropping [LockCellGuard] would.
     ///
     /// # Safety:
     ///
-    /// the caller ensures that there is no active guard
-    unsafe fn force_unlock(&self);
+    /// the caller ensures that there the guard from [LockCell::lock] is inaccessible.
+    /// It is not save to call this, if there is no corresponding `lock` call.
+    unsafe fn unlock_no_guard(&self);
+
+    /// "Permanently" shatters the lock. Following calls to [LockCell::lock] will
+    /// succeed instantly.
+    ///
+    /// Some implementations might provide a way to reset the lock, or even reset themself
+    /// automatically.
+    ///
+    /// # Safety
+    ///
+    /// the caller ensures that there are no guards.
+    unsafe fn shatter_permanent(&self);
 
     /// returns `true` if the LockCell is currently unlocked.
     ///
@@ -109,6 +122,8 @@ pub trait LockCellInternal<T> {
 pub struct LockCellGuard<'l, T, M: ?Sized + LockCellInternal<T>> {
     /// the lockcell that is guarded by `self`
     lockcell: &'l M,
+    /// true if the guard was created from a shattered lock
+    pub shattered: bool,
     /// phantom data for the type `T`
     _t: PhantomData<T>,
 }
@@ -123,6 +138,7 @@ impl<'l, T, M: ?Sized + LockCellInternal<T>> LockCellGuard<'l, T, M> {
     pub unsafe fn new(lockcell: &'l M) -> Self {
         LockCellGuard {
             lockcell,
+            shattered: false,
             _t: PhantomData::default(),
         }
     }
@@ -284,6 +300,8 @@ pub struct TicketLock<T, I> {
     current_ticket: AtomicU64,
     /// the next ticket we give out
     next_ticket: AtomicU64,
+    /// true if the lock is shattered
+    shattered: AtomicBool,
     /// the data within the lock
     data: UnsafeCell<T>,
     /// the current core holding the lock
@@ -303,6 +321,7 @@ impl<T, I> TicketLock<T, I> {
         Self {
             current_ticket: AtomicU64::new(0),
             next_ticket: AtomicU64::new(0),
+            shattered: AtomicBool::new(false),
             data: UnsafeCell::new(data),
             owner: AtomicU16::new(!0),
             preemtable: true,
@@ -318,6 +337,7 @@ impl<T, I> TicketLock<T, I> {
         Self {
             current_ticket: AtomicU64::new(0),
             next_ticket: AtomicU64::new(0),
+            shattered: AtomicBool::new(false),
             data: UnsafeCell::new(data),
             owner: AtomicU16::new(!0),
             preemtable: false,
@@ -330,13 +350,14 @@ impl<T, I> TicketLock<T, I> {
     ///
     /// All internals are accessed with relaxed loads
     pub fn spew_state<W: core::fmt::Write>(&self, writer: &mut W) {
-        let current = self.current_ticket.load(Ordering::SeqCst);
-        let next = self.next_ticket.load(Ordering::SeqCst);
-        let owner = self.owner.load(Ordering::SeqCst);
+        let current = self.current_ticket.load(Ordering::Acquire);
+        let next = self.next_ticket.load(Ordering::Acquire);
+        let owner = self.owner.load(Ordering::Acquire);
+        let shattered = self.shattered.load(Ordering::Acquire);
         let _ = write!(
             writer,
-            "[TicketLock(c: {}, n: {}, o: {})]\n",
-            current, next, owner
+            "[TicketLock(c: {}, n: {}, o: {}, s: {})]\n",
+            current, next, owner, shattered
         );
     }
 }
@@ -348,6 +369,13 @@ impl<T: Send, I: InterruptState> LockCell<T> for TicketLock<T, I> {
             !self.preemtable || !I::s_in_interrupt(),
             "use of non-preemtable lock in interrupt"
         );
+        if self.shattered.load(Ordering::Acquire) {
+            return LockCellGuard {
+                lockcell: self,
+                shattered: true,
+                _t: PhantomData,
+            };
+        }
 
         unsafe {
             // Safety: disabling interrupts is ok, for preemtable locks
@@ -366,10 +394,8 @@ impl<T: Send, I: InterruptState> LockCell<T> for TicketLock<T, I> {
 
         self.owner.store(I::s_core_id().0 as u16, Ordering::Release);
 
-        LockCellGuard {
-            lockcell: self,
-            _t: PhantomData,
-        }
+        // Safety: only this guard exists
+        unsafe { LockCellGuard::new(self) }
     }
 }
 
@@ -385,15 +411,19 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
         assert!(self as *const _ == guard.lockcell as *const _);
 
-        self.force_unlock()
+        self.unlock_no_guard()
     }
 
-    unsafe fn force_unlock(&self) {
+    unsafe fn unlock_no_guard(&self) {
         self.owner.store(!0, Ordering::Release);
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
         // Safety: this will restore the interrupt state from when we called
         // enter_lock, so this is safe
         I::s_exit_lock(!self.preemtable);
+    }
+
+    unsafe fn shatter_permanent(&self) {
+        self.shattered.store(true, Ordering::SeqCst);
     }
 
     fn is_unlocked(&self) -> bool {
@@ -544,6 +574,7 @@ impl<T: Send, I: InterruptState> LockCell<T> for ReadWriteCell<T, I> {
 
         LockCellGuard {
             lockcell: self,
+            shattered: false,
             _t: PhantomData,
         }
     }
@@ -581,14 +612,18 @@ impl<T, I: InterruptState> LockCellInternal<T> for ReadWriteCell<T, I> {
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
         assert!(self as *const _ == guard.lockcell as *const _);
 
-        self.force_unlock()
+        self.unlock_no_guard()
     }
 
-    unsafe fn force_unlock(&self) {
+    unsafe fn unlock_no_guard(&self) {
         self.access_count.store(0, Ordering::SeqCst);
         // Safety: this will restore the interrupt state from when we called
         // enter_lock, so this is safe
         I::s_exit_lock(!self.preemtable);
+    }
+
+    unsafe fn shatter_permanent(&self) {
+        self.access_count.store(0, Ordering::SeqCst);
     }
 
     fn is_unlocked(&self) -> bool {
@@ -712,11 +747,15 @@ impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T,
 
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
         assert!(self as *const _ == guard.lockcell as *const _);
-        self.lockcell.force_unlock();
+        self.lockcell.unlock_no_guard();
     }
 
-    unsafe fn force_unlock(&self) {
-        self.lockcell.force_unlock();
+    unsafe fn unlock_no_guard(&self) {
+        self.lockcell.unlock_no_guard();
+    }
+
+    unsafe fn shatter_permanent(&self) {
+        self.lockcell.shatter_permanent()
     }
 
     fn is_unlocked(&self) -> bool {
@@ -738,11 +777,15 @@ impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for 
     }
 
     unsafe fn unlock<'s, 'l: 's>(&'s self, _guard: &mut LockCellGuard<'l, MaybeUninit<T>, Self>) {
-        self.lockcell.force_unlock();
+        self.lockcell.unlock_no_guard();
     }
 
-    unsafe fn force_unlock(&self) {
-        self.lockcell.force_unlock();
+    unsafe fn unlock_no_guard(&self) {
+        self.lockcell.unlock_no_guard();
+    }
+
+    unsafe fn shatter_permanent(&self) {
+        self.lockcell.shatter_permanent()
     }
 
     fn is_unlocked(&self) -> bool {
