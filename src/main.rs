@@ -82,7 +82,7 @@ pub async fn latests(args: LatestArgs) -> Result<()> {
 
     let mut path = latest_path(&bin_name, &args.target, &args.profile);
 
-    bin_name.push("_uefi.img");
+    bin_name.push("-uefi.img");
     path.push(&bin_name);
     match args.run {
         RunCommand::Run(args) => run(&path, args).await,
