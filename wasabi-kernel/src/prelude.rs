@@ -13,6 +13,9 @@ pub type ReadWriteCell<T> = shared::sync::lockcell::ReadWriteCell<T, CoreInterru
 /// a [UnwrapTicketLock](shared::sync::lockcell::UnwrapTicketLock) with the [CoreInterruptState]
 pub type UnwrapTicketLock<T> = shared::sync::lockcell::UnwrapTicketLock<T, CoreInterruptState>;
 
+/// a [DataBarrier](shared::sync::barrier::DataBarrier) with the [CoreInterruptState]
+pub type DataBarrier<T> = shared::sync::barrier::DataBarrier<T, CoreInterruptState>;
+
 /// Some common type definitions, that don't fit within a specific module
 pub mod types {
     pub use shared::types::*;

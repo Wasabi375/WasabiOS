@@ -13,6 +13,7 @@ pub use testing_derive::kernel_test;
 use thiserror::Error;
 
 pub mod description;
+pub mod multiprocessor;
 
 /// Error type for Kernel-tests
 #[derive(Error, Clone, Debug, PartialEq, Eq)]

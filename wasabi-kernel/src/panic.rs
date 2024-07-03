@@ -9,10 +9,7 @@ use core::{
 use interrupt_fn_builder::exception_fn;
 use log::error;
 use shared::{
-    sync::{
-        barrier::{Barrier, BarrierTryError},
-        lockcell::LockCell,
-    },
+    sync::{barrier::Barrier, lockcell::LockCell},
     types::{CoreId, Duration},
 };
 
@@ -62,6 +59,12 @@ fn handle_other_core_panic(payload: &PanicNMIPayload) {
     halt()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum CoreDisableResult {
+    AllDisabled,
+    Timeout,
+}
+
 /// Disables all other cores and interrupts.
 ///
 /// # Safety:
@@ -69,7 +72,7 @@ fn handle_other_core_panic(payload: &PanicNMIPayload) {
 /// This should only be called from panics.
 /// The caller must guarantee that `payload` has a static lifetime relative to
 /// the panic
-unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> Option<BarrierTryError> {
+unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> CoreDisableResult {
     unsafe {
         // Safety: we are in a panic state, so anything relying on interrupts is
         // done for anyways
@@ -103,8 +106,8 @@ unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> Option<BarrierTr
         .barrier
         .enter_with_timeout(ticks_in(Duration::Seconds(1)))
     {
-        Ok(_) => None,
-        Err((_, failure)) => Some(failure),
+        Ok(_) => CoreDisableResult::AllDisabled,
+        Err(_) => CoreDisableResult::Timeout,
     }
 }
 
@@ -161,8 +164,8 @@ fn panic(info: &PanicInfo) -> ! {
         panic_no_logger(info);
     }
 
-    if let Some(timeout) = other_core_timeout {
-        error!(target: "PANIC", "timout while waiting for {} processors to shut down", timeout.waiting_on);
+    if other_core_timeout == CoreDisableResult::Timeout {
+        error!(target: "PANIC", "timout while waiting for other processors to shut down");
     }
 
     error!(target: "PANIC", "{}", info);

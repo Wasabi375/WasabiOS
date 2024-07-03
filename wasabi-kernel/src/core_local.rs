@@ -361,25 +361,32 @@ pub unsafe fn init(core_id: CoreId) {
 pub struct CoreInterruptState;
 
 impl CoreInfo for CoreInterruptState {
-    fn core_id() -> CoreId {
+    fn core_id(&self) -> CoreId {
         locals!().core_id
     }
 
-    fn is_bsp() -> bool {
+    fn is_bsp(&self) -> bool {
         locals!().is_bsp()
+    }
+
+    fn instance() -> Self
+    where
+        Self: Sized,
+    {
+        CoreInterruptState
     }
 }
 
 impl InterruptState for CoreInterruptState {
-    fn in_interrupt() -> bool {
+    fn in_interrupt(&self) -> bool {
         locals!().in_interrupt()
     }
 
-    fn in_exception() -> bool {
+    fn in_exception(&self) -> bool {
         locals!().in_exception()
     }
 
-    unsafe fn enter_lock(disable_interrupts: bool) {
+    unsafe fn enter_lock(&self, disable_interrupts: bool) {
         #[cfg(feature = "test")]
         test_locals!().lock_count.fetch_add(1, Ordering::AcqRel);
 
@@ -391,7 +398,7 @@ impl InterruptState for CoreInterruptState {
         }
     }
 
-    unsafe fn exit_lock(enable_interrupts: bool) {
+    unsafe fn exit_lock(&self, enable_interrupts: bool) {
         #[cfg(feature = "test")]
         test_locals!().lock_count.fetch_sub(1, Ordering::AcqRel);
 
@@ -401,10 +408,6 @@ impl InterruptState for CoreInterruptState {
                 locals!().enable_interrupts();
             }
         }
-    }
-
-    fn instance() -> Self {
-        CoreInterruptState
     }
 }
 

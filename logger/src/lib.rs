@@ -75,10 +75,10 @@ fn write_record<W: Write, CI: CoreInfo>(
 }
 
 fn write_processor<W: Write, CI: CoreInfo>(writer: &mut W) -> Result<(), core::fmt::Error> {
-    if CI::is_bsp() {
+    if CI::s_is_bsp() {
         writer.write_str("(BSP)")
     } else {
-        writer.write_fmt(format_args!("(AP: {})", CI::core_id()))
+        writer.write_fmt(format_args!("(AP: {})", CI::s_core_id()))
     }
 }
 

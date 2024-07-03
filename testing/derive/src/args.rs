@@ -10,6 +10,7 @@ pub struct Args {
     pub expected_exit: Option<Expr>,
     pub focus: bool,
     pub ignore: bool,
+    pub multiprocessor: bool,
 }
 
 impl Parse for Args {
@@ -18,6 +19,7 @@ impl Parse for Args {
         let mut expected_exit = None;
         let mut focus = false;
         let mut ignore = false;
+        let mut multiprocessor = false;
 
         while !input.is_empty() {
             let lookahead = input.lookahead1();
@@ -55,6 +57,16 @@ impl Parse for Args {
                             return Err(Error::new_spanned(ident, "ignore can only be set once"));
                         }
                     }
+                    "multiprocessor" | "mp" => {
+                        if !multiprocessor {
+                            multiprocessor = true;
+                        } else {
+                            return Err(Error::new_spanned(
+                                ident,
+                                "multiprocessor can only be set once",
+                            ));
+                        }
+                    }
                     _ => {
                         return Err(Error::new_spanned(
                             ident,
@@ -86,6 +98,7 @@ impl Parse for Args {
             expected_exit,
             focus,
             ignore,
+            multiprocessor,
         })
     }
 }

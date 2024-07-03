@@ -1,12 +1,31 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
-use syn::ItemFn;
+use syn::spanned::Spanned;
+use syn::{Error, ItemFn, Signature};
 
 use crate::args::Args;
 
+pub fn expand_test_function(signature: &Signature) -> TokenStream {
+    let fn_name_ident = &signature.ident;
+
+    let fn_variance = match signature.inputs.len() {
+        0 => Ident::new("Normal", signature.span()),
+        1 => Ident::new("MPBarrier", signature.span()),
+        _ => {
+            return TokenStream::from(
+                Error::new_spanned(signature, "Invalid function arguments").to_compile_error(),
+            )
+        }
+    };
+
+    quote! {
+        testing::description::KernelTestFunction::#fn_variance (#fn_name_ident)
+    }
+}
+
 pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
-    let fn_name_ident = &test_fn.sig.ident;
-    let fn_name = fn_name_ident.to_string();
+    let fn_to_test = expand_test_function(&test_fn.sig);
+    let fn_name = test_fn.sig.ident.to_string();
 
     let description_name = format_ident!("__KERNEL_TEST_{}", fn_name.to_uppercase());
 
@@ -30,6 +49,7 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
 
     let focus = args.focus;
     let ignore = args.ignore;
+    let multiprocessor = args.multiprocessor;
 
     quote! {
         #test_fn
@@ -39,10 +59,11 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
             name: #name,
             fn_name: #fn_name,
             expected_exit: #expected_exit,
-            test_fn: #fn_name_ident,
+            test_fn: #fn_to_test,
             test_location: #test_location,
             focus: #focus,
-            ignore: #ignore
+            ignore: #ignore,
+            multiprocessor: #multiprocessor
         };
     }
 }

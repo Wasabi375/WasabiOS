@@ -345,26 +345,26 @@ impl<T: Send, I: InterruptState> LockCell<T> for TicketLock<T, I> {
     #[track_caller]
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         assert!(
-            !self.preemtable || !I::in_interrupt(),
+            !self.preemtable || !I::s_in_interrupt(),
             "use of non-preemtable lock in interrupt"
         );
 
         unsafe {
             // Safety: disabling interrupts is ok, for preemtable locks
-            I::enter_lock(!self.preemtable);
+            I::s_enter_lock(!self.preemtable);
         }
 
         let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
 
         while self.current_ticket.load(Ordering::SeqCst) != ticket {
             let owner = self.owner.load(Ordering::Acquire);
-            if owner != !0 && owner == I::core_id().0 as u16 {
+            if owner != !0 && owner == I::s_core_id().0 as u16 {
                 panic!("Deadlock detected");
             }
             spin_loop();
         }
 
-        self.owner.store(I::core_id().0 as u16, Ordering::Release);
+        self.owner.store(I::s_core_id().0 as u16, Ordering::Release);
 
         LockCellGuard {
             lockcell: self,
@@ -393,7 +393,7 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
         // Safety: this will restore the interrupt state from when we called
         // enter_lock, so this is safe
-        I::exit_lock(!self.preemtable);
+        I::s_exit_lock(!self.preemtable);
     }
 
     fn is_unlocked(&self) -> bool {
@@ -485,7 +485,7 @@ impl<T: Send, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
         // in interrupts even if preemtable
         unsafe {
             // Safety: disabling interrupts is ok, for preemtable locks
-            I::enter_lock(false);
+            I::s_enter_lock(false);
         }
 
         let mut cur_count = self.access_count.load(Ordering::Acquire);
@@ -521,12 +521,12 @@ impl<T: Send, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
 impl<T: Send, I: InterruptState> LockCell<T> for ReadWriteCell<T, I> {
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         assert!(
-            !self.preemtable || !I::in_interrupt(),
+            !self.preemtable || !I::s_in_interrupt(),
             "use onf non-preemtable lock in interrupt"
         );
         unsafe {
             // Safety: disabling interrupts is ok, for preemtable locks
-            I::enter_lock(!self.preemtable);
+            I::s_enter_lock(!self.preemtable);
         }
 
         loop {
@@ -561,7 +561,7 @@ impl<T, I: InterruptState> RWCellInternal<T> for ReadWriteCell<T, I> {
         assert!(previous_count >= 1);
         // Safety: this will restore the interrupt state from when we called
         // enter_lock, so this is safe
-        I::exit_lock(!self.preemtable);
+        I::s_exit_lock(!self.preemtable);
     }
 
     fn open_to_read(&self) -> bool {
@@ -588,7 +588,7 @@ impl<T, I: InterruptState> LockCellInternal<T> for ReadWriteCell<T, I> {
         self.access_count.store(0, Ordering::SeqCst);
         // Safety: this will restore the interrupt state from when we called
         // enter_lock, so this is safe
-        I::exit_lock(!self.preemtable);
+        I::s_exit_lock(!self.preemtable);
     }
 
     fn is_unlocked(&self) -> bool {

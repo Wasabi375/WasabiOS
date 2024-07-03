@@ -96,19 +96,24 @@ extern crate alloc;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use bootloader_api::BootInfo;
 use core::{
+    any::Any,
     fmt::{Debug, Write},
     str::FromStr,
+    sync::atomic::{AtomicBool, Ordering},
 };
 use itertools::Itertools;
-use shared::sync::lockcell::LockCell;
-use testing::description::{KernelTestDescription, KernelTestFn, TestExitState, KERNEL_TESTS};
+use shared::sync::{barrier::Barrier, lockcell::LockCell};
+use testing::{
+    description::{KernelTestDescription, KernelTestFunction, TestExitState, KERNEL_TESTS},
+    multiprocessor::DataBarrier,
+};
 use uart_16550::SerialPort;
 use wasabi_kernel::{
     bootloader_config_common,
-    cpu::halt,
+    core_local::{get_started_core_count, CoreInterruptState},
     serial::SERIAL2,
     testing::{panic::use_custom_panic_handler, qemu},
     KernelConfig,
@@ -147,16 +152,68 @@ fn wait_for_test_ready_handshake(serial: &mut SerialPort) {
     debug!("test handshake received");
 }
 
+static TEST_START_BARRIER: DataBarrier<(KernelTestDescription, bool)> =
+    DataBarrier::new(u32::max_value()).with_target_ordering(Ordering::Acquire);
+static TEST_USER_DATA_BARRIER: DataBarrier<Box<dyn Any + Send>> =
+    DataBarrier::new(u32::max_value()).with_target_ordering(Ordering::Acquire);
+static TEST_MP_SUCCESS: AtomicBool = AtomicBool::new(true);
+static TEST_END_BARRIER: Barrier =
+    Barrier::new(u32::max_value()).with_target_ordering(Ordering::Acquire);
+static TESTING_CORE_INTERRUPT_STATE: CoreInterruptState = CoreInterruptState;
+
+fn init_mp() {
+    testing::multiprocessor::init_interrupt_state(&TESTING_CORE_INTERRUPT_STATE);
+    unsafe {
+        // we call this on all processors with the same value so this will not affect
+        // any processors currently waiting
+        TEST_START_BARRIER.set_target(
+            get_started_core_count(Ordering::Acquire).into(),
+            Ordering::Release,
+        );
+        TEST_USER_DATA_BARRIER.set_target(
+            get_started_core_count(Ordering::Acquire).into(),
+            Ordering::Release,
+        );
+        TEST_END_BARRIER.set_target(
+            get_started_core_count(Ordering::Acquire).into(),
+            Ordering::Release,
+        );
+    }
+}
+
 /// the main entry point for the kernel in test mode
 fn kernel_test_main() -> ! {
     unsafe {
         locals!().disable_interrupts();
     }
-    if !locals!().is_bsp() {
-        todo_warn!("Test do not support multiple cores");
-        halt();
-    }
 
+    init_mp();
+
+    if locals!().is_bsp() {
+        bsp_main()
+    } else {
+        ap_main()
+    }
+}
+
+fn ap_main() -> ! {
+    loop {
+        let test_guard = TEST_START_BARRIER
+            .enter()
+            .expect("failed to get test description");
+        let (test, panicing) = test_guard.as_ref();
+        let success = if *panicing {
+            run_panicing_test(test)
+        } else {
+            run_test_no_panic(test)
+        };
+
+        TEST_MP_SUCCESS.fetch_or(success, Ordering::SeqCst);
+        TEST_END_BARRIER.enter();
+    }
+}
+
+fn bsp_main() -> ! {
     let mut serial = SERIAL2.lock();
     let success = if let Some(serial) = serial.as_mut() {
         run_tests(serial)
@@ -244,21 +301,12 @@ fn run_single_test(serial: &mut SerialPort, test_to_run: usize, panicing: bool) 
             info!("Running test in module {}", module.0);
             let _ = writeln!(serial, "start test {test_number}");
 
-            return if panicing {
-                trace!("run panic-expected test");
-                run_panicing_test(test);
-                let _ = writeln!(serial, "test failed");
-                false
+            let success = run_test_bsp(test, panicing);
+            if success {
+                let _ = writeln!(serial, "test succeeded");
             } else {
-                trace!("run normal test");
-                if run_test_no_panic(test) {
-                    let _ = writeln!(serial, "test succeeded");
-                    true
-                } else {
-                    let _ = writeln!(serial, "test failed");
-                    false
-                }
-            };
+                let _ = writeln!(serial, "test failed");
+            }
         }
     }
 
@@ -350,7 +398,7 @@ fn run_tests_with_serial(serial: &mut SerialPort, start_at: usize) -> bool {
             let start_confirmation = read_line(serial);
             assert_eq!(start_confirmation.as_slice(), b"start test");
 
-            if run_test_no_panic(test) {
+            if run_test_bsp(test, false) {
                 success += 1;
                 let _ = writeln!(serial, "test succeeded");
                 debug!("send test succeded");
@@ -416,7 +464,7 @@ fn run_tests_no_serial() -> bool {
                 continue;
             }
             count += 1;
-            if run_test_no_panic(test) {
+            if run_test_bsp(test, false) {
                 success += 1;
             }
         }
@@ -448,6 +496,39 @@ fn run_tests_no_serial() -> bool {
     }
 }
 
+fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
+    if test.multiprocessor {
+        // we can reuse the original test and don't need to rely on the shared
+        // data.
+        let _shared_test = TEST_START_BARRIER
+            .enter_with_data((test.clone(), panicing))
+            .expect("sharing data should never fail");
+        TEST_MP_SUCCESS.store(true, Ordering::Release);
+    }
+
+    let mut success = if panicing {
+        trace!("run panic-expected test");
+        run_panicing_test(test);
+        false
+    } else {
+        trace!("run normal test");
+        run_test_no_panic(test)
+    };
+
+    if test.multiprocessor {
+        TEST_END_BARRIER.enter();
+
+        success = TEST_MP_SUCCESS.load(Ordering::SeqCst) | success;
+
+        TEST_MP_SUCCESS.store(true, Ordering::SeqCst);
+    }
+
+    if !success && panicing {
+        error!("Expected test to panic, but all processors completed");
+    }
+    success
+}
+
 fn run_test_no_panic(test: &KernelTestDescription) -> bool {
     assert!(test.expected_exit != TestExitState::Panic);
     info!(
@@ -455,8 +536,10 @@ fn run_test_no_panic(test: &KernelTestDescription) -> bool {
         test.name, test.fn_name, test.test_location
     );
 
-    let test_fn: KernelTestFn = test.test_fn;
-    let test_result = test_fn();
+    let test_result = match test.test_fn {
+        KernelTestFunction::Normal(test_fn) => test_fn(),
+        KernelTestFunction::MPBarrier(test_fn) => test_fn(&TEST_USER_DATA_BARRIER),
+    };
 
     return match test.expected_exit {
         TestExitState::Succeed => match test_result {
@@ -502,8 +585,6 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
         test.name, test.fn_name, test.test_location
     );
 
-    let test_fn: KernelTestFn = test.test_fn;
-
     let _panic_handler_guard = use_custom_panic_handler(|_info| {
         // Safety: we are in a panic handler so we are the only running code
         let serial2 = unsafe { &mut *SERIAL2.shatter() }.as_mut().unwrap();
@@ -512,19 +593,24 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
         qemu::exit(qemu::ExitCode::Success);
     });
 
-    let test_result = test_fn();
-    error!(
-        "Expected test to panic, but it exited with {:?}",
-        test_result
-    );
+    let test_result = match test.test_fn {
+        KernelTestFunction::Normal(test_fn) => test_fn(),
+        KernelTestFunction::MPBarrier(test_fn) => test_fn(&TEST_USER_DATA_BARRIER),
+    };
+
+    info!("finished panicing test with {:?}", test_result);
+
     false
 }
 
 #[cfg(feature = "test-tests")]
 mod test_tests {
+    use core::any::Any;
+
+    use alloc::boxed::Box;
     use testing::{
-        description::TestExitState, kernel_test, t_assert, t_assert_eq, t_assert_ne, tfail,
-        KernelTestError, TestUnwrapExt,
+        description::TestExitState, kernel_test, multiprocessor::DataBarrier, t_assert,
+        t_assert_eq, t_assert_ne, tfail, KernelTestError, TestUnwrapExt,
     };
 
     #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
@@ -637,6 +723,24 @@ mod test_tests {
 
     #[kernel_test(mp)]
     fn test_multiprocessor_empty() -> Result<(), KernelTestError> {
+        Ok(())
+    }
+
+    #[kernel_test(mp)]
+    fn test_multiprocessor_barrier(
+        db: &DataBarrier<Box<dyn Any + Send>>,
+    ) -> Result<(), KernelTestError> {
+        let data = if locals!().is_bsp() {
+            let data = Box::new(2u64);
+            db.enter_with_data(data)
+        } else {
+            db.enter()
+        }
+        .tunwrap()?;
+
+        let value = data.downcast_ref::<u64>().tunwrap()?;
+        t_assert_eq!(2, *value);
+
         Ok(())
     }
 }

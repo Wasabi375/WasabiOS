@@ -48,13 +48,20 @@ fn kernel_main() -> ! {
     }
     start_timer();
 
-    if locals!().core_id.0 == 2 {
-        sleep_tsc(Duration::Seconds(5));
-        panic!("test panic!");
-    }
+    sleep_tsc(Duration::Seconds(5));
+    stop_timer();
 
     info!("OS Done! cpu::halt()");
     cpu::halt();
+}
+
+#[allow(dead_code)]
+fn stop_timer() {
+    let mut apic = locals!().apic.lock();
+    let mut timer = apic.timer();
+
+    timer.stop();
+    info!("timer stopped!");
 }
 
 #[allow(dead_code)]

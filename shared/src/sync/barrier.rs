@@ -11,7 +11,10 @@ use core::{
 
 use thiserror::Error;
 
-use crate::{cpu::time::timestamp_now_tsc, types::TscDuration};
+use crate::{
+    cpu::time::timestamp_now_tsc,
+    types::{TscDuration, TscTimestamp},
+};
 
 use super::{
     lockcell::{RWLockCell, ReadCellGuard, ReadWriteCell},
@@ -19,103 +22,166 @@ use super::{
 };
 
 /// A barrier that only allows entry when [Self::target]
-/// processors are waiting
+/// processors are waiting.
+/// This will accept exactly [Self::target] processors and autmatically reset.
 pub struct Barrier {
-    count: AtomicU32,
+    enter_count: AtomicU32,
+    passing_count: AtomicU32,
     /// The number of processors that need to wait for all to enter
-    pub target: u32,
-}
-
-/// Failure of a barrier try operation
-///
-/// the contained values might not be correct, since they might have
-/// changed since they were read
-#[derive(Debug, Clone, Copy)]
-pub struct BarrierTryError {
-    /// the number of processors that have yet to enter the barrier
-    pub waiting_on: u32,
-    /// the number of processors that are currently waiting at the barrier
-    pub waiting: u32,
+    target: AtomicU32,
+    /// used to access [Self::target]
+    ordering: Ordering,
 }
 
 impl Barrier {
-    /// Create a new barrier that waits for `target` processors
+    /// Create a new barrier which waits for `target` processors
     pub const fn new(target: u32) -> Self {
         Self {
-            count: AtomicU32::new(0),
-            target,
+            enter_count: AtomicU32::new(0),
+            passing_count: AtomicU32::new(0),
+            target: AtomicU32::new(target),
+            ordering: Ordering::Relaxed,
         }
     }
 
-    /// resets the barrier.
+    /// Change the ordering used to read [Self::target]
+    pub const fn with_target_ordering(mut self, ordering: Ordering) -> Self {
+        self.ordering = ordering;
+        self
+    }
+
+    /// the number of processors that are currently waiting at the barrier
+    pub fn target(&self) -> u32 {
+        self.target.load(self.ordering)
+    }
+
+    /// set the number of processors that are currently waiting at the barrier
+    pub unsafe fn set_target(&self, target: u32, ordering: Ordering) {
+        self.target.store(target, ordering)
+    }
+
+    /// Wait until [Self::target] processors are waiting.
     ///
-    /// This fails if there are currently any waiting processors.
-    pub fn reset(&self) -> Result<(), BarrierTryError> {
-        if self.count.load(Ordering::Acquire) == 0 {
-            return Ok(());
-        }
-        match self
-            .count
-            .compare_exchange(self.target, 0, Ordering::AcqRel, Ordering::Acquire)
-        {
-            Ok(_) => Ok(()),
-            Err(waiting) => Err(BarrierTryError {
-                waiting,
-                waiting_on: self.target - waiting,
-            }),
-        }
-    }
+    /// Returns `true` for the leader, aka the first processor to reach
+    /// the barrier.
+    pub fn enter(&self) -> bool {
+        let target = self.target.load(self.ordering);
 
-    /// returns true if the barrier can instantly be passed.
-    ///
-    /// Not that between this call and [Self::enter] another processor might call [Self::reset]
-    pub fn is_open(&self) -> bool {
-        self.count.load(Ordering::Acquire) >= self.target
-    }
-
-    /// Wait until [Self::target] processors are waiting
-    pub fn enter(&self) {
-        let mut current = self.count.fetch_add(1, Ordering::SeqCst);
-        while current < self.target {
+        loop {
+            // the barrier is currently open for the last set of processors
+            let pass_count = self.passing_count.load(Ordering::SeqCst);
+            if pass_count == target || pass_count == 0 {
+                break;
+            }
             spin_loop();
-            current = self.count.load(Ordering::SeqCst);
         }
+
+        // try to restet passing_count to target.
+        // The processor that succeeds is the leader that is responsible to
+        // wait for all other processors to pass and reset the barrier
+        let leader = self
+            .passing_count
+            .compare_exchange(0, target, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+
+        // wait for all processors to reach the barrier
+        let mut current = self.enter_count.fetch_add(1, Ordering::SeqCst);
+        while current < target {
+            spin_loop();
+            current = self.enter_count.load(Ordering::SeqCst);
+        }
+
+        if leader {
+            // leader waits for all processors to pass the barrier before resetting it by storing 0
+            // in enter_count and pass_count
+            while self.passing_count.load(Ordering::SeqCst) != 1 {
+                spin_loop();
+            }
+            self.enter_count.store(0, Ordering::SeqCst);
+            self.passing_count.store(0, Ordering::SeqCst);
+        } else {
+            self.passing_count.fetch_sub(1, Ordering::SeqCst);
+        }
+        leader
     }
 
     /// Wait until [Self::target] processors are waiting or timeout is reached.
-    pub fn enter_with_timeout(
-        &self,
-        timeout: TscDuration,
-    ) -> Result<(), (TscDuration, BarrierTryError)> {
-        let start = timestamp_now_tsc();
-        let end = start + timeout;
-        let mut current = self.count.fetch_add(1, Ordering::SeqCst);
-        while current < self.target {
-            spin_loop();
-
-            let now = timestamp_now_tsc();
-            if now >= end {
-                // try to reduce count by 1. We cant use fetch_sub because
-                // some other processor might have entered since we last read count
-                // and therefor we might be done waiting.
-                if self
-                    .count
-                    .compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    // we successfuly marked us as no longer waiting, we can return
-                    return Err((
-                        now - start,
-                        BarrierTryError {
-                            waiting_on: self.target - (current - 1),
-                            waiting: current - 1,
-                        },
-                    ));
+    ///
+    /// calling enter after a timeout might cause a deadlock on [Self::enter] and similar
+    /// unless all other currently waiting processors also time out.
+    pub fn enter_with_timeout(&self, timeout: TscDuration) -> Result<bool, TscDuration> {
+        let mut start = TscTimestamp::new(0);
+        let mut end = start;
+        // tsc time is slow, so we can skip this if we take only a few iterations
+        let mut timeout_iters = 10_000;
+        let mut check_timeout = || {
+            if timeout_iters == 0 {
+                let now = timestamp_now_tsc();
+                if now > end {
+                    return Err(now - start);
+                }
+            } else {
+                timeout_iters -= 1;
+                if timeout_iters == 0 {
+                    start = timestamp_now_tsc();
+                    end = start + timeout;
                 }
             }
-            current = self.count.load(Ordering::SeqCst);
+            Ok(())
+        };
+
+        let target = self.target.load(self.ordering);
+
+        loop {
+            // the barrier is currently open for the last set of processors
+            let pass_count = self.passing_count.load(Ordering::SeqCst);
+            if pass_count == target || pass_count == 0 {
+                break;
+            }
+
+            check_timeout()?;
+
+            spin_loop();
         }
-        Ok(())
+
+        // try to restet passing_count to target.
+        // The processor that succeeds is the leader that is responsible to
+        // wait for all other processors to pass and reset the barrier
+        let leader = self
+            .passing_count
+            .compare_exchange(0, target, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+
+        // wait for all processors to reach the barrier
+        let mut current = self.enter_count.fetch_add(1, Ordering::SeqCst);
+        while current < target {
+            if let Err(timeout) = check_timeout() {
+                if self
+                    .enter_count
+                    .compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    return Err(timeout);
+                }
+            }
+
+            spin_loop();
+            current = self.enter_count.load(Ordering::SeqCst);
+        }
+
+        if leader {
+            // in enter_count and pass_count
+            while self.passing_count.load(Ordering::SeqCst) != 1 {
+                check_timeout()?;
+                spin_loop();
+            }
+            self.enter_count.store(0, Ordering::SeqCst);
+            self.passing_count.store(0, Ordering::SeqCst);
+        } else {
+            self.passing_count.fetch_sub(1, Ordering::SeqCst);
+        }
+
+        Ok(leader)
     }
 
     /// Shatter the barrier and let all waiting processors procede
@@ -126,7 +192,8 @@ impl Barrier {
     ///
     /// the caller must guarantee that shattering does not create UB
     pub unsafe fn shatter(&self) {
-        self.count.store(self.target, Ordering::Release);
+        let target = self.target.load(self.ordering);
+        self.enter_count.store(target, Ordering::Release);
     }
 }
 
@@ -134,14 +201,12 @@ impl Barrier {
 pub struct DataBarrier<T, I> {
     data: ReadWriteCell<Option<T>, I>,
     entry: Barrier,
-    // the number of processors that could potentially read data
-    critical: AtomicU32,
 }
 
 /// A guard that allows access to the value passed into a [DataBarrier]
 pub struct DataBarrierGuard<'l, T, I: InterruptState> {
     data: ReadCellGuard<'l, Option<T>, ReadWriteCell<Option<T>, I>>,
-    barrier: &'l DataBarrier<T, I>,
+    leader: bool,
 }
 
 #[derive(Error, Debug)]
@@ -149,24 +214,16 @@ pub struct DataBarrierGuard<'l, T, I: InterruptState> {
 pub enum DataBarrierError {
     #[error("No data provided")]
     NoData,
-    #[error("barrier timed out after {} ticks. {:?}", duration.as_i64(), failure)]
-    Timeout {
-        duration: TscDuration,
-        failure: BarrierTryError,
-    },
-    #[error("failed to reset barrier")]
-    Reset(BarrierTryError),
-    #[error("{0} processors are still accessing the old data")]
-    DataStillAccessed(u32),
+    #[error("barrier timed out after {} ticks.", duration.as_i64())]
+    Timeout { duration: TscDuration },
 }
 
 impl<T, I> DataBarrier<T, I> {
     /// Create a new barrier that waits for `target` processors
-    pub fn new(target: u32) -> Self {
+    pub const fn new(target: u32) -> Self {
         Self {
             data: ReadWriteCell::new(None),
             entry: Barrier::new(target),
-            critical: AtomicU32::new(0),
         }
     }
 
@@ -174,35 +231,39 @@ impl<T, I> DataBarrier<T, I> {
     ///
     /// This assumes that it is save to disable interrupts while the data
     /// within this barrier is acessed.
-    pub fn new_non_preemtable(target: u32) -> Self {
+    pub const fn new_non_preemtable(target: u32) -> Self {
         Self {
             data: ReadWriteCell::new_non_preemtable(None),
             entry: Barrier::new(target),
-            critical: AtomicU32::new(0),
         }
+    }
+
+    /// Change the ordering that the [target] is read with
+    pub const fn with_target_ordering(mut self, ordering: Ordering) -> Self {
+        self.entry = self.entry.with_target_ordering(ordering);
+        self
+    }
+
+    /// the number of processors that are currently waiting at the barrier
+    pub fn target(&self) -> u32 {
+        self.entry.target()
+    }
+
+    /// set the number of processors that are currently waiting at the barrier
+    ///
+    /// # Safety:
+    ///
+    /// Caller must guarantee that changing the target won't invalidate the barrier for
+    /// waiting processors
+    pub unsafe fn set_target(&self, target: u32, ordering: Ordering) {
+        self.entry.set_target(target, ordering)
     }
 }
 
 impl<T: Send, I: InterruptState> DataBarrier<T, I> {
-    /// reset the data barrier
-    pub fn reset(&self) -> Result<Option<T>, DataBarrierError> {
-        let mut data = self.data.write();
-
-        let access_count = self.critical.load(Ordering::Acquire);
-        if access_count > 0 {
-            return Err(DataBarrierError::DataStillAccessed(access_count));
-        }
-
-        self.entry.reset().map_err(|e| DataBarrierError::Reset(e))?;
-
-        Ok(data.take())
-    }
-
     /// Calls [Barrier::enter]
     pub fn enter(&self) -> Result<DataBarrierGuard<'_, T, I>, DataBarrierError> {
-        self.entry.enter();
-
-        self.critical.fetch_add(1, Ordering::SeqCst);
+        let leader = self.entry.enter();
 
         let data_guard = self.data.read();
         if data_guard.is_none() {
@@ -210,7 +271,7 @@ impl<T: Send, I: InterruptState> DataBarrier<T, I> {
         }
         Ok(DataBarrierGuard {
             data: data_guard,
-            barrier: self,
+            leader,
         })
     }
 
@@ -219,11 +280,10 @@ impl<T: Send, I: InterruptState> DataBarrier<T, I> {
         &self,
         timeout: TscDuration,
     ) -> Result<DataBarrierGuard<'_, T, I>, DataBarrierError> {
-        if let Err((duration, failure)) = self.entry.enter_with_timeout(timeout) {
-            return Err(DataBarrierError::Timeout { duration, failure });
-        }
-
-        self.critical.fetch_add(1, Ordering::SeqCst);
+        let leader = match self.entry.enter_with_timeout(timeout) {
+            Err(duration) => return Err(DataBarrierError::Timeout { duration }),
+            Ok(leader) => leader,
+        };
 
         let data_guard = self.data.read();
         if data_guard.is_none() {
@@ -231,7 +291,7 @@ impl<T: Send, I: InterruptState> DataBarrier<T, I> {
         }
         Ok(DataBarrierGuard {
             data: data_guard,
-            barrier: self,
+            leader,
         })
     }
 
@@ -260,9 +320,11 @@ impl<T: Send, I: InterruptState> DataBarrier<T, I> {
     }
 }
 
-impl<'l, T, I: InterruptState> Drop for DataBarrierGuard<'l, T, I> {
-    fn drop(&mut self) {
-        self.barrier.critical.fetch_sub(1, Ordering::SeqCst);
+impl<'l, T, I: InterruptState> DataBarrierGuard<'l, T, I> {
+    /// returns `true` if this was created on the processor that first
+    /// reached the barrier
+    pub fn is_leader(&self) -> bool {
+        self.leader
     }
 }
 

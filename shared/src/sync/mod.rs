@@ -10,16 +10,51 @@ pub mod lockcell;
 pub trait CoreInfo: 'static {
     /// Gets the ID of the running core. It's required that this core ID is
     /// unique to the core.
-    fn core_id() -> CoreId;
+    fn core_id(&self) -> CoreId;
 
     /// Returns `true` if the current processor is the bootstrap processor.
-    fn is_bsp() -> bool;
+    fn is_bsp(&self) -> bool;
 
     /// Returns `true` if the current processor is an application processor.
     ///
     /// This is `true`  if [Self::is_bsp] is `false`
-    fn is_ap() -> bool {
-        !Self::is_bsp()
+    fn is_ap(&self) -> bool {
+        !self.is_bsp()
+    }
+
+    /// returns the instance of this interrupt state. This should always be a zst.
+    fn instance() -> Self
+    where
+        Self: Sized;
+
+    /// Gets the ID of the running core. It's required that this core ID is
+    /// unique to the core.
+    #[inline(always)]
+    fn s_core_id() -> CoreId
+    where
+        Self: Sized,
+    {
+        Self::instance().core_id()
+    }
+
+    /// Returns `true` if the current processor is the bootstrap processor.
+    #[inline(always)]
+    fn s_is_bsp() -> bool
+    where
+        Self: Sized,
+    {
+        Self::instance().is_bsp()
+    }
+
+    /// Returns `true` if the current processor is an application processor.
+    ///
+    /// This is `true`  if [Self::is_bsp] is `false`
+    #[inline(always)]
+    fn s_is_ap() -> bool
+    where
+        Self: Sized,
+    {
+        Self::instance().is_ap()
     }
 }
 
@@ -28,11 +63,11 @@ pub trait CoreInfo: 'static {
 /// disabling and enabling) primitives.
 pub trait InterruptState: CoreInfo + 'static {
     /// Returns `true` if we're currently in an interrupt
-    fn in_interrupt() -> bool;
+    fn in_interrupt(&self) -> bool;
 
     /// Returns `true` if we're currently in an exception. Which indicates that
     /// a lock cannot be held as we may have pre-empted a non-preemptable lock
-    fn in_exception() -> bool;
+    fn in_exception(&self) -> bool;
 
     /// Signal the kernel that a lock was taken. If `disable_interrupts` the
     /// lock does not support being interrupted and therefor we must disable
@@ -45,7 +80,7 @@ pub trait InterruptState: CoreInfo + 'static {
     ///     same parameter for `enable_interrupts`
     /// * If `disable_interrupts` caller must ensure that interrupts can be
     ///     disabled safely
-    unsafe fn enter_lock(disable_interrupts: bool);
+    unsafe fn enter_lock(&self, disable_interrupts: bool);
 
     /// Signal the kernel that a lock was released. If `enable_interrupts` the
     /// kernel will reenable interrupts if possible.
@@ -54,8 +89,54 @@ pub trait InterruptState: CoreInfo + 'static {
     ///
     /// * caller must ensure that this function is called exactly once per invocation
     ///     of [InterruptState::enter_lock] with the same parameter.
-    unsafe fn exit_lock(enable_interrupts: bool);
+    unsafe fn exit_lock(&self, enable_interrupts: bool);
 
-    /// returns the instance of this interrupt state. This should always be a zst.
-    fn instance() -> Self;
+    /// Returns `true` if we're currently in an interrupt
+    fn s_in_interrupt() -> bool
+    where
+        Self: Sized,
+    {
+        Self::instance().in_interrupt()
+    }
+
+    /// Returns `true` if we're currently in an exception. Which indicates that
+    /// a lock cannot be held as we may have pre-empted a non-preemptable lock
+    fn s_in_exception() -> bool
+    where
+        Self: Sized,
+    {
+        Self::instance().in_exception()
+    }
+
+    /// Signal the kernel that a lock was taken. If `disable_interrupts` the
+    /// lock does not support being interrupted and therefor we must disable
+    /// interrupts. This is also a prequisite for a lock to be taken within an
+    /// interrupt.
+    ///
+    /// # Safety:
+    ///
+    /// * Caller must call [InterruptState::exit_lock] exactly once with the
+    ///     same parameter for `enable_interrupts`
+    /// * If `disable_interrupts` caller must ensure that interrupts can be
+    ///     disabled safely
+    unsafe fn s_enter_lock(disable_interrupts: bool)
+    where
+        Self: Sized,
+    {
+        Self::instance().enter_lock(disable_interrupts)
+    }
+
+    /// Signal the kernel that a lock was released. If `enable_interrupts` the
+    /// kernel will reenable interrupts if possible.
+    ///
+    /// # Safety:
+    ///
+    /// * caller must ensure that this function is called exactly once per invocation
+    ///     of [InterruptState::enter_lock] with the same parameter.
+    unsafe fn s_exit_lock(enable_interrupts: bool)
+    where
+        Self: Sized,
+    {
+        Self::instance().exit_lock(enable_interrupts)
+    }
 }
