@@ -3,22 +3,12 @@
 use alloc::boxed::Box;
 use log::{debug, error, trace};
 
-use crate::{prelude::TicketLock, testing::qemu};
-use core::{
-    marker::PhantomData,
-    panic::PanicInfo,
-    sync::atomic::{AtomicU8, Ordering},
-};
+use crate::{test_locals, testing::qemu};
+use core::{marker::PhantomData, panic::PanicInfo};
 use shared::sync::lockcell::LockCell;
 
 /// Function Type for custom panic handlers
-type CustomPanicHandler = dyn (FnOnce(&PanicInfo) -> !) + Send + 'static;
-
-/// holds the custom panic handler if it exists
-static CUSTOM_PANIC: TicketLock<Option<Box<CustomPanicHandler>>> = TicketLock::new(None);
-
-/// marks that we are currently in a panic if this is not 0
-static PANIC_RECURSION_MARKER: AtomicU8 = AtomicU8::new(0);
+pub type CustomPanicHandler = dyn (FnOnce(&PanicInfo) -> !) + Send + 'static;
 
 /// panic handler used during tests
 ///
@@ -26,23 +16,11 @@ static PANIC_RECURSION_MARKER: AtomicU8 = AtomicU8::new(0);
 ///
 /// requires all other cores to be disabled and that the logger and framebuffer are working
 pub unsafe fn test_panic_handler(info: &PanicInfo) -> ! {
-    let panic_recursion = PANIC_RECURSION_MARKER.fetch_add(1, Ordering::SeqCst);
-
-    if let Some(custom_panic_handler) = CUSTOM_PANIC.lock().take() {
+    if let Some(custom_panic_handler) = test_locals!().custom_panic.lock().take() {
         trace!("Custom panic handler detected");
-        if panic_recursion == 0 {
-            custom_panic_handler(info);
-            // unreachable
-        } else {
-            error!("Custom Panic Handler paniced: ");
-        }
-    } else {
-        if panic_recursion > 0 {
-            error!("main panic handler paniced");
-            debug!("panic recursion count: {}", panic_recursion);
-        }
+        custom_panic_handler(info);
+        // unreachable
     }
-
     error!("TEST PANIC: {info}");
 
     debug!("panic! exit qemu");
@@ -58,7 +36,7 @@ pub struct CustomPanicHandlerGuard {
 
 impl Drop for CustomPanicHandlerGuard {
     fn drop(&mut self) {
-        let mut custom_panic = CUSTOM_PANIC.lock();
+        let mut custom_panic = test_locals!().custom_panic.lock();
         let handler = custom_panic.take();
         assert!(
             handler.is_some(),
@@ -78,7 +56,7 @@ where
     F: FnOnce(&PanicInfo) -> !,
     F: Send + 'static,
 {
-    let mut custom_panic = CUSTOM_PANIC.lock();
+    let mut custom_panic = test_locals!().custom_panic.lock();
     assert!(
         custom_panic.is_none(),
         "There already exists a custom panic handler"

@@ -2,11 +2,20 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use alloc::boxed::Box;
+use shared::sync::lockcell::TicketLock;
+use testing::multiprocessor::TestInterruptState;
+
+use super::panic::CustomPanicHandler;
+
 /// struct containing core local data for tests
 #[repr(C)]
 pub struct TestCoreLocals {
     /// The number of locks, currently held
     pub lock_count: AtomicU32,
+
+    /// holds the custom panic handler if it exists
+    pub custom_panic: TicketLock<Option<Box<CustomPanicHandler>>, TestInterruptState>,
 }
 
 impl TestCoreLocals {
@@ -14,6 +23,7 @@ impl TestCoreLocals {
     pub const fn new() -> Self {
         Self {
             lock_count: AtomicU32::new(0),
+            custom_panic: TicketLock::new(None),
         }
     }
 

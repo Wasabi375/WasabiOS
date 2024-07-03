@@ -100,8 +100,8 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 use bootloader_api::BootInfo;
 use core::{
     any::Any,
-    fmt::{Debug, Write},
-    str::FromStr,
+    fmt::Debug,
+    str::{from_utf8, FromStr},
     sync::atomic::{AtomicBool, Ordering},
 };
 use itertools::Itertools;
@@ -113,18 +113,27 @@ use testing::{
 use uart_16550::SerialPort;
 use wasabi_kernel::{
     bootloader_config_common,
-    core_local::{get_started_core_count, CoreInterruptState},
+    core_local::{get_ready_core_count, CoreInterruptState},
     serial::SERIAL2,
     testing::{panic::use_custom_panic_handler, qemu},
     KernelConfig,
 };
+
+/// Write to the serial port and also trace the output
+macro_rules! serial_line {
+    ($serial:ident, $($arg:tt)+) => {{
+        use core::fmt::Write;
+        log::trace!(target: "test_serial::send", $($arg)+);
+        core::writeln!($serial, $($arg)+)
+    }};
+}
 
 /// configuration for the bootloader in test mode
 const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
     let config = bootloader_api::BootloaderConfig::new_default();
     bootloader_config_common(config)
 };
-const KERNEL_CONFIG: KernelConfig = KernelConfig { start_aps: false };
+const KERNEL_CONFIG: KernelConfig = KernelConfig { start_aps: true };
 wasabi_kernel::entry_point!(
     kernel_test_main,
     boot_config = &BOOTLOADER_CONFIG,
@@ -133,7 +142,7 @@ wasabi_kernel::entry_point!(
 
 fn wait_for_test_ready_handshake(serial: &mut SerialPort) {
     debug!("waiting for test handshake");
-    let _ = writeln!(serial, "tests ready");
+    let _ = serial_line!(serial, "tests ready");
 
     const EXPECTED: &[u8] = b"tests ready\n";
     let mut response_position = 0;
@@ -148,7 +157,6 @@ fn wait_for_test_ready_handshake(serial: &mut SerialPort) {
             break;
         }
     }
-
     debug!("test handshake received");
 }
 
@@ -167,15 +175,15 @@ fn init_mp() {
         // we call this on all processors with the same value so this will not affect
         // any processors currently waiting
         TEST_START_BARRIER.set_target(
-            get_started_core_count(Ordering::Acquire).into(),
+            get_ready_core_count(Ordering::Acquire).into(),
             Ordering::Release,
         );
         TEST_USER_DATA_BARRIER.set_target(
-            get_started_core_count(Ordering::Acquire).into(),
+            get_ready_core_count(Ordering::Acquire).into(),
             Ordering::Release,
         );
         TEST_END_BARRIER.set_target(
-            get_started_core_count(Ordering::Acquire).into(),
+            get_ready_core_count(Ordering::Acquire).into(),
             Ordering::Release,
         );
     }
@@ -208,7 +216,13 @@ fn ap_main() -> ! {
             run_test_no_panic(test)
         };
 
-        TEST_MP_SUCCESS.fetch_or(success, Ordering::SeqCst);
+        if test.expected_exit == TestExitState::Succeed {
+            // success if ALL processors succeed
+            TEST_MP_SUCCESS.fetch_and(success, Ordering::SeqCst);
+        } else {
+            // success if ANY processor succeeds
+            TEST_MP_SUCCESS.fetch_or(success, Ordering::SeqCst);
+        }
         TEST_END_BARRIER.enter();
     }
 }
@@ -233,22 +247,31 @@ fn run_tests(serial: &mut SerialPort) -> bool {
     wait_for_test_ready_handshake(serial);
 
     loop {
-        match read_line(serial).as_slice() {
+        let line = read_line(serial);
+        let line = line.as_slice();
+        if log::log_enabled!(target: "test_serial::rec", log::Level::Trace) {
+            if let Some(line_str) = from_utf8(line).ok() {
+                trace!(target: "test_serial::rec", "{line_str}");
+            } else {
+                trace!(target: "test_serial::rec", "invalid utf8: {:?}", line);
+            }
+        }
+        match line {
             b"count" => {
                 let count = count_tests(false);
-                let _ = write!(serial, "{}\n", count);
+                let _ = serial_line!(serial, "{}", count);
             }
             b"count panic" => {
                 let count = count_tests(true);
-                let _ = write!(serial, "{}\n", count);
+                let _ = serial_line!(serial, "{}", count);
             }
             b"count ignored" => {
                 let count = count_ignored(false);
-                let _ = write!(serial, "{}\n", count);
+                let _ = serial_line!(serial, "{}", count);
             }
             b"count ignored panic" => {
                 let count = count_ignored(true);
-                let _ = write!(serial, "{}\n", count);
+                let _ = serial_line!(serial, "{}", count);
             }
             b"test normal" => {
                 return run_tests_with_serial(serial, 0);
@@ -299,14 +322,15 @@ fn run_single_test(serial: &mut SerialPort, test_to_run: usize, panicing: bool) 
             }
 
             info!("Running test in module {}", module.0);
-            let _ = writeln!(serial, "start test {test_number}");
+            let _ = serial_line!(serial, "start test {test_number}");
 
             let success = run_test_bsp(test, panicing);
             if success {
-                let _ = writeln!(serial, "test succeeded");
+                let _ = serial_line!(serial, "test succeeded");
             } else {
-                let _ = writeln!(serial, "test failed");
+                let _ = serial_line!(serial, "test failed");
             }
+            return success;
         }
     }
 
@@ -393,17 +417,17 @@ fn run_tests_with_serial(serial: &mut SerialPort, start_at: usize) -> bool {
             }
 
             count += 1;
-            let _ = writeln!(serial, "start test {test_number}");
+            let _ = serial_line!(serial, "start test {test_number}");
             debug!("send: start test {test_number}");
             let start_confirmation = read_line(serial);
             assert_eq!(start_confirmation.as_slice(), b"start test");
 
             if run_test_bsp(test, false) {
                 success += 1;
-                let _ = writeln!(serial, "test succeeded");
+                let _ = serial_line!(serial, "test succeeded");
                 debug!("send test succeded");
             } else {
-                let _ = writeln!(serial, "test failed");
+                let _ = serial_line!(serial, "test failed");
                 debug!("send test failed");
             }
 
@@ -498,12 +522,19 @@ fn run_tests_no_serial() -> bool {
 
 fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
     if test.multiprocessor {
+        if test.expected_exit == TestExitState::Succeed {
+            // we succeed if ALL processor succeeds, so default is true
+            TEST_MP_SUCCESS.store(true, Ordering::Release);
+        } else {
+            // we succeed if ANY processor succeeds, so default is false
+            TEST_MP_SUCCESS.store(false, Ordering::Release);
+        }
+
         // we can reuse the original test and don't need to rely on the shared
         // data.
         let _shared_test = TEST_START_BARRIER
             .enter_with_data((test.clone(), panicing))
             .expect("sharing data should never fail");
-        TEST_MP_SUCCESS.store(true, Ordering::Release);
     }
 
     let mut success = if panicing {
@@ -518,12 +549,19 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
     if test.multiprocessor {
         TEST_END_BARRIER.enter();
 
-        success = TEST_MP_SUCCESS.load(Ordering::SeqCst) | success;
+        if test.expected_exit == TestExitState::Succeed {
+            success = TEST_MP_SUCCESS.load(Ordering::SeqCst) & success;
+        } else {
+            // we only expect at least 1 processor to produce the correct failure,
+            // meaning that exactly 1 processors test needs to succeed
+            success = TEST_MP_SUCCESS.load(Ordering::SeqCst) | success;
+        }
 
         TEST_MP_SUCCESS.store(true, Ordering::SeqCst);
     }
 
-    if !success && panicing {
+    if panicing {
+        assert!(!success);
         error!("Expected test to panic, but all processors completed");
     }
     success
@@ -588,8 +626,10 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
     let _panic_handler_guard = use_custom_panic_handler(|_info| {
         // Safety: we are in a panic handler so we are the only running code
         let serial2 = unsafe { &mut *SERIAL2.shatter() }.as_mut().unwrap();
-        info!("Test paniced as expected");
+        //info!("Test paniced as expected");
+        use core::fmt::Write;
         let _ = writeln!(serial2, "test succeeded");
+
         qemu::exit(qemu::ExitCode::Success);
     });
 
@@ -605,13 +645,15 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
 
 #[cfg(feature = "test-tests")]
 mod test_tests {
-    use core::any::Any;
+    use core::{any::Any, sync::atomic::Ordering};
 
     use alloc::boxed::Box;
+    use log::debug;
     use testing::{
         description::TestExitState, kernel_test, multiprocessor::DataBarrier, t_assert,
         t_assert_eq, t_assert_ne, tfail, KernelTestError, TestUnwrapExt,
     };
+    use wasabi_kernel::{core_local::get_ready_core_count, time::sleep_tsc};
 
     #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
     fn test_tfail() -> Result<(), KernelTestError> {
@@ -742,5 +784,33 @@ mod test_tests {
         t_assert_eq!(2, *value);
 
         Ok(())
+    }
+
+    #[kernel_test(mp, expected_exit: TestExitState::Panic)]
+    fn test_multiprocessor_ap_panic() -> Result<(), KernelTestError> {
+        if get_ready_core_count(Ordering::Acquire) == 1 {
+            panic!("Test only works in mp environment");
+        }
+        sleep_tsc(shared::types::Duration::Seconds(1));
+
+        debug!("in panicing test");
+        if locals!().is_bsp() {
+            Ok(())
+        } else {
+            panic!("expected panic on ap");
+        }
+    }
+
+    #[kernel_test(mp, expected_exit: TestExitState::Error(None))]
+    fn test_multiprocessor_ap_failure() -> Result<(), KernelTestError> {
+        if get_ready_core_count(Ordering::Acquire) == 1 {
+            tfail!("Test only works in mp environment");
+        }
+
+        if locals!().is_bsp() {
+            Ok(())
+        } else {
+            tfail!("expected failure on ap");
+        }
     }
 }

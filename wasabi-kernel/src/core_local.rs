@@ -412,6 +412,9 @@ impl InterruptState for CoreInterruptState {
 }
 
 /// The number of cores that have started
+///  
+/// This is the number of cores that started their boot sequence.
+/// For most situation [get_ready_core_count] is the more accurate function.
 pub fn get_started_core_count(ordering: Ordering) -> u8 {
     CORE_ID_COUNTER.load(ordering)
 }

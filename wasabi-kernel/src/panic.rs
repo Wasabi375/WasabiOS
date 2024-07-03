@@ -3,15 +3,17 @@
 use core::{
     panic::PanicInfo,
     ptr::null_mut,
-    sync::atomic::{AtomicPtr, Ordering},
+    sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
 use interrupt_fn_builder::exception_fn;
-use log::error;
 use shared::{
     sync::{barrier::Barrier, lockcell::LockCell},
     types::{CoreId, Duration},
 };
+
+#[allow(unused_imports)]
+use log::{error, trace};
 
 use crate::{
     core_local::get_ready_core_count,
@@ -32,6 +34,8 @@ struct PanicNMIPayload {
 }
 
 static NMI_PAYLOAD: AtomicPtr<PanicNMIPayload> = AtomicPtr::new(null_mut());
+// TODO make this core local, once I have a better system for core locals
+static IN_PANIC: AtomicBool = AtomicBool::new(false);
 
 // The handler for non maskable interrupts.
 //
@@ -56,6 +60,7 @@ fn handle_other_core_panic(payload: &PanicNMIPayload) {
     }
 
     payload.barrier.enter();
+    IN_PANIC.store(true, Ordering::SeqCst);
     halt()
 }
 
@@ -102,13 +107,16 @@ unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> CoreDisableResul
     apic.send_ipi(nmi);
 
     // proceed even if waiting for other cores times out.
-    match payload
+    let result = match payload
         .barrier
         .enter_with_timeout(ticks_in(Duration::Seconds(1)))
     {
         Ok(_) => CoreDisableResult::AllDisabled,
         Err(_) => CoreDisableResult::Timeout,
-    }
+    };
+
+    IN_PANIC.store(true, Ordering::SeqCst);
+    result
 }
 
 /// Ensures logger works during panic
@@ -137,24 +145,34 @@ unsafe fn recreate_framebuffer() {
 
 /// This function is called on panic.
 #[panic_handler]
-#[cfg_attr(feature = "test", allow(unreachable_code, unused_variables))]
 fn panic(info: &PanicInfo) -> ! {
-    let mut payload = PanicNMIPayload {
-        barrier: Barrier::new(get_ready_core_count(Ordering::Acquire).into()),
-        panicing: locals!().core_id,
-    };
+    panic_impl(info);
+}
 
-    // Safety: we are in a panic handler
-    let other_core_timeout = unsafe {
-        let timeout = panic_disable_cores(&mut payload);
-        recreate_framebuffer();
-        recreate_logger();
+#[cfg_attr(feature = "test", allow(unreachable_code, unused_variables))]
+fn panic_impl(info: &PanicInfo) -> ! {
+    let other_core_timeout = if IN_PANIC.load(Ordering::Acquire) {
+        error!("panic in panic! {info:?}");
+        CoreDisableResult::AllDisabled
+    } else {
+        // if we panic in panic we dont send another nmi
+        let mut payload = PanicNMIPayload {
+            barrier: Barrier::new(get_ready_core_count(Ordering::Acquire).into()),
+            panicing: locals!().core_id,
+        };
 
-        // Safety: cores disabled and framebuffer + logger recreated
-        #[cfg(feature = "test")]
-        crate::testing::panic::test_panic_handler(info);
+        // Safety: we are in a panic handler
+        unsafe {
+            let timeout = panic_disable_cores(&mut payload);
+            recreate_framebuffer();
+            recreate_logger();
 
-        timeout
+            // Safety: cores disabled and framebuffer + logger recreated
+            #[cfg(feature = "test")]
+            crate::testing::panic::test_panic_handler(info);
+
+            timeout
+        }
     };
 
     // Saftey: [LOGGER] is only writen to during the boot process.

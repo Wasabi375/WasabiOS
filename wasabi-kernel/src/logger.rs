@@ -80,8 +80,9 @@ pub unsafe fn init() {
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::cpu::apic::ap_startup", LevelFilter::Debug)
-        // comment to move ; to separate line - easy uncomment of module log levels
-        ;
+        // .with_module_level("wasabi_kernel::panic", LevelFilter::Trace);
+    // comment to move ; to separate line - easy uncomment of module log levels
+    ;
 
     #[cfg(feature = "test")]
     {
@@ -89,6 +90,9 @@ pub unsafe fn init() {
         dispatch_logger = dispatch_logger
             .with_module_level("wasabi_test", LevelFilter::Info)
             .with_module_level("wasabi_kernel::mem::page_table::test", LevelFilter::Info)
+            // test tests
+            // .with_module_level("wasabi_test", LevelFilter::Trace)
+            // .with_module_level("test_serial", LevelFilter::Trace)
             // comment to move ; to separate line - easy uncomment of module log levels
             ;
     }
