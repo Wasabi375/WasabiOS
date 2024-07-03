@@ -173,6 +173,9 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> DispatchLogger<'a, I
 
     /// Set the log level for the specified target module.
     pub fn with_module_level(mut self, target: &'static str, level: LevelFilter) -> Self {
+        if let Some(old_position) = self.module_levels.iter().position(|(t, _)| *t == target) {
+            self.module_levels.swap_remove(old_position);
+        }
         self.module_levels.push((target, level));
         self
     }
