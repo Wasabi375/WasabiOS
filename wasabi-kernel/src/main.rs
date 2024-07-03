@@ -52,6 +52,7 @@ fn kernel_main() -> ! {
     stop_timer();
 
     info!("OS Done! cpu::halt()");
+    panic!("test");
     cpu::halt();
 }
 

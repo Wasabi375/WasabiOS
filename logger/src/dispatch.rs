@@ -4,7 +4,7 @@
 
 use core::fmt::Display;
 
-use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
+use log::{Level, LevelFilter, Log, Metadata, Record};
 use shared::sync::{
     lockcell::{RWLockCell, ReadWriteCell},
     InterruptState,
@@ -187,14 +187,6 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> DispatchLogger<'a, I
          */
         self.module_levels
             .sort_unstable_by_key(|(name, _level)| name.len().wrapping_neg());
-    }
-
-    /// Sets this logger as the global logger.
-    ///
-    /// This calls [log::set_logger] and can therefor only be called once on
-    /// any [Log] implementation
-    pub fn set_globally(&'static mut self) -> Result<(), SetLoggerError> {
-        log::set_logger(self)
     }
 }
 

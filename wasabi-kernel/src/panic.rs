@@ -7,24 +7,30 @@ use core::{
 };
 
 use interrupt_fn_builder::exception_fn;
+use logger::RefLogger;
 use shared::{
-    sync::{barrier::Barrier, lockcell::LockCell},
+    sync::{
+        barrier::Barrier,
+        lockcell::{LockCell, LockCellInternal},
+    },
     types::{CoreId, Duration},
 };
 
 #[allow(unused_imports)]
 use log::{error, trace};
+use uart_16550::SerialPort;
 
 use crate::{
-    core_local::get_ready_core_count,
+    core_local::{get_ready_core_count, CoreInterruptState},
     cpu::{
         self,
         apic::ipi::{DeliveryMode, Destination, Ipi},
         halt,
     },
     locals,
-    logger::LOGGER,
-    serial_println,
+    logger::{set_global_logger, setup_logger_module_rename, MAX_RENAME_MAPPINGS},
+    prelude::UnwrapTicketLock,
+    serial::{SERIAL1, SERIAL2},
     time::{sleep_tsc, ticks_in},
 };
 
@@ -129,9 +135,34 @@ unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> CoreDisableResul
 /// This should onl be called from panics, after all multicore and interrupts are
 /// disabled and the framebuffer is useable
 unsafe fn recreate_logger() {
-    // FIXME recreate loggers in panic
-    //      without this logging during panic can deadlock
+    // Safety: we are in panic reset
+    unsafe {
+        LockCellInternal::<SerialPort>::shatter_permanent(&SERIAL1);
+        LockCellInternal::shatter_permanent(&SERIAL2);
+    }
+
+    let mut serial_logger = RefLogger::new(&SERIAL1);
+    setup_logger_module_rename(&mut serial_logger);
+    serial_logger.init();
+
+    // Safety: we are in panic reset
+    unsafe {
+        SERIAL_LOGGER = Some(serial_logger);
+        set_global_logger(SERIAL_LOGGER.as_ref().unwrap_unchecked());
+    }
 }
+
+/// static serial logger location for panics
+static mut SERIAL_LOGGER: Option<
+    RefLogger<
+        'static,
+        SerialPort,
+        UnwrapTicketLock<SerialPort>,
+        CoreInterruptState,
+        0,
+        MAX_RENAME_MAPPINGS,
+    >,
+> = None;
 
 /// Ensures frambuffer is accessible during panic
 ///
@@ -175,25 +206,11 @@ fn panic_impl(info: &PanicInfo) -> ! {
         }
     };
 
-    // Saftey: [LOGGER] is only writen to during the boot process.
-    // Either we are in the boot process, in which case only we have access
-    // or we aren't in which case everyone only reads
-    if unsafe { &*core::ptr::addr_of!(LOGGER) }.is_none() {
-        panic_no_logger(info);
-    }
-
     if other_core_timeout == CoreDisableResult::Timeout {
         error!(target: "PANIC", "timout while waiting for other processors to shut down");
     }
 
     error!(target: "PANIC", "{}", info);
-
-    cpu::halt();
-}
-
-/// panic handler if we haven't initialized logging
-fn panic_no_logger(info: &PanicInfo) -> ! {
-    serial_println!("PANIC during init: {}", info);
 
     cpu::halt();
 }

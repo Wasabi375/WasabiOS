@@ -1,6 +1,8 @@
 //! A module containing logging and debug utilities
 
-use log::{info, LevelFilter};
+use core::ptr::addr_of;
+
+use log::{info, LevelFilter, Log};
 use logger::{dispatch::TargetLogger, LogSetup, RefLogger};
 use uart_16550::SerialPort;
 
@@ -9,13 +11,13 @@ use crate::{
 };
 
 /// the max number of target loggers for the main dispatch logger
-const MAX_LOG_DISPATCHES: usize = 2;
+pub const MAX_LOG_DISPATCHES: usize = 2;
 
 /// number of module filers allowed for the logger
-const MAX_LEVEL_FILTERS: usize = 100;
+pub const MAX_LEVEL_FILTERS: usize = 100;
 
 /// number of module renames allowed for the logger
-const MAX_RENAME_MAPPINGS: usize = 100;
+pub const MAX_RENAME_MAPPINGS: usize = 100;
 
 /// See [logger::DispatchLogger]
 pub type DispatchLogger<'a, const N: usize, const L: usize> =
@@ -82,7 +84,7 @@ pub unsafe fn init() {
         // .with_module_level("wasabi_kernel::cpu::apic::ap_startup", LevelFilter::Debug)
         // .with_module_level("wasabi_kernel::panic", LevelFilter::Trace);
     // comment to move ; to separate line - easy uncomment of module log levels
-    ;
+        ;
 
     #[cfg(feature = "test")]
     {
@@ -118,8 +120,9 @@ pub unsafe fn init() {
     if unsafe {
         LOGGER = Some(dispatch_logger);
 
-        let logger = LOGGER.as_mut().unwrap_unchecked();
-        logger.set_globally()
+        set_global_logger(LOGGER.as_ref().unwrap_unchecked());
+
+        log::set_logger(&*addr_of!(GLOBAL_LOGGER))
     }
     .is_err()
     {
@@ -127,13 +130,45 @@ pub unsafe fn init() {
 
         // Safety: this is fine, since we are in the kernel boot and this is only
         // called once, meaning we ensure rust mutability guarantees
-        unsafe {
-            LOGGER = None;
-        }
         panic!();
     }
 
     info!("Static Logger initialized to Serial Port 1");
+}
+
+static mut GLOBAL_LOGGER: GlobalLogger = GlobalLogger { logger: None };
+
+/// Set the logger as the global logger
+///
+/// # Safety
+///
+/// must only be called while neither `logger` or the current global logger
+/// is accessed
+pub unsafe fn set_global_logger(logger: &'static dyn Log) {
+    unsafe {
+        GLOBAL_LOGGER.logger = Some(logger);
+    }
+}
+
+struct GlobalLogger {
+    logger: Option<&'static dyn Log>,
+}
+
+impl Log for GlobalLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        // Safety: see set_global_logger
+        unsafe { self.logger.unwrap_unchecked() }.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        // Safety: see set_global_logger
+        unsafe { self.logger.unwrap_unchecked() }.log(record)
+    }
+
+    fn flush(&self) {
+        // Safety: see set_global_logger
+        unsafe { self.logger.unwrap_unchecked() }.flush()
+    }
 }
 
 /// A macro logging and returning the result of any expression.
