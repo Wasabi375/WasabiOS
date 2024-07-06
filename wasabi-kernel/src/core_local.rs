@@ -19,7 +19,7 @@ use core::{
     arch::asm,
     hint::spin_loop,
     ptr::addr_of_mut,
-    sync::atomic::{AtomicU64, AtomicU8, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
 };
 use shared::{
     sync::{lockcell::LockCellInternal, CoreInfo, InterruptState},
@@ -128,6 +128,9 @@ pub struct CoreLocals {
     /// [cpu::apic::init] must be called before this can be used
     pub apic: UnwrapTicketLock<Apic>,
 
+    /// True if panic needs to issue nmi to disable other processors
+    pub nmi_on_panic: AtomicBool,
+
     /// The gdt for this core.
     ///
     /// Also contains memory for TSS.
@@ -160,6 +163,7 @@ impl CoreLocals {
             interrupt_state: InterruptHandlerState::new(),
 
             apic: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
+            nmi_on_panic: AtomicBool::new(false),
 
             gdt: GDTInfo::new_uninit(),
 
@@ -248,6 +252,13 @@ impl CoreLocals {
     /// returns `true` if this core is used as the bootstrap processor
     pub fn is_bsp(&self) -> bool {
         self.core_id.is_bsp()
+    }
+
+    /// returns `true` if this core is an application processor
+    ///
+    /// this is `true` iff [Self::is_bsp] is `false`
+    pub fn is_ap(&self) -> bool {
+        !self.is_bsp()
     }
 }
 

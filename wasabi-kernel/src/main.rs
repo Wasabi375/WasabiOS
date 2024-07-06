@@ -24,7 +24,7 @@ use log::{debug, error, info, trace, warn};
 use bootloader_api::BootInfo;
 use shared::{sync::lockcell::LockCell, types::Duration};
 use wasabi_kernel::{
-    bootloader_config_common,
+    boot_info, bootloader_config_common,
     cpu::{
         self,
         apic::{self, timer::TimerConfig},
@@ -46,13 +46,18 @@ fn kernel_main() -> ! {
         info!("tsc clock rate {}MHz", time::tsc_tickrate());
         warn!("kernel boot took {:?} - {}", startup_time, startup_time);
     }
+
+    if locals!().is_bsp() {
+        // TODO temp
+        info!("rsdp at: {:?}", unsafe { boot_info() }.rsdp_addr);
+    }
+
     start_timer();
 
     sleep_tsc(Duration::Seconds(5));
     stop_timer();
 
     info!("OS Done! cpu::halt()");
-    panic!("test");
     cpu::halt();
 }
 

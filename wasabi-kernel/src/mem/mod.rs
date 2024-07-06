@@ -142,6 +142,7 @@ pub unsafe fn init() {
 /// ```
 ///
 /// TODO Safety
+// TODO fix imports
 #[macro_export]
 macro_rules! map_frame {
     ($size: ident, $flags: expr, $frame: expr) => {{
@@ -155,7 +156,7 @@ macro_rules! map_frame {
         use $crate::mem::MemError;
 
         let page: Result<Page<$size>, MemError> = PageAllocator::get_kernel_allocator()
-            .lock()
+            .lock() // TODO call lock via full path
             .allocate_page::<$size>();
 
         let frame: PhysFrame<$size> = $frame;

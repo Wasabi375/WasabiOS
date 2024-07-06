@@ -74,6 +74,7 @@ fn handle_other_core_panic(payload: &PanicNMIPayload) {
 enum CoreDisableResult {
     AllDisabled,
     Timeout,
+    NoApicOnAp,
 }
 
 /// Disables all other cores and interrupts.
@@ -88,6 +89,18 @@ unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> CoreDisableResul
         // Safety: we are in a panic state, so anything relying on interrupts is
         // done for anyways
         locals!().disable_interrupts();
+    }
+
+    if !locals!().nmi_on_panic.load(Ordering::Acquire) {
+        if locals!().is_bsp() {
+            // Safety:
+            // We have not yet started any other processors
+            return CoreDisableResult::AllDisabled;
+        } else {
+            // we are in an application processor, that does not have access to apic,
+            // so we can't shut down other processors. Everything from here on, is just bad
+            return CoreDisableResult::NoApicOnAp;
+        }
     }
 
     if let Err(payload) =
@@ -182,7 +195,7 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[cfg_attr(feature = "test", allow(unreachable_code, unused_variables))]
 fn panic_impl(info: &PanicInfo) -> ! {
-    let other_core_timeout = if IN_PANIC.load(Ordering::Acquire) {
+    let core_disable_result = if IN_PANIC.load(Ordering::Acquire) {
         error!("panic in panic! {info:?}");
         CoreDisableResult::AllDisabled
     } else {
@@ -194,7 +207,7 @@ fn panic_impl(info: &PanicInfo) -> ! {
 
         // Safety: we are in a panic handler
         unsafe {
-            let timeout = panic_disable_cores(&mut payload);
+            let core_disable_result = panic_disable_cores(&mut payload);
             recreate_framebuffer();
             recreate_logger();
 
@@ -202,12 +215,18 @@ fn panic_impl(info: &PanicInfo) -> ! {
             #[cfg(feature = "test")]
             crate::testing::panic::test_panic_handler(info);
 
-            timeout
+            core_disable_result
         }
     };
 
-    if other_core_timeout == CoreDisableResult::Timeout {
-        error!(target: "PANIC", "timout while waiting for other processors to shut down");
+    match core_disable_result {
+        CoreDisableResult::Timeout => {
+            error!(target: "PANIC", "timout while waiting for other processors to shut down");
+        }
+        CoreDisableResult::NoApicOnAp => {
+            error!(target: "PANIC", "failed to disable other cores, because we don't have access to apic and nmis");
+        }
+        _ => {}
     }
 
     error!(target: "PANIC", "{}", info);

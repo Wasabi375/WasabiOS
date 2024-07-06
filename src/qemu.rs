@@ -113,8 +113,8 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
             cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
             cmd.arg("-cpu").arg("max,vmx=off");
         } else {
-            // cmd.arg("-enable-kvm");
-            // cmd.arg("-cpu").arg("host");
+            cmd.arg("-enable-kvm");
+            cmd.arg("-cpu").arg("host");
         }
     }
 

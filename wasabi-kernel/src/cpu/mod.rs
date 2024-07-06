@@ -1,5 +1,6 @@
 //! A module containing cpu utilities as well as more specific sub modules.
 
+pub mod acpi;
 pub mod apic;
 pub mod cpuid;
 pub mod gdt;

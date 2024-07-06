@@ -173,6 +173,8 @@ pub fn ap_startup() {
     info!("Starting APs");
     debug!("ap trampoline size: {}", TRAMPOLINE_CODE.len());
 
+    locals!().nmi_on_panic.store(true, Ordering::Release);
+
     bsp_ctrl_regs::store_bsp_regs();
 
     // NOTE: dropping this will free the trampoline bytecode, so don't drop

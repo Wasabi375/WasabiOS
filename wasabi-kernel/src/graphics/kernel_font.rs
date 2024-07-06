@@ -14,7 +14,7 @@ const CHAR_RASTER_HEIGHT: RasterHeight = RasterHeight::Size16;
 /// width of a bitmap character in pixel
 const CHAR_RASTER_WIDTH: u32 = get_raster_width(FONT_WEIGHT, CHAR_RASTER_HEIGHT) as u32;
 /// the character used when the requested character is not available in the font.
-const BACKUP_CHAR: char = '�';
+pub const BACKUP_CHAR: char = '�';
 /// the font weight of the bitmap font
 const FONT_WEIGHT: FontWeight = FontWeight::Regular;
 

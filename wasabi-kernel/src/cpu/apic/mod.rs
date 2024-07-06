@@ -1,5 +1,7 @@
 //! Local Apic implementation
 
+use core::sync::atomic::Ordering;
+
 use crate::{
     cpu::{cpuid::cpuid, interrupts::register_interrupt_handler},
     locals, map_frame,
@@ -80,6 +82,9 @@ pub fn init() -> Result<(), ApicCreationError> {
     apic.timer().calibrate();
 
     local_apic.write(apic);
+    if locals!().is_ap() {
+        locals!().nmi_on_panic.store(true, Ordering::Release);
+    }
     info!("Apic initialized");
 
     Ok(())

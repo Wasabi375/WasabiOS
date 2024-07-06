@@ -17,7 +17,8 @@
     pointer_is_aligned,
     ptr_alignment_type,
     result_flattening,
-    stmt_expr_attributes
+    stmt_expr_attributes,
+    extern_types
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![allow(rustdoc::private_intra_doc_links)]
@@ -30,27 +31,37 @@ pub mod logger;
 pub mod math;
 pub mod mem;
 pub mod panic;
+pub mod pci;
 pub mod prelude;
 pub mod serial;
+pub mod time;
+pub mod utils;
+
 #[cfg(feature = "test")]
 pub mod testing;
-pub mod time;
 
 extern crate alloc;
 
 use core_local::get_ready_core_count;
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
-use shared::{cpu::time::timestamp_now_tsc, types::Duration, KiB};
+use shared::{
+    cpu::time::timestamp_now_tsc,
+    types::{CoreId, Duration},
+    KiB,
+};
 use static_assertions::const_assert;
 use time::time_since_tsc;
-use x86_64::structures::paging::{PageSize, Size4KiB};
+use x86_64::{
+    structures::paging::{PageSize, Size4KiB},
+    PhysAddr,
+};
 
 use crate::{
     core_local::core_boot,
-    cpu::{apic, cpuid, halt, interrupts},
+    cpu::{acpi::ACPI, apic, cpuid, halt, interrupts},
 };
-use bootloader_api::{config::Mapping, BootInfo};
+use bootloader_api::{config::Mapping, info::Optional, BootInfo};
 use core::{
     hint::spin_loop,
     ptr::null_mut,
@@ -146,9 +157,10 @@ pub fn kernel_bsp_entry(
 /// Safety: should only be called once, right at the start
 /// of the start of the processor
 pub unsafe fn processor_init() {
+    let core_id: CoreId;
     unsafe {
         // Safety: `init` is only called once per core and `core_boot`
-        let core_id = core_boot();
+        core_id = core_boot();
 
         if core_id.is_bsp() {
             // Safety: bsp during `init`
@@ -176,12 +188,26 @@ pub unsafe fn processor_init() {
         // only called here for bsp and we have just init core_locals and logging and mem
         locals!().gdt.init_and_load();
 
-        if core_id.is_bsp() {
+        // Saftey: during bsp init
+        interrupts::init();
+    }
+
+    if core_id.is_bsp() {
+        // TODO cleanup acpi init and store it
+        // Saftey: during bsp initialization
+        let boot_info = unsafe { boot_info() };
+        if let Optional::Some(rsdp_addr) = boot_info.rsdp_addr {
+            let paddr = PhysAddr::new(rsdp_addr);
+            ACPI::from_rsdp(paddr).expect("failed to init acpi");
+        } else {
+            panic!("Bootloader did not report rsdp address");
+        }
+
+        unsafe {
             // Safety: bsp during `init` and locks, logging and alloc are working
             graphics::init(true);
         }
 
-        interrupts::init();
     }
 
     apic::init().unwrap();

@@ -34,6 +34,7 @@ thiserror.workspace = true
 uart_16550.workspace = true
 volatile = "0.4.6"
 x86_64.workspace = true
+hashbrown.workspace = true
 
 [build-dependencies]
 walkdir.workspace = true
