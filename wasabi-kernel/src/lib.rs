@@ -208,6 +208,7 @@ pub unsafe fn processor_init() {
             graphics::init(true);
         }
 
+        pci::init();
     }
 
     apic::init().unwrap();

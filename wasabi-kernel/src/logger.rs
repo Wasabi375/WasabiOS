@@ -78,12 +78,13 @@ pub unsafe fn init() {
         .with_module_level("wasabi_kernel::cpu::acpi", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::cpu::apic", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
-        .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
-        .with_module_level("wasabi_kernel::mem::kernel_heap", LevelFilter::Info)
+        // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
+        // .with_module_level("wasabi_kernel::mem::kernel_heap", LevelFilter::Info)
         // .with_module_level("GlobalAlloc", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
         // .with_module_level("wasabi_kernel::cpu::apic::ap_startup", LevelFilter::Debug)
         // .with_module_level("wasabi_kernel::panic", LevelFilter::Trace);
+        .with_module_level("wasabi_kernel::pci", LevelFilter::Trace)
     // comment to move ; to separate line - easy uncomment of module log levels
         ;
 
