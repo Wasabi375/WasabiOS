@@ -1,15 +1,15 @@
 //! A collection of utility functions
 
 use alloc::string::String;
-use core::fmt::Write;
+use core::{fmt::Write, mem::size_of};
 use x86_64::VirtAddr;
 
 use crate::serial_print;
 
 const INVISIBLE_CHAR: char = '.';
 
-const HEX_DUMP_LOG_BYTE_WIDTH: usize = 20;
-const HEX_DUMP_SERIAL_BYTE_WIDTH: usize = 20;
+const HEX_DUMP_LOG_BYTE_WIDTH: usize = 16;
+const HEX_DUMP_SERIAL_BYTE_WIDTH: usize = 16;
 
 /// hex dumps the memory at `start` to the logger
 ///
@@ -32,6 +32,19 @@ pub unsafe fn log_hex_dump<M: AsRef<str>>(
     dump.extend(unsafe { hex_dump_iter(start, length, HEX_DUMP_LOG_BYTE_WIDTH) });
 
     log::log!(target: target, level, "{}\n{}", message.as_ref(), dump);
+}
+
+pub fn log_hex_dump_buf<M: AsRef<str>, T>(
+    message: M,
+    level: log::Level,
+    target: &str,
+    buffer: &[T],
+) {
+    let vaddr = VirtAddr::from_ptr(buffer);
+    unsafe {
+        // Safety: vaddr points to valid slice
+        log_hex_dump(message, level, target, vaddr, buffer.len() * size_of::<T>());
+    }
 }
 
 /// hex dumps the memory at `start` to the SERIAL1
@@ -81,6 +94,8 @@ fn line_width(byte_count: usize) -> usize {
 
 fn slice_to_hex_dump_line(bytes: &[u8], width: usize) -> String {
     let mut out = String::with_capacity(line_width(width));
+
+    // TODO display offset
 
     for b in bytes {
         write!(out, "{:2X} ", b).expect("failed to write to output buffer");

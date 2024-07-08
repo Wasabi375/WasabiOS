@@ -202,6 +202,9 @@ pub fn ap_startup() {
         apic.send_ipi(sipi_ipi);
     }
 
+    // TODO use APIC to figure out how many APs there are and stop waiting
+    // once all APs are started
+
     let mut timer = time::timestamp_now_tsc();
     let mut known_started = 1;
     loop {
