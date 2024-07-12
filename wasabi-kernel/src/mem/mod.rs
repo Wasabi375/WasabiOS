@@ -22,7 +22,7 @@ use bootloader_api::{
 };
 use core::{
     ops::{Deref, DerefMut},
-    ptr::NonNull,
+    ptr::{self, NonNull},
 };
 use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use thiserror::Error;
@@ -110,11 +110,11 @@ pub unsafe fn init() {
     {
         let mut recursive_page_table = KERNEL_PAGE_TABLE.lock();
 
-        if log::log_enabled!(log::Level::Trace) {
+        if log::log_enabled!(log::Level::Debug) {
             print_debug_info(
                 &mut recursive_page_table,
                 bootloader_page_table_vaddr,
-                log::Level::Info,
+                log::Level::Debug,
             );
         }
 
@@ -134,39 +134,45 @@ pub unsafe fn init() {
 /// ```no_run
 /// # #[macro_use] extern crate wasabi-kernel;
 /// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let phys_frame: PhysFrame<Size4KiB> = todo!();
+/// # use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
+/// # let phys_frame: PhysFrame<Size4KiB> = todo!();
 ///
-/// let page = map_frame!(Size4KiB, PageTableFlags::WRITABLE | PAGE_TABLE_FLAGS::PRESENT, phys_frame);
+/// let page = map_frame!(Size4KiB, PageTableFlags::WRITABLE | PAGE_TABLE_FLAGS::PRESENT, phys_frame)?;
+/// let (page, frame) = map_frame!(Size4KiB, PageTableFlags::WRITABLE | PAGE_TABLE_FLAGS::PRESENT)?;
 /// # }
 /// ```
 ///
 /// TODO Safety
-// TODO fix imports
 #[macro_export]
 macro_rules! map_frame {
     ($size: ident, $flags: expr, $frame: expr) => {{
         #[allow(unused_imports)]
-        use x86_64::structures::paging::{Page, PhysFrame};
-        #[allow(unused_imports)]
         use $crate::map_page;
-        #[allow(unused_imports)]
-        use $crate::mem::page_allocator::PageAllocator;
-        #[allow(unused_imports)]
-        use $crate::mem::MemError;
 
-        let page: Result<Page<$size>, MemError> = PageAllocator::get_kernel_allocator()
-            .lock() // TODO call lock via full path
-            .allocate_page::<$size>();
+        let page: Result<x86_64::structures::paging::Page<$size>, $crate::mem::MemError> =
+            $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
+                .lock() // TODO call lock via full path
+                .allocate_page::<$size>();
 
-        let frame: PhysFrame<$size> = $frame;
+        let frame: x86_64::structures::paging::PhysFrame<$size> = $frame;
 
         match page {
             Ok(page) => match map_page!(page, $size, $flags, frame) {
                 Ok(_) => Ok(page),
-                Err(err) => Err(MemError::PageTableMap(err)),
+                Err(err) => Err($crate::mem::MemError::PageTableMap(err)),
             },
             Err(err) => Err(err),
+        }
+    }};
+    ($size: ident, $flags: expr) => {{
+        let frame: Option<x86_64::structures::paging::PhysFrame<$size>> =
+            $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
+                .lock()
+                .alloc();
+        match frame {
+            // Safety: we allocated both the frame and page
+            Some(frame) => unsafe { map_frame!($size, $flags, frame) }.map(|page| (page, frame)),
+            None => Err($crate::mem::MemError::OutOfMemory),
         }
     }};
 }
@@ -184,6 +190,8 @@ macro_rules! map_frame {
 /// let frame_allocator: &mut WasabiFrameAllocator<Size4KiB> = todo!();
 ///
 // TODO document return types
+//
+/// let page = map_page!(Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT)?;
 /// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT)?;
 /// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame)?;
 /// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame, frame_allocator)?;
@@ -274,6 +282,11 @@ pub trait VirtAddrExt {
     ///
     /// Safety: VirtAddr must be a valid *mut* reference
     unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T>;
+
+    /// zeroes the memory at `self` for `bytes` size
+    ///
+    /// Safety: VirtAddr must be a valid *mut* byte slice of size `bytes`
+    unsafe fn zero_memory(self, bytes: usize);
 }
 
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -287,6 +300,11 @@ impl VirtAddrExt for VirtAddr {
     unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T> {
         let r: &mut T = &mut *self.as_mut_ptr();
         Volatile::new(r)
+    }
+
+    unsafe fn zero_memory(self, bytes: usize) {
+        let p: *mut u8 = self.as_mut_ptr();
+        ptr::write_bytes(p, 0, bytes);
     }
 }
 
