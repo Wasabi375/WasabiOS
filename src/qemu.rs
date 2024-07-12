@@ -90,6 +90,7 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
     if kernel.uefi {
         cmd.arg("-bios")
             .arg(host_arch.resolve(ovmf_prebuilt::ovmf_pure_efi()).await);
+        // TODO move to nvme once I have that fully figured out
         cmd.arg("-drive").arg(concat(
             "format=raw,file=",
             host_arch.resolve(kernel.path).await,
@@ -100,6 +101,7 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
             host_arch.resolve(kernel.path).await,
         ));
     }
+
     if qemu.serial.is_empty() {
         cmd.arg("-serial").arg("none");
     } else {
@@ -107,6 +109,11 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
             cmd.arg("-serial").arg(serial);
         }
     }
+
+    // TODO temp nvme
+    cmd.arg("-drive")
+        .arg("file=test_nvme_data.txt,if=none,id=nvm,format=raw");
+    cmd.arg("-device").arg("nvme,serial=deadbeef,drive=nvm");
 
     if qemu.debug_log.is_none() {
         if host_arch.is_windows() {

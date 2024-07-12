@@ -6,13 +6,17 @@
 // TODO temp
 #![allow(missing_docs)]
 
-use alloc::vec::Vec;
+mod nvme;
+
+use alloc::{format, vec::Vec};
 use bit_field::BitField;
 use shared_derive::U8Enum;
 use x86_64::{
     instructions::port::{Port, PortGeneric, WriteOnlyAccess},
     structures::port::PortWrite,
 };
+
+use crate::{prelude::UnwrapTicketLock, utils::log_hex_dump_buf};
 
 #[allow(unused_imports)]
 use crate::todo_warn;
@@ -22,6 +26,8 @@ use log::{debug, info, trace, warn};
 const CONFIG_PORT_ADR: u16 = 0xcf8;
 const DATA_PORT_ADR: u16 = 0xcfc;
 
+pub static PCI_ACCESS: UnwrapTicketLock<PCIAccess> = unsafe { UnwrapTicketLock::new_uninit() };
+
 pub struct PCIAccess {
     config_port: PortGeneric<RegisterAddress, WriteOnlyAccess>,
     devices: Vec<Device>,
@@ -30,7 +36,7 @@ pub struct PCIAccess {
 impl PCIAccess {
     /// check (device, vendor) for pci address
     pub fn check_vendor(&mut self, addr: Address) -> Option<(u16, u16)> {
-        let register = RegisterAddress::from_addr(addr, 0, RegisterOffset::VendorID);
+        let register = RegisterAddress::from_addr(addr, 0, CommonRegisterOffset::VendorID.into());
 
         let device_vendor = self.read32(register)?;
 
@@ -87,7 +93,7 @@ impl PCIAccess {
             .read8(RegisterAddress::from_addr(
                 addr,
                 0,
-                RegisterOffset::HeaderType,
+                CommonRegisterOffset::HeaderType.into(),
             ))
             .expect("failed to read pci header type");
 
@@ -101,7 +107,7 @@ impl PCIAccess {
                 .read32(RegisterAddress::from_addr(
                     addr,
                     max,
-                    RegisterOffset::VendorID,
+                    CommonRegisterOffset::VendorID.into(),
                 ))
                 .is_none()
             {
@@ -131,8 +137,12 @@ impl PCIAccess {
             self.devices.clear();
         }
 
-        let Some(header) = self.read8(RegisterAddress::new(0, 0, 0, RegisterOffset::HeaderType))
-        else {
+        let Some(header) = self.read8(RegisterAddress::new(
+            0,
+            0,
+            0,
+            CommonRegisterOffset::HeaderType.into(),
+        )) else {
             warn!("no PCI devices found!");
             return;
         };
@@ -145,7 +155,7 @@ impl PCIAccess {
                         0,
                         0,
                         function,
-                        RegisterOffset::VendorID,
+                        CommonRegisterOffset::VendorID.into(),
                     ))
                     .is_none()
                 {
@@ -178,7 +188,7 @@ impl Device {
             .read32(RegisterAddress::from_addr(
                 address,
                 0,
-                RegisterOffset::Revision,
+                CommonRegisterOffset::Revision.into(),
             ))
             .unwrap();
         let class = class_reg.get_bits(24..=31) as u8;
@@ -186,8 +196,15 @@ impl Device {
         let prog_if = class_reg.get_bits(8..=15) as u8;
         let revision = class_reg.get_bits(0..=7) as u8;
 
-        let class = Class::from_header(class, subclass, prog_if);
+        trace!(
+            "{:#x} {:#x} {:#x} {:#x}",
+            class,
+            subclass,
+            prog_if,
+            revision
+        );
 
+        let class = Class::from_header(class, subclass, prog_if);
         let functions = pci.find_device_function_count(address);
 
         Some(Self {
@@ -198,6 +215,32 @@ impl Device {
             class,
             revision,
         })
+    }
+
+    pub fn hex_dump_configuration_space(
+        &self,
+        function: u8,
+        pci: &mut PCIAccess,
+        level: log::Level,
+    ) {
+        // 256 bytes buffer to hold configuration space data
+        let mut buffer = [0u32; 64];
+
+        for offset in 0..64 {
+            buffer[offset] = pci
+                .read32(RegisterAddress::from_addr(
+                    self.address,
+                    function,
+                    RegisterOffset::Other((offset as u8) * 4),
+                ))
+                .unwrap_or(!0);
+        }
+        log_hex_dump_buf(
+            format!("PCI Device at {:?} function {}", self.address, function),
+            level,
+            module_path!(),
+            &buffer,
+        );
     }
 }
 
@@ -240,15 +283,15 @@ impl Class {
 #[derive(U8Enum, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum StorageSubclass {
-    Scsi = 0x0,
-    Ide,
-    Floppy,
-    IpiBus,
-    Raid,
-    Ata,
-    SerialAta,
-    SErialAttachedScsi,
-    NonVolatileMemory,
+    Scsi = 0,
+    Ide = 1,
+    Floppy = 2,
+    IpiBus = 3,
+    Raid = 4,
+    Ata = 5,
+    SerialAta = 6,
+    SErialAttachedScsi = 7,
+    NonVolatileMemory = 8,
     Other = 0x80,
 }
 
@@ -262,9 +305,30 @@ pub struct Address {
     pub device: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegisterOffset {
+    Common(CommonRegisterOffset),
+    Other(u8),
+}
+
+impl RegisterOffset {
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            RegisterOffset::Common(v) => (*v) as u8,
+            RegisterOffset::Other(v) => *v,
+        }
+    }
+}
+
+impl From<CommonRegisterOffset> for RegisterOffset {
+    fn from(value: CommonRegisterOffset) -> Self {
+        Self::Common(value)
+    }
+}
+
 #[repr(u8)]
 #[derive(U8Enum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegisterOffset {
+pub enum CommonRegisterOffset {
     VendorID = 0x0,
     DeviceID = 0x2,
 
@@ -280,7 +344,24 @@ pub enum RegisterOffset {
     LatencyTimer = 0xd,
     HeaderType = 0xe,
     Bist = 0xf,
-    // ...
+
+    Bar0 = 0x10,
+    Bar1 = 0x14,
+    Bar2 = 0x1c,
+    Bar3 = 0x20,
+    Bar4 = 0x24,
+
+    CardbusCisPointer = 0x28,
+
+    SubsysVendor = 0x2c,
+    SubsysId = 0x2e,
+
+    Capabilities = 0x34,
+
+    InterruptLine = 0x3c,
+    InterruptPin = 0x3d,
+    MinGrant = 0x3e,
+    MaxLatency = 0x3f,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,7 +391,7 @@ impl RegisterAddress {
             | (self.bus as u32) << 16
             | (self.device as u32) << 11
             | (self.function as u32) << 8
-            | self.offset as u8 as u32
+            | self.offset.as_u8() as u32
     }
 
     pub fn config_register_offset(&self) -> u32 {
@@ -322,12 +403,12 @@ impl RegisterAddress {
     }
 
     pub fn data_port16(&self) -> Port<u16> {
-        let port = DATA_PORT_ADR + (self.offset as u8 & 2) as u16;
+        let port = DATA_PORT_ADR + (self.offset.as_u8() & 2) as u16;
         Port::new(port)
     }
 
     pub fn data_port8(&self) -> Port<u8> {
-        let port = DATA_PORT_ADR + (self.offset as u8 & 3) as u16;
+        let port = DATA_PORT_ADR + (self.offset.as_u8() & 3) as u16;
         Port::new(port)
     }
 }
@@ -337,7 +418,11 @@ impl From<u32> for RegisterAddress {
         let bus = value.get_bits(16..=23) as u8;
         let device = value.get_bits(11..=15) as u8;
         let function = value.get_bits(8..=10) as u8;
-        let offset = (value.get_bits(0..=7) as u8).try_into().unwrap();
+        let offset_value = value.get_bits(0..=7) as u8;
+
+        let offset = CommonRegisterOffset::try_from(offset_value)
+            .map(RegisterOffset::from)
+            .unwrap_or(RegisterOffset::Other(offset_value));
 
         Self {
             bus,
@@ -367,5 +452,10 @@ pub fn init() {
 
     pci.find_all_devices();
 
-    todo!("store pci access in some kind of global");
+    PCI_ACCESS.lock_uninit().write(pci);
+}
+
+/// TODO temp
+pub fn pci_experiment() {
+    nvme::experiment_nvme_device();
 }

@@ -481,6 +481,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive-where"
+version = "1.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62d671cc41a825ebabc75757b62d3d168c577f9149b2d49ece1dad1f72119d25"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "derive_builder"
 version = "0.20.0"
 source = "git+https://github.com/Wasabi375/rust-derive-builder?branch=owned_custom_default#c2510cf1b9f3cb41b90db46323045fbe85dd205c"
@@ -1599,6 +1610,7 @@ dependencies = [
  "bit_field",
  "bootloader_api",
  "colored 2.0.0",
+ "derive-where",
  "derive_builder",
  "hashbrown",
  "iced-x86",

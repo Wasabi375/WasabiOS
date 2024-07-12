@@ -22,15 +22,11 @@ extern crate wasabi_kernel;
 use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
-use shared::{sync::lockcell::LockCell, types::Duration};
+use shared::sync::lockcell::LockCell;
 use wasabi_kernel::{
     boot_info, bootloader_config_common,
-    cpu::{
-        self,
-        apic::{self, timer::TimerConfig},
-        interrupts::InterruptVector,
-    },
-    time::{self, sleep_tsc},
+    cpu::{self, apic::timer::TimerConfig, interrupts::InterruptVector},
+    pci, time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
@@ -50,12 +46,13 @@ fn kernel_main() -> ! {
     if locals!().is_bsp() {
         // TODO temp
         info!("rsdp at: {:?}", unsafe { boot_info() }.rsdp_addr);
+        pci::pci_experiment();
     }
 
-    start_timer();
+    // start_timer();
 
-    sleep_tsc(Duration::Seconds(5));
-    stop_timer();
+    //sleep_tsc(Duration::Seconds(5));
+    //stop_timer();
 
     info!("OS Done! cpu::halt()");
     cpu::halt();
@@ -72,7 +69,7 @@ fn stop_timer() {
 
 #[allow(dead_code)]
 fn start_timer() {
-    use apic::timer::{TimerDivider, TimerMode};
+    use cpu::apic::timer::{TimerDivider, TimerMode};
 
     let mut apic = locals!().apic.lock();
     let mut timer = apic.timer();
