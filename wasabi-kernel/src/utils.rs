@@ -34,6 +34,7 @@ pub unsafe fn log_hex_dump<M: AsRef<str>>(
     log::log!(target: target, level, "{}\n{}", message.as_ref(), dump);
 }
 
+/// hex dumps the memory in the buffer to the logger
 pub fn log_hex_dump_buf<M: AsRef<str>, T>(
     message: M,
     level: log::Level,
@@ -44,6 +45,20 @@ pub fn log_hex_dump_buf<M: AsRef<str>, T>(
     unsafe {
         // Safety: vaddr points to valid slice
         log_hex_dump(message, level, target, vaddr, buffer.len() * size_of::<T>());
+    }
+}
+
+/// hex dumps the memory of the data to the logger
+pub fn log_hex_dump_struct<M: AsRef<str>, T>(
+    message: M,
+    level: log::Level,
+    target: &str,
+    data: &T,
+) {
+    let vaddr = VirtAddr::from_ptr(data);
+    unsafe {
+        // Safety: vaddr points to valid reference
+        log_hex_dump(message, level, target, vaddr, size_of::<T>());
     }
 }
 
