@@ -207,7 +207,6 @@ macro_rules! map_frame {
 /// [PageSize](x86_64::structures::paging::PageSize),
 /// [PageTableFlags], [PageTableKernelFlags], [PageAllocator],
 /// [WasabiFrameAllocator]
-// TODO inline use statments in macro
 #[macro_export]
 macro_rules! map_page {
     ($size: ident, $flags: expr) => {{
@@ -268,6 +267,90 @@ macro_rules! map_page {
         )
         .map_err(|e| $crate::mem::page_table::PageTableMapError::from(e))
         .map(|flusher| flusher.flush())
+    }};
+}
+
+/// Macro to map a page. Returns `Result<(PhysFrame, PageTableFlags), PageTableMapError>`
+///
+/// # Example
+///
+/// ```no_run
+/// # #[macro_use] extern crate wasabi-kernel;
+/// # fn main() {
+/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
+/// let page: Page<Size4KiB> = todo!();
+///
+// TODO document return types
+//
+/// let result: Result<(phys_frame, flags), PageTableMapError> = unmap_page!(page);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! unmap_page {
+    ($page: expr) => {{
+        let kernel_page_table: &mut x86_64::structures::paging::mapper::RecursivePageTable<
+            'static,
+        > = &mut $crate::mem::page_table::KERNEL_PAGE_TABLE.lock();
+
+        x86_64::structures::paging::Mapper::unmap(kernel_page_table, $page)
+            .map_err(|err| {
+                <$crate::mem::page_table::PageTableMapError as From<
+                    x86_64::structures::paging::mapper::UnmapError,
+                >>::from(err)
+            })
+            .map(|(frame, flags, flush)| {
+                flush.flush();
+                (frame, flags)
+            })
+    }};
+}
+
+/// Macro to free a page.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[macro_use] extern crate wasabi-kernel;
+/// # fn main() {
+/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
+/// let frame: PhysFrame<Size4KiB> = todo!();
+///
+// TODO Saftey
+//
+/// free_frame!(frame);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! free_page {
+    ($page: expr) => {{
+        $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
+            .lock()
+            .free_page($page);
+    }};
+}
+
+/// Macro to free a frame.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[macro_use] extern crate wasabi-kernel;
+/// # fn main() {
+/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
+/// let frame: PhysFrame<Size4KiB> = todo!();
+///
+// TODO Saftey
+//
+/// free_frame!(frame);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! free_frame {
+    ($size:ident, $frame: expr) => {{
+        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
+            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
+                .lock();
+        frame_alloc.free($frame);
     }};
 }
 

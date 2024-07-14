@@ -7,10 +7,11 @@ use crate::prelude::UnwrapTicketLock;
 use thiserror::Error;
 use x86_64::{
     structures::paging::{
-        mapper::MapToError, Page, PageTable, PageTableFlags, PageTableIndex, PhysFrame,
-        RecursivePageTable, Size1GiB, Size2MiB, Size4KiB,
+        mapper::{MapToError, UnmapError},
+        Page, PageTable, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable, Size1GiB,
+        Size2MiB, Size4KiB,
     },
-    VirtAddr,
+    PhysAddr, VirtAddr,
 };
 
 /// kernel internal page table flags
@@ -50,6 +51,20 @@ pub enum PageTableMapError {
     PageAllreadyMapped2m(PhysFrame<Size2MiB>),
     #[error("The page is already mapped to a frame {0:?}")]
     PageAllreadyMapped1g(PhysFrame<Size1GiB>),
+    #[error("the phys addr is not valid page address {0:p}")]
+    InvalidFrameAddress(PhysAddr),
+    #[error("unmapped page cannot be unmapped again")]
+    PageNotMapped,
+}
+
+impl From<UnmapError> for PageTableMapError {
+    fn from(value: UnmapError) -> Self {
+        match value {
+            UnmapError::ParentEntryHugePage => PageTableMapError::ParentEntryHugePage,
+            UnmapError::PageNotMapped => PageTableMapError::PageNotMapped,
+            UnmapError::InvalidFrameAddress(paddr) => PageTableMapError::InvalidFrameAddress(paddr),
+        }
+    }
 }
 
 // TODO: cleanup replace from impls with #[from] attribute
@@ -207,12 +222,9 @@ mod test {
         kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
         TestUnwrapExt,
     };
-    use x86_64::{
-        structures::paging::{
-            mapper::{MappedFrame, Mapper, TranslateResult, UnmappedFrame},
-            Translate,
-        },
-        PhysAddr,
+    use x86_64::structures::paging::{
+        mapper::{MappedFrame, Mapper, TranslateResult, UnmappedFrame},
+        Translate,
     };
 
     use super::*;

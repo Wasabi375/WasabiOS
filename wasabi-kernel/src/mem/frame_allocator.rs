@@ -217,6 +217,7 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
     }
 
     /// allocate a new frame
+    // TODO return Result<_, MemError>
     pub fn alloc(&mut self) -> Option<PhysFrame<S>> {
         // if self.first_unused_frame.is_null() {
         return self.phys_alloc.lock().alloc();
