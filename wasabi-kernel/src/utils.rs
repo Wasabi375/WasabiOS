@@ -1,7 +1,8 @@
 //! A collection of utility functions
 
 use alloc::string::String;
-use core::{fmt::Write, mem::size_of};
+use core::fmt::Write;
+use core::mem::size_of;
 use x86_64::VirtAddr;
 
 use crate::serial_print;
@@ -82,21 +83,23 @@ unsafe fn hex_dump_iter(
     length: usize,
     width: usize,
 ) -> impl Iterator<Item = String> {
+    assert!(length > 0);
     let end_inclusive = start + (length - 1) as u64;
 
-    (start..end_inclusive)
+    (start..=end_inclusive)
         .step_by(width)
-        .map(move |start| {
+        .map(move |slice_start| {
             (
-                start,
-                core::cmp::min(start + (width - 1) as u64, end_inclusive),
+                slice_start,
+                core::cmp::min(slice_start + (width - 1) as u64, end_inclusive),
+                slice_start - start,
             )
         })
-        .map(|(start, end)| (start, end - start + 1))
-        .map(|(start, length)| (start.as_ptr::<u8>(), length as usize))
-        .map(|(ptr, length)| core::ptr::slice_from_raw_parts(ptr, length))
-        .map(|ptr| unsafe { &*ptr })
-        .map(move |slice| slice_to_hex_dump_line(slice, width))
+        .map(|(start, end, offset)| (start, (end - start) + 1, offset))
+        .map(|(start, length, offset)| (start.as_ptr::<u8>(), length as usize, offset))
+        .map(|(ptr, length, offset)| (core::ptr::slice_from_raw_parts(ptr, length), offset))
+        .map(|(ptr, offset)| (unsafe { &*ptr }, offset))
+        .map(move |(slice, offset)| slice_to_hex_dump_line(slice, width, offset))
 }
 
 fn line_width(byte_count: usize) -> usize {
@@ -107,10 +110,10 @@ fn line_width(byte_count: usize) -> usize {
     4 * byte_count + 3
 }
 
-fn slice_to_hex_dump_line(bytes: &[u8], width: usize) -> String {
+fn slice_to_hex_dump_line(bytes: &[u8], width: usize, offset: u64) -> String {
     let mut out = String::with_capacity(line_width(width));
 
-    // TODO display offset
+    write!(out, "{:4X} | ", offset).expect("failed to write to output buffer");
 
     for b in bytes {
         write!(out, "{:2X} ", b).expect("failed to write to output buffer");
