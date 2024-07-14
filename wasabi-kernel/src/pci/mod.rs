@@ -6,7 +6,7 @@
 // TODO temp
 #![allow(missing_docs)]
 
-mod nvme;
+pub mod nvme;
 
 use alloc::{format, vec::Vec};
 use bit_field::BitField;

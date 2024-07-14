@@ -7,29 +7,39 @@
 pub mod admin_commands;
 pub mod properties;
 
-use alloc::{collections::VecDeque, format};
+use alloc::collections::VecDeque;
 use core::{hint::spin_loop, mem::size_of};
+use log::error;
 
 use self::properties::{
     AdminQueueAttributes, Capabilites, ControllerConfiguration, ControllerStatus,
 };
 use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
-    map_frame, map_page,
-    mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator, VirtAddrExt},
-    pci::{
-        nvme::properties::ArbitrationMechanism, CommonRegisterOffset, Device, RegisterAddress,
-        PCI_ACCESS,
+    free_frame, free_page, map_frame, map_page,
+    mem::{
+        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
+        page_table::PageTableMapError, MemError, VirtAddrExt,
     },
-    todo_error,
-    utils::{log_hex_dump, log_hex_dump_struct},
+    pci::{
+        nvme::{
+            admin_commands::{
+                ControllerId, IOCommandSetVector, IOCommandSetVectorIterator,
+                IdentifyControllerData,
+            },
+            properties::ArbitrationMechanism,
+        },
+        CommonRegisterOffset, Device, RegisterAddress, PCI_ACCESS,
+    },
+    todo_error, unmap_page,
+    utils::log_hex_dump,
 };
 
 use bit_field::BitField;
 use derive_where::derive_where;
 use shared::sync::lockcell::LockCell;
 use shared_derive::U8Enum;
-use static_assertions::{const_assert, const_assert_eq};
+use static_assertions::const_assert_eq;
 use thiserror::Error;
 use volatile::{access::WriteOnly, Volatile};
 use x86_64::{
@@ -47,6 +57,31 @@ const SUBMISSION_COMMAND_ENTRY_SIZE: u64 = 64;
 /// The size of all completion command entries
 const COMPLETION_COMMAND_ENTRY_SIZE: u64 = 16;
 
+#[allow(missing_docs)]
+#[derive(Debug, PartialEq, Error)]
+pub enum NVMEControllerError {
+    #[error("Memory error: {0:?}")]
+    Mem(#[from] MemError),
+    #[error("PCI device class needs to be Storage with subclass NVM")]
+    InvalidPciDevice,
+    #[error("Queue size of {0:#x} is not valid for this queue!")]
+    InvalidQueueSize(u16),
+    #[error("the device is not supported: {0}")]
+    DeviceNotSupported(&'static str),
+    #[error("NVMe command failed: {0}")]
+    CommandFailed(#[from] CommandStatusCode),
+    #[error("Command queue is full")]
+    QueueFull,
+}
+
+impl From<PageTableMapError> for NVMEControllerError {
+    fn from(value: PageTableMapError) -> Self {
+        let mem_err = MemError::from(value);
+        mem_err.into()
+    }
+}
+
+/// Provides communication with an NVME Storage Controller
 #[derive(Debug)]
 #[allow(unused)] // TODO temp
 pub struct NVMEController {
@@ -57,6 +92,12 @@ pub struct NVMEController {
     doorbell_page: Page<Size4KiB>,
     doorbell_base_vaddr: VirtAddr,
     admin_queue: CommandQueue,
+
+    controller_id: Option<ControllerId>,
+    io_command_sets: IOCommandSetVector,
+
+    max_number_completions_queues: u16,
+    max_number_submission_queues: u16,
 }
 
 impl NVMEController {
@@ -65,17 +106,26 @@ impl NVMEController {
     /// See: NVM Express Base Specification: 3.5.1
     ///         Memory-based Transport Controller Initialization
     ///
+    /// # Arguments:
+    ///  * `io_queue_count_request`: The maximum number of queues to request. This does not create the
+    ///         queues, only allocates them on the controller.
+    ///         The controller can decide to allocate a different amount than requested.
+    ///
     /// # Safety:
     ///
     /// This must only be called once on an NVMe [Device] until the controller is properly
     /// freed (TODO not implemented(disable controller and unmap memory)).
     // TODO proper error type
-    pub unsafe fn initialize(pci: &mut PCIAccess, pci_dev: Device) -> Result<Self, ()> {
+    pub unsafe fn initialize(
+        pci: &mut PCIAccess,
+        pci_dev: Device,
+        io_queue_count_request: u16,
+    ) -> Result<Self, NVMEControllerError> {
         if !matches!(
             pci_dev.class,
             Class::Storage(StorageSubclass::NonVolatileMemory)
         ) {
-            return Err(());
+            return Err(NVMEControllerError::InvalidPciDevice);
         }
 
         if pci_dev.functions > 1 {
@@ -114,7 +164,7 @@ impl NVMEController {
             PhysFrame::from_start_address(properties_base_paddr + DOORBELL_PHYS_OFFSET).unwrap();
         let doorbell_page = unsafe {
             // Safety: only called once for frame, assuming function safety
-            map_frame!(Size4KiB, properties_page_table_falgs, doorbell_frame).unwrap()
+            map_frame!(Size4KiB, properties_page_table_falgs, doorbell_frame)?
         };
         let doorbell_base: VirtAddr = doorbell_page.start_address();
         trace!(
@@ -143,6 +193,10 @@ impl NVMEController {
             doorbell_page,
             doorbell_base_vaddr: doorbell_base,
             admin_queue,
+            controller_id: None,
+            io_command_sets: IOCommandSetVector::zero(),
+            max_number_completions_queues: 0,
+            max_number_submission_queues: 0,
         };
 
         this.ensure_disabled();
@@ -199,8 +253,9 @@ impl NVMEController {
         } else if cap.command_sets_supported.get_bit(0) {
             cc.command_set_selected = 0b000;
         } else {
-            warn!("no supported io command set found for nvme device!");
-            return Err(()); // TODO error
+            return Err(NVMEControllerError::DeviceNotSupported(
+                "No I/O command set found",
+            ));
         }
 
         // 4. The controller settings should be configured. Specifically:
@@ -224,36 +279,232 @@ impl NVMEController {
         }
         trace!("nvme device enabled!");
 
+        // TODO I think I can remove this
         // ensure the head doorbell is 0
         debug!("enusre admin queue completion head is 0");
         this.admin_queue.completion_queue_head_doorbell.write(0);
 
-        // TODO temp
-        warn!("poll commands completions, even though no commands are submitted");
-        this.admin_queue.poll_completions().unwrap();
-
         // 7. The host determines the configuration of the controller by issuing the Identify command specifying
         // the Identify Controller data structure (i.e., CNS 01h);
+        let controller_id: ControllerId;
         {
             let identy_result_pt_flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
-            let (page, frame) = map_frame!(Size4KiB, identy_result_pt_flags).map_err(|_| ())?;
+            let (page, frame) = map_frame!(Size4KiB, identy_result_pt_flags)?;
 
             let command = admin_commands::create_identify_command(
                 admin_commands::IdentifyNamespaceIdent::Controller,
                 frame,
             );
 
-            let ident = this.admin_queue.submit(command).unwrap();
-
+            let ident = this.admin_queue.submit(command)?;
             this.admin_queue.flush();
 
-            let completion = this.admin_queue.wait_for(ident).unwrap();
+            let completion = this.admin_queue.wait_for(ident).expect(
+                "Wait for should always succeed because there is exactly 1 open submission",
+            );
+            if completion.status_and_phase.status().is_err() {
+                error!("identify controller command failed!");
+                return Err(completion.status_and_phase.status().into());
+            }
+            unsafe {
+                log_hex_dump(
+                    "Identify data:",
+                    log::Level::Debug,
+                    module_path!(),
+                    page.start_address(),
+                    2048,
+                );
+            }
 
-            todo_warn!("use the identify controller data");
+            // Safety: we mapped this page earlier
+            let identify_data: &IdentifyControllerData = unsafe { &*page.start_address().as_ptr() };
+            controller_id = identify_data.controller_id;
+            trace!("NVMe controller id: {:?}", controller_id);
+
+            if cap.command_sets_supported.get_bit(0) {
+                // TODO get info about NVM IO command set. Do I need to do something here?
+            }
+
+            let (frame, _pt_flags) = unmap_page!(page)?;
+            free_page!(page);
+            unsafe {
+                // frame is unmapped and no longer used
+                free_frame!(Size4KiB, frame);
+            }
+        }
+        this.controller_id = Some(controller_id);
+
+        // 8. The host determines any I/O Command Set specific configuration information as follows:
+        //      a. If the CAP.CSS bit 6 is set to ‘1’, then the host does the following:
+        if cap.command_sets_supported.get_bit(6) {
+            let identy_result_pt_flags =
+                PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
+            let (page, frame) = map_frame!(Size4KiB, identy_result_pt_flags)?;
+
+            //     i.  Issue the Identify command specifying the Identify I/O Command Set data structure (CNS
+            //         1Ch); and
+            let command = admin_commands::create_identify_command(
+                admin_commands::IdentifyNamespaceIdent::IOCommandSet { controller_id },
+                frame,
+            );
+            let ident = this.admin_queue.submit(command)?;
+            this.admin_queue.flush();
+            let completion = this.admin_queue.wait_for(ident).expect(
+                "Wait for should always succeed because there is exactly 1 open submission",
+            );
+            if completion.status_and_phase.status().is_err() {
+                error!("identify IO Command Set command failed!");
+                return Err(completion.status_and_phase.status().into());
+            }
+
+            let command_sets = unsafe {
+                // Safety: we just mapped the page
+                IOCommandSetVectorIterator::from_vaddr(page.start_address())
+            };
+
+            let rate_set = |set: IOCommandSetVector| {
+                // select the command set with the most options
+                let mut rating: u64 = 0;
+                if set.nvm() {
+                    rating += 3;
+                }
+                if set.key_value() {
+                    rating += 2;
+                }
+                if set.zoned_namespace() {
+                    rating += 1;
+                }
+
+                rating
+            };
+            let Some((set_index, best_set, _)) = command_sets
+                .map(|(idx, set)| {
+                    trace!("IO Command Set {set:?} found at {idx}");
+                    (idx, set)
+                })
+                .map(|(idx, set)| (idx, set, rate_set(set)))
+                .max_by_key(|(_, _, rating)| *rating)
+            else {
+                return Err(NVMEControllerError::DeviceNotSupported(
+                    "No supported IO Command Set found",
+                ));
+            };
+            debug!("Active command set: {best_set:?}");
+            this.io_command_sets = best_set;
+
+            let (frame, _pt_flags) = unmap_page!(page)?;
+            free_page!(page);
+            unsafe {
+                // frame is unmapped and no longer used
+                free_frame!(Size4KiB, frame);
+            }
+
+            //     ii. Issue the Set Features command with the I/O Command Set Profile Feature Identifier (FID
+            //         19h) specifying the index of the I/O Command Set Combination (refer to Figure 290) to be
+            //         enabled; and
+            let command = admin_commands::create_set_features_command(
+                admin_commands::SetFeatureData::IOCommandSet { index: set_index },
+                None,
+            );
+            let ident = this.admin_queue.submit(command)?;
+            this.admin_queue.flush();
+
+            this.admin_queue.wait_for(ident).expect(
+                "Wait for should always succeed because there is exactly 1 open submission",
+            );
+            if completion.status_and_phase.status().is_err() {
+                error!("set feature: IO Command Set command failed!");
+                return Err(completion.status_and_phase.status().into());
+            }
+        } else if cap.command_sets_supported.get_bit(0) {
+            this.io_command_sets.set_nvm(true);
+        } else {
+            return Err(NVMEControllerError::DeviceNotSupported(
+                "only admin command set supported",
+            ));
         }
 
-        todo_error!("initialize nvme controller");
+        //      b. For each I/O Command Set that is enabled (Note: the NVM Command Set is enabled if the
+        //         CC.CSS field is set to 000b):
+        //          i.  Issue the Identify command specifying the I/O Command Set specific Active Namespace
+        //              ID list (CNS 07h) with the appropriate Command Set Identifier (CSI) value of that I/O
+        //              Command Set; and
+        //          ii. For each NSID that is returned:
+        //             1. If the enabled I/O Command Set is the NVM Command Set or an I/O Command Set
+        //                based on the NVM Command Set (e.g., the Zoned Namespace Command Set) issue
+        //                the Identify command specifying the Identify Namespace data structure (CNS 00h);
+        //                and
+        //             2. Issue the Identify command specifying each of the following data structures (refer to
+        //                Figure 274): the I/O Command Set specific Identify Namespace data structure, the I/O
+        //                Command Set specific Identify Controller data structure, and the I/O Command Set
+        //                independent Identify Namespace data structure;
+        todo_warn!("gather info about active command set");
+
+        // 9. If the controller implements I/O queues, then the host should determine the number of I/O
+        // Submission Queues and I/O Completion Queues supported using the Set Features command with
+        // the Number of Queues feature identifier. After determining the number of I/O Queues, the NVMe
+        // Transport specific interrupt registers (e.g. MSI and/or MSI-X registers) should be configured;
+        {
+            // convert into a 0 based value
+            let request_count = io_queue_count_request.saturating_sub(1);
+
+            let command = admin_commands::create_set_features_command(
+                admin_commands::SetFeatureData::NumberOfQueues {
+                    sub_count: request_count,
+                    comp_count: request_count,
+                },
+                None,
+            );
+
+            let ident = this.admin_queue.submit(command)?;
+            this.admin_queue.flush();
+
+            let completion = this.admin_queue.wait_for(ident).expect(
+                "Wait for should always succeed because there is exactly 1 open submission",
+            );
+            if completion.status_and_phase.status().is_err() {
+                error!("set number of queue command failed!");
+                return Err(completion.status_and_phase.status().into());
+            }
+
+            let completion_data = completion.dword0;
+            this.max_number_submission_queues =
+                (completion_data.get_bits(0..=15) + 1).try_into().unwrap();
+            this.max_number_completions_queues =
+                (completion_data.get_bits(16..=31) + 1).try_into().unwrap();
+
+            if this.max_number_completions_queues < io_queue_count_request {
+                warn!(
+                    "Requested {} io completion queues, but device only supports {}",
+                    io_queue_count_request, this.max_number_completions_queues
+                );
+            }
+            if this.max_number_submission_queues < io_queue_count_request {
+                warn!(
+                    "Requested {} io submission queues, but device only supports {}",
+                    io_queue_count_request, this.max_number_submission_queues
+                );
+            }
+        }
+        todo_error!("setup MSI and/or MSI-X");
+
+        // 10. If the controller implements I/O queues, then the host should allocate the appropriate number of
+        // I/O Completion Queues based on the number required for the system configuration and the number
+        // supported by the controller. The I/O Completion Queues are allocated using the Create I/O
+        // Completion Queue command;
+
+        // 11. If the controller implements I/O queues, then the host should allocate the appropriate number of
+        // I/O Submission Queues based on the number required for the system configuration and the number
+        // supported by the controller. The I/O Submission Queues are allocated using the Create I/O
+        // Submission Queue command; and
+
+        // 12. To enable asynchronous notification of optional events, the host should issue a Set Features
+        // command specifying the events to enable. To enable asynchronous notification of events, the host
+        // should submit an appropriate number of Asynchronous Event Request commands. This step may
+        // be done at any point after the controller signals that the controller is ready (i.e., CSTS.RDY is set
+        // to ‘1’).
+        todo_warn!("enable async notification events, eg for errors");
 
         Ok(this)
     }
@@ -470,36 +721,37 @@ impl CommandQueue {
         completion_queue_size: u16,
         submission_tail_doorbell: Volatile<&'static mut u32, WriteOnly>,
         completion_head_doorbell: Volatile<&'static mut u32, WriteOnly>,
-    ) -> Result<Self, ()> {
-        if submission_queue_size < 2 || completion_queue_size < 2 {
-            // queues must be at least 2 elements in size
-            // TODO proper error
-            return Err(());
+    ) -> Result<Self, NVMEControllerError> {
+        if submission_queue_size < 2 {
+            return Err(NVMEControllerError::InvalidQueueSize(submission_queue_size));
+        }
+        if completion_queue_size < 2 {
+            return Err(NVMEControllerError::InvalidQueueSize(completion_queue_size));
         }
 
         let sub_memory_size = submission_queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE;
 
         if sub_memory_size > Size4KiB::SIZE {
             todo_error!("command queue larger than 1 page");
-            return Err(());
+            return Err(NVMEControllerError::InvalidQueueSize(submission_queue_size));
         }
 
         let comp_memory_size = completion_queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE;
         if comp_memory_size > Size4KiB::SIZE {
             todo_error!("command queue larger than 1 page");
-            return Err(());
+            return Err(NVMEControllerError::InvalidQueueSize(completion_queue_size));
         }
 
         let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
         let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
 
-        let sub_frame = frame_allocator.alloc().ok_or(())?; // TODO error
-        let sub_page = page_allocator.allocate_page_4k().map_err(|_| ())?;
+        let sub_frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
+        let sub_page = page_allocator.allocate_page_4k()?;
         let submission_queue_paddr = sub_frame.start_address();
         let submission_queue_vaddr = sub_page.start_address();
 
-        let comp_frame = frame_allocator.alloc().ok_or(())?; // TODO error
-        let comp_page = page_allocator.allocate_page_4k().map_err(|_| ())?;
+        let comp_frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
+        let comp_page = page_allocator.allocate_page_4k()?;
         let completion_queue_paddr = comp_frame.start_address();
         let completion_queue_vaddr = comp_page.start_address();
 
@@ -515,8 +767,7 @@ impl CommandQueue {
                 queue_pt_flags,
                 sub_frame,
                 frame_allocator.as_mut()
-            )
-            .map_err(|_| ())?;
+            )?;
 
             // Safety: we just mapped this region of memory
             submission_queue_vaddr.zero_memory(sub_memory_size as usize);
@@ -528,8 +779,7 @@ impl CommandQueue {
                 queue_pt_flags,
                 comp_frame,
                 frame_allocator.as_mut()
-            )
-            .map_err(|_| ())?;
+            )?;
 
             // Safety: we just mapped this region of memory
             completion_queue_vaddr.zero_memory(comp_memory_size as usize);
@@ -557,12 +807,14 @@ impl CommandQueue {
     pub fn submit(
         &mut self,
         mut command: CommonCommand,
-    ) -> Result<CommandIdentifier, CommandQueueSubmitError> {
+    ) -> Result<CommandIdentifier, NVMEControllerError> {
         if self.is_full_for_submission() {
-            // TODO check completions?
-            //  The controller might have handled some of the submissions already,
-            //  but we won't know until we check the completion list
-            return Err(CommandQueueSubmitError::QueueFull);
+            let new_completions = self
+                .poll_completions()
+                .unwrap_or_else(|(new_completions, _)| new_completions);
+            if !new_completions || self.is_full_for_submission() {
+                return Err(NVMEControllerError::QueueFull);
+            }
         }
 
         trace!("submit command to queue");
@@ -712,30 +964,10 @@ impl CommandQueue {
             slot_vaddr.as_ptr::<CommonCompletionEntry>().read_volatile()
         };
 
-        // TODO cleanup
-        //
-        // unsafe {
-        //     log_hex_dump(
-        //         "completion queue",
-        //         log::Level::Debug,
-        //         module_path!(),
-        //         self.completion_queue_vaddr,
-        //         COMPLETION_COMMAND_ENTRY_SIZE as usize * 4,
-        //     );
-        // }
-
-        log_hex_dump_struct(
-            &format!("poll completion entry at {:#x}", slot_vaddr),
-            log::Level::Debug,
-            module_path!(),
-            &possible_completion,
-        );
-
         if possible_completion.status_and_phase.phase() != self.completion_expected_phase {
             // phase did not match, therefor this is the old completion entry
             return Ok(false);
         }
-        trace!("completion found!");
 
         // it is fine to update the submission head, even if we can not yet store this completion
         // because this only indicates that the controller has read the submission
@@ -757,8 +989,6 @@ impl CommandQueue {
                 possible_completion.command_ident,
             ));
         };
-
-        debug!("completion can be inserted!");
 
         // FIXME: wrapping behaviour on u16::max
         let mut next_head = self.completion_queue_head + 1;
@@ -787,6 +1017,7 @@ impl CommandQueue {
         &mut self,
         ident: CommandIdentifier,
     ) -> Result<CommonCompletionEntry, CompletionPollError> {
+        trace!("Waiting for {ident:?}");
         let get_if_exists = |completions: &mut VecDeque<CommonCompletionEntry>| {
             if let Ok(index) = completions.binary_search_by_key(&ident, |c| c.command_ident) {
                 return Some(
@@ -829,13 +1060,6 @@ impl CommandQueue {
 
 #[allow(missing_docs)]
 #[derive(Error, Debug, PartialEq, Eq)]
-pub enum CommandQueueSubmitError {
-    #[error("the submission queue is full")]
-    QueueFull,
-}
-
-#[allow(missing_docs)]
-#[derive(Error, Debug, PartialEq, Eq)]
 pub enum CompletionPollError {
     #[error("Failed to poll command, because the identifier {0:#x} is still active!")]
     IdentifierStillInUse(CommandIdentifier),
@@ -863,6 +1087,7 @@ impl core::fmt::UpperHex for CommandIdentifier {
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct CommonCommand {
     dword0: CDW0,
+    // NSID
     namespace_ident: u32,
     dword2: u32,
     dword3: u32,
@@ -889,6 +1114,7 @@ const_assert_eq!(
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct CDW0(u32);
 
+#[allow(dead_code)]
 impl CDW0 {
     fn zero() -> Self {
         Self(0)
@@ -999,11 +1225,11 @@ impl StatusAndPhase {
         self.0.get_bit(0)
     }
 
-    pub fn status_code(&self) -> u8 {
+    fn status_code(&self) -> u8 {
         self.0.get_bits(1..=8).try_into().unwrap()
     }
 
-    pub fn status_code_type(&self) -> u8 {
+    fn status_code_type(&self) -> u8 {
         self.0.get_bits(9..=11).try_into().unwrap()
     }
 
@@ -1018,6 +1244,124 @@ impl StatusAndPhase {
     pub fn do_not_retry(&self) -> bool {
         self.0.get_bit(15)
     }
+
+    // TODO this function should be part of the Completion
+    pub fn status(&self) -> CommandStatusCode {
+        match self.status_code_type() {
+            0 => {
+                if let Ok(status) = GenericCommandStatus::try_from(self.status_code()) {
+                    CommandStatusCode::GenericStatus(status)
+                } else {
+                    CommandStatusCode::UnknownGenericStatus(self.status_code())
+                }
+            }
+            1 => CommandStatusCode::CommandSpecificStatus(self.status_code()),
+            2 => CommandStatusCode::MediaAndDataIntegrityError(self.status_code()),
+            3 => CommandStatusCode::PathRelatedStatus(self.status_code()),
+            4..=6 => CommandStatusCode::Reserved {
+                typ: self.status_code_type(),
+                status: self.status_code(),
+            },
+            7 => CommandStatusCode::VendorSpecific(self.status_code()),
+            _ => panic!("branch should be unreachable for 3bit value"),
+        }
+    }
+}
+
+/// StatusCode of an [CommonCompletionEntry]
+///
+/// See: NVM Express Base Spec: Figure 94: Status Code Type Values
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum CommandStatusCode {
+    #[error("Generic Command Error: {0:?}")]
+    GenericStatus(GenericCommandStatus),
+    #[error("Unknown Generic Command Error: {0:#x}")]
+    UnknownGenericStatus(u8),
+    #[error("Command specific error: {0:#x}")]
+    CommandSpecificStatus(u8),
+    #[error("Media and Data integrity error: {0:#x}")]
+    MediaAndDataIntegrityError(u8),
+    #[error("Path related error: {0:#x}")]
+    PathRelatedStatus(u8),
+    #[error("Reserved error: type {typ:#x}, code {status:#x}")]
+    Reserved { typ: u8, status: u8 },
+    #[error("Vendor specific error: {0:#x}")]
+    VendorSpecific(u8),
+}
+
+impl CommandStatusCode {
+    /// returns `true` if the status represents any type of error
+    #[inline]
+    pub fn is_err(self) -> bool {
+        !self.is_success()
+    }
+
+    /// returns `true` if the status does not represents any type of error
+    ///
+    /// This is `true` for [GenericCommandStatus::Success]
+    #[inline]
+    pub fn is_success(self) -> bool {
+        self == CommandStatusCode::GenericStatus(GenericCommandStatus::Success)
+    }
+}
+
+/// Generic Error Code of an [CommonCompletionEntry]
+///
+/// See: NVM Express Base Spec: Figure 95: Generic Command Status Values
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, U8Enum)]
+pub enum GenericCommandStatus {
+    Success = 0,
+    InvalidCommandOpcode = 1,
+    InvalidFieldInCommand = 2,
+    CommandIdConflict = 3,
+    DataTransferError = 4,
+    CommandAbortedPowerLoss = 5,
+    InternalError = 6,
+    AbortRequested = 7,
+    AbortSQDeletion = 8,
+    AbortFailedFuse = 9,
+    AbortMissingFues = 0xa,
+    InvalidNamespaceFormat = 0xb,
+    SequenceError = 0xc,
+    InvalidSgl = 0xd,
+    InvalidSglCount = 0xe,
+    InvalidSglLength = 0xf,
+    InvalidMetadataSglLength = 0x10,
+    InvalidSglType = 0x11,
+    InvalidUseOfControllerMemBuf = 0x12,
+    InvaldPrpOffset = 0x13,
+    AtomicWriteExceeded = 0x14,
+    OperationDenied = 0x15,
+    InvalidSglOffset = 0x16,
+    // reserved 0x17
+    HostIdInconsistentFormat = 0x18,
+    KeepAliveExpired = 0x19,
+    InvalidKeepAliveTimeout = 0x1a,
+    AbortDueToPreemptAbort = 0x1b,
+    SanitiizeFaild = 0x1c,
+    SanitizeInProgress = 0x1d,
+    InvalidSglBlockGranularity = 0x1e,
+    NotSupportedForQueueInCMB = 0x1f,
+    NamespaceWriteProtected = 0x20,
+    Interrupted = 0x21,
+    TransientTransportError = 0x22,
+    ProhibitedByLockdown = 0x23,
+    AdminCommandMediaNotReady = 0x24,
+    // reserved 0x25 .. 0x7f
+    LbaOutOfRange = 0x80,
+    CapacityExceeded = 0x81,
+    NamespaceNotReady = 0x82,
+    ReservationConflict = 0x83,
+    FormatInProgress = 0x84,
+    InvalidValueSize = 0x85,
+    InvalidKeySize = 0x86,
+    KvKeyDoesNotExist = 0x87,
+    UnrecoveredError = 0x88,
+    KeyExists = 0x89,
+    // Rserved 0x90 .. 0xbf
+    // Vendor Specific 0xc0 .. 0xff
 }
 
 pub fn experiment_nvme_device() {
@@ -1038,8 +1382,9 @@ pub fn experiment_nvme_device() {
 
     let _nvme_controller = unsafe {
         // TODO: Safety: we don't care during experiments
-        NVMEController::initialize(&mut pci, nvme_device)
-    };
+        NVMEController::initialize(&mut pci, nvme_device, 0xffff)
+    }
+    .unwrap();
 
     todo_warn!("Drop nvme_controller, which currently leaks data and makes it impossible to recover it properly.");
 }
