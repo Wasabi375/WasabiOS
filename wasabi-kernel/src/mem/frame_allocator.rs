@@ -9,7 +9,8 @@ use core::marker::PhantomData;
 use shared::rangeset::{Range, RangeSet, RegionRequest};
 use x86_64::{
     structures::paging::{
-        FrameAllocator, FrameDeallocator, PageSize, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
+        frame::PhysFrameRangeInclusive, FrameAllocator, FrameDeallocator, PageSize, PhysFrame,
+        Size1GiB, Size2MiB, Size4KiB,
     },
     PhysAddr,
 };
@@ -141,12 +142,39 @@ impl PhysAllocator {
         })
     }
 
+    /// allocate a range of contigous frames
+    pub fn alloc_range<S: PageSize>(&mut self, count: u64) -> Option<PhysFrameRangeInclusive<S>> {
+        assert_ne!(count, 0);
+
+        let size = S::SIZE * count;
+        let align = S::SIZE;
+
+        let alloc_start = self.memory_ranges.allocate(size, align);
+        alloc_start
+            .map(|s| PhysAddr::new(s as u64))
+            .map(|s| {
+                PhysFrame::from_start_address(s)
+                    .expect("range set should only return valid alignments")
+            })
+            .map(|start_frame| PhysFrameRangeInclusive {
+                start: start_frame,
+                end: start_frame + (count - 1),
+            })
+    }
+
     /// free a frame
     pub fn free<S: PageSize>(&mut self, frame: PhysFrame<S>) {
         self.memory_ranges.insert(Range {
             start: frame.start_address().as_u64(),
             end: frame.start_address().as_u64() + frame.size() - 1u64,
         });
+    }
+
+    /// free all frames
+    pub fn free_all<S: PageSize, I: Iterator<Item = PhysFrame<S>>>(&mut self, frames: I) {
+        for frame in frames {
+            self.free(frame);
+        }
     }
 }
 
