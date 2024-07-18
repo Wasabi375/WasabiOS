@@ -14,7 +14,7 @@
     maybe_uninit_uninit_array,
     never_type,
     panic_info_message,
-    pointer_is_aligned,
+    pointer_is_aligned_to,
     ptr_alignment_type,
     result_flattening,
     stmt_expr_attributes,
