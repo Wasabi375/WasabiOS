@@ -8,11 +8,6 @@ pub mod admin_commands;
 pub mod io_commands;
 pub mod properties;
 
-use admin_commands::{CompletionQueueCreationStatus, SubmissionQueueCreationStatus};
-use alloc::{collections::VecDeque, vec::Vec};
-use core::{cmp::min, hint::spin_loop, mem::size_of, ops::Add};
-use log::error;
-
 use self::properties::{
     AdminQueueAttributes, Capabilites, ControllerConfiguration, ControllerStatus,
 };
@@ -20,8 +15,10 @@ use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
     frames_required_for, free_frame, free_page, map_frame, map_page,
     mem::{
-        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
-        page_table::PageTableMapError, MemError, VirtAddrExt,
+        frame_allocator::WasabiFrameAllocator,
+        page_allocator::PageAllocator,
+        page_table::{PageTableMapError, KERNEL_PAGE_TABLE},
+        MemError, VirtAddrExt,
     },
     pci::{
         nvme::{
@@ -35,9 +32,12 @@ use crate::{
     },
     todo_error, unmap_page,
 };
-
+use admin_commands::{CompletionQueueCreationStatus, SubmissionQueueCreationStatus};
+use alloc::{collections::VecDeque, vec::Vec};
 use bit_field::BitField;
+use core::{cmp::min, hint::spin_loop, mem::size_of, ops::Add};
 use derive_where::derive_where;
+use log::error;
 use shared::{
     alloc_ext::{Strong, Weak},
     sync::lockcell::LockCell,
@@ -47,7 +47,7 @@ use static_assertions::const_assert_eq;
 use thiserror::Error;
 use volatile::{access::WriteOnly, Volatile};
 use x86_64::{
-    structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
+    structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
     PhysAddr, VirtAddr,
 };
 
@@ -91,7 +91,7 @@ impl From<PageTableMapError> for NVMEControllerError {
 
 /// Provides communication with an NVME Storage Controller
 #[derive_where(Debug)]
-#[allow(unused)] // TODO temp
+#[allow(dead_code)]
 pub struct NVMEController {
     pci_dev: Device,
     controller_base_paddr: PhysAddr,
@@ -136,7 +136,6 @@ impl NVMEController {
     ///
     /// This must only be called once on an NVMe [Device] until the controller is properly
     /// freed (TODO not implemented(disable controller and unmap memory)).
-    // TODO proper error type
     pub unsafe fn initialize(
         pci: &mut PCIAccess,
         pci_dev: Device,
@@ -339,11 +338,9 @@ impl NVMEController {
             let completion = this.admin_queue.wait_for(ident).expect(
                 "Wait for should always succeed because there is exactly 1 open submission",
             );
-            if completion.status_and_phase.status().is_err() {
+            if completion.status().is_err() {
                 error!("identify controller command failed!");
-                return Err(NVMEControllerError::AdminCommandFailed(
-                    completion.status_and_phase.status(),
-                ));
+                return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
             }
             // Safety: we mapped this page earlier
             let identify_data: &IdentifyControllerData = unsafe { &*page.start_address().as_ptr() };
@@ -381,11 +378,9 @@ impl NVMEController {
             let completion = this.admin_queue.wait_for(ident).expect(
                 "Wait for should always succeed because there is exactly 1 open submission",
             );
-            if completion.status_and_phase.status().is_err() {
+            if completion.status().is_err() {
                 error!("identify IO Command Set command failed!");
-                return Err(NVMEControllerError::AdminCommandFailed(
-                    completion.status_and_phase.status(),
-                ));
+                return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
             }
 
             let command_sets = unsafe {
@@ -443,11 +438,9 @@ impl NVMEController {
             this.admin_queue.wait_for(ident).expect(
                 "Wait for should always succeed because there is exactly 1 open submission",
             );
-            if completion.status_and_phase.status().is_err() {
+            if completion.status().is_err() {
                 error!("set feature: IO Command Set command failed!");
-                return Err(NVMEControllerError::AdminCommandFailed(
-                    completion.status_and_phase.status(),
-                ));
+                return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
             }
         } else if cap.command_sets_supported.get_bit(0) {
             this.io_command_sets |= IOCommandSetVector::NVM;
@@ -500,11 +493,9 @@ impl NVMEController {
             let completion = this.admin_queue.wait_for(ident).expect(
                 "Wait for should always succeed because there is exactly 1 open submission",
             );
-            if completion.status_and_phase.status().is_err() {
+            if completion.status().is_err() {
                 error!("set number of queue command failed!");
-                return Err(NVMEControllerError::AdminCommandFailed(
-                    completion.status_and_phase.status(),
-                ));
+                return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
             }
 
             let completion_data = completion.dword0;
@@ -836,8 +827,8 @@ impl NVMEController {
 
                 let (queue_ident, _) = comp_queue_requests_to_await.swap_remove(request_index);
 
-                if completion.status_and_phase.status().is_err() {
-                    let generic_status = completion.status_and_phase.status();
+                if completion.status().is_err() {
+                    let generic_status = completion.status();
                     if let CommandStatusCode::CommandSpecificStatus(status) = generic_status {
                         if let Some(comp_creation_error) =
                             CompletionQueueCreationStatus::from_bits(status)
@@ -929,8 +920,8 @@ impl NVMEController {
 
                 let (queue_ident, _) = sub_queue_requests_to_await.swap_remove(request_index);
 
-                if completion.status_and_phase.status().is_err() {
-                    let generic_status = completion.status_and_phase.status();
+                if completion.status().is_err() {
+                    let generic_status = completion.status();
                     if let CommandStatusCode::CommandSpecificStatus(status) = generic_status {
                         if let Ok(sub_creation_error) =
                             SubmissionQueueCreationStatus::try_from(status)
@@ -1012,6 +1003,18 @@ impl Add<u16> for QueueIdentifier {
     }
 }
 
+/// A data structure giving access to an NVME command queue.
+///
+/// This supports both admin and io command sets, although
+/// a single instance will only support either and not both.
+///
+/// # Safety
+///
+/// Before this is constructed a corresponding queue has to be allocated
+/// on the NVME controller. This should normally be done using
+/// [NVMEController::allocate_io_queues].
+/// The [NVMEController] must ensure that the queue on the nvme device is disabled
+/// before this is dropped.
 #[derive_where(Debug)]
 pub struct CommandQueue {
     id: QueueIdentifier,
@@ -1123,13 +1126,15 @@ impl CommandQueue {
 
     /// Allocates a new command queue.
     ///
-    /// The caller needs to ensure that a valid queue is created on the nvme controller first.
+    /// The caller needs to ensure that a valid queue is created on the nvme controller first
     ///
     /// # Saftey:
-    /// `doorbell_base` must be valid to write to for all queue doorbells up to `queue_id`.
-    /// Must not be called with the same `queue_id` as long as the resulting [CommandQueue] is
-    /// alive.
-    /// Caller ensures that all needed allocations on the [NVMEController] outlive this.
+    /// * `doorbell_base` must be valid to write to for all queue doorbells up to `queue_id` while
+    ///     this is alive.
+    /// * Must not be called with the same `queue_id` as long as the resulting [CommandQueue] is
+    ///     alive.
+    /// * Caller ensures that all needed allocations on the [NVMEController] outlive this.
+    /// * Caller must also ensure that the queue on the controller is disabled before dropping this.
     unsafe fn allocate(
         queue_id: QueueIdentifier,
         submission_queue_size: u16,
@@ -1225,6 +1230,16 @@ impl CommandQueue {
         })
     }
 
+    /// The [QueueIdentifier] for this [CommandQueue]
+    pub fn id(&self) -> QueueIdentifier {
+        self.id
+    }
+
+    /// Submits a new [CommonCommand] to the [CommandQueue].
+    ///
+    /// Commands are only executed by the nvme device after [Self::flush] is called.
+    /// if [Self::cancel_submissions] is called instead all submited commands since
+    /// the last call to [Self::flush] will be ignored.
     pub fn submit(
         &mut self,
         mut command: CommonCommand,
@@ -1429,14 +1444,21 @@ impl CommandQueue {
         Ok(true)
     }
 
+    /// Iterate over all polled [CommonCompletionEntries](CommonCompletionEntry).
+    ///
+    /// New entries are only visible after [Self::poll_completions] was executed.
     pub fn iter_completions(&self) -> impl Iterator<Item = &CommonCompletionEntry> {
         self.completions.iter()
     }
 
+    /// Iterate and drain all polled [CommonCompletionEntries](CommonCompletionEntry).
+    ///
+    /// New entries are only visible after [Self::poll_completions] was executed.
     pub fn drain_completions(&mut self) -> impl Iterator<Item = CommonCompletionEntry> + '_ {
         self.completions.drain(0..)
     }
 
+    /// Wait until a [CommonCompletionEntry] for a specific command exists.
     pub fn wait_for(
         &mut self,
         ident: CommandIdentifier,
@@ -1639,6 +1661,30 @@ const_assert_eq!(
     COMPLETION_COMMAND_ENTRY_SIZE as usize
 );
 
+impl CommonCompletionEntry {
+    pub fn status(&self) -> CommandStatusCode {
+        let status = self.status_and_phase;
+        match status.status_code_type() {
+            0 => {
+                if let Ok(status) = GenericCommandStatus::try_from(status.status_code()) {
+                    CommandStatusCode::GenericStatus(status)
+                } else {
+                    CommandStatusCode::UnknownGenericStatus(status.status_code())
+                }
+            }
+            1 => CommandStatusCode::CommandSpecificStatus(status.status_code()),
+            2 => CommandStatusCode::MediaAndDataIntegrityError(status.status_code()),
+            3 => CommandStatusCode::PathRelatedStatus(status.status_code()),
+            4..=6 => CommandStatusCode::Reserved {
+                typ: status.status_code_type(),
+                status: status.status_code(),
+            },
+            7 => CommandStatusCode::VendorSpecific(status.status_code()),
+            _ => panic!("branch should be unreachable for 3bit value"),
+        }
+    }
+}
+
 /// Status and Phase of a [CommonCompletionEntry]
 ///
 /// See: NVM Express Base Spec: Figure 93: Completion Queue Entry: Status Field
@@ -1671,28 +1717,6 @@ impl StatusAndPhase {
 
     pub fn do_not_retry(&self) -> bool {
         self.0.get_bit(15)
-    }
-
-    // TODO this function should be part of the Completion
-    pub fn status(&self) -> CommandStatusCode {
-        match self.status_code_type() {
-            0 => {
-                if let Ok(status) = GenericCommandStatus::try_from(self.status_code()) {
-                    CommandStatusCode::GenericStatus(status)
-                } else {
-                    CommandStatusCode::UnknownGenericStatus(self.status_code())
-                }
-            }
-            1 => CommandStatusCode::CommandSpecificStatus(self.status_code()),
-            2 => CommandStatusCode::MediaAndDataIntegrityError(self.status_code()),
-            3 => CommandStatusCode::PathRelatedStatus(self.status_code()),
-            4..=6 => CommandStatusCode::Reserved {
-                typ: self.status_code_type(),
-                status: self.status_code(),
-            },
-            7 => CommandStatusCode::VendorSpecific(self.status_code()),
-            _ => panic!("branch should be unreachable for 3bit value"),
-        }
     }
 }
 
