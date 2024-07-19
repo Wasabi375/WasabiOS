@@ -39,7 +39,7 @@ use x86_64::{
 pub type Result<T> = core::result::Result<T, MemError>;
 
 /// enum for all memory related errors
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Debug, PartialEq, Eq, Clone)]
 #[allow(missing_docs)]
 pub enum MemError {
     #[error("allocator has not been initialized")]
@@ -354,6 +354,61 @@ macro_rules! free_frame {
     }};
 }
 
+/// Calculate the number of pages required for `bytes` memory.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[macro_use] extern crate wasabi-kernel;
+/// # fn main() {
+/// # use x86_64::structures::paging::Size4KiB;
+/// # use static_assertions::const_assert_eq;
+/// const_assert_eq!(1, pages_required_for!(Size4KiB, 4096));
+/// const_assert_eq!(1, pages_required_for!(Size4KiB, 8));
+/// const_assert_eq!(2, pages_required_for!(Size4KiB, 4097));
+/// const_assert_eq!(1, pages_required_for!(size: 4096, size_of::<u32>() * 5));
+/// # }
+/// ```
+#[macro_export]
+macro_rules! pages_required_for {
+    ($size:ident, $bytes:expr) => {
+        crate::pages_required_for!(size: <$size as x86_64::structures::paging::PageSize>::SIZE, $bytes)
+    };
+    (size: $size:expr, $bytes:expr) => {
+        ($bytes as u64 / $size as u64)
+            + if ($bytes as u64 % $size as u64 != 0) {
+                1
+            } else {
+                0
+            }
+    };
+}
+
+/// Calculate the number of frames required for `bytes` memory.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[macro_use] extern crate wasabi-kernel;
+/// # fn main() {
+/// # use x86_64::structures::paging::Size4KiB;
+/// # use static_assertions::const_assert_eq;
+/// const_assert_eq!(1, frames_required_for!(Size4KiB, 4096));
+/// const_assert_eq!(1, frames_required_for!(Size4KiB, 8));
+/// const_assert_eq!(2, frames_required_for!(Size4KiB, 4097));
+/// const_assert_eq!(1, frames_required_for!(4096, size_of::<u32>() * 5));
+/// # }
+/// ```
+#[macro_export]
+macro_rules! frames_required_for {
+    ($size:ident, $bytes:expr) => {
+        crate::pages_required_for!($size, $bytes)
+    };
+    (size: $size:literal, $bytes:expr) => {
+        crate::pages_required_for!($size, $bytes)
+    };
+}
+
 /// Extensiont trait for [VirtAddr]
 pub trait VirtAddrExt {
     /// returns a [Volatile] that provides access to the value behind this address
@@ -514,4 +569,23 @@ fn assert_phys_not_available(addr: PhysAddr, message: &str) {
             && region.kind == MemoryRegionKind::Usable
     });
     assert!(!available, "{message}: Phys region {addr:p} is available!");
+}
+
+#[cfg(feature = "test")]
+mod test {
+    use core::mem::size_of;
+
+    use crate::pages_required_for;
+    use testing::{kernel_test, t_assert_eq, KernelTestError};
+    use x86_64::structures::paging::Size4KiB;
+
+    #[kernel_test]
+    pub fn test_pages_required_for() -> Result<(), KernelTestError> {
+        t_assert_eq!(1, pages_required_for!(Size4KiB, 4096));
+        t_assert_eq!(1, pages_required_for!(Size4KiB, 8));
+        t_assert_eq!(2, pages_required_for!(Size4KiB, 4097));
+        t_assert_eq!(1, pages_required_for!(size: 4096, size_of::<u32>() * 5));
+
+        Ok(())
+    }
 }

@@ -20,6 +20,7 @@ colored = { path = "../colored" }
 interrupt-fn-builder =  { path = "../interrupt-fn-builder" }
 testing = { path = "../testing", optional = true }
 
+bitflags.workspace = true
 bit_field.workspace = true
 bootloader_api.workspace = true
 derive_builder.workspace = true

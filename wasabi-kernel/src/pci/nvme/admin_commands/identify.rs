@@ -1,6 +1,7 @@
 use core::marker::PhantomData;
 
 use bit_field::BitField;
+use bitflags::bitflags;
 use x86_64::{
     structures::paging::{Page, PhysFrame, Size4KiB},
     VirtAddr,
@@ -109,44 +110,24 @@ pub struct IdentifyControllerData {
     management_endpoint_caps: u8,
 }
 
-/// Description of an IO Command set supported by a Controller
-///
-/// See: NVM Express Base Spec: Figure 291: I/O Command Set Vector
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IOCommandSetVector(u64);
+bitflags! {
+    /// Description of an IO Command set supported by a Controller
+    ///
+    /// See: NVM Express Base Spec: Figure 291: I/O Command Set Vector
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[allow(missing_docs)]
+    pub struct IOCommandSetVector: u64 {
+        const NVM = 1;
+        const KEY_VALUE = 1 << 1;
+        const ZONED_NAMESPACE = 1 << 2;
+
+        const _ = !0;
+    }
+}
 
 impl IOCommandSetVector {
-    pub fn zero() -> Self {
-        Self(0)
-    }
-
-    pub fn nvm(&self) -> bool {
-        self.0.get_bit(0)
-    }
-
-    pub fn set_nvm(&mut self, value: bool) {
-        self.0.set_bit(0, value);
-    }
-
-    pub fn key_value(&self) -> bool {
-        self.0.get_bit(1)
-    }
-
-    pub fn set_key_value(&mut self, value: bool) {
-        self.0.set_bit(1, value);
-    }
-
-    pub fn zoned_namespace(&self) -> bool {
-        self.0.get_bit(2)
-    }
-
-    pub fn set_zoned_namespace(&mut self, value: bool) {
-        self.0.set_bit(2, value);
-    }
-
     pub fn valid(&self) -> bool {
-        self.0 != 0
+        !self.is_empty()
     }
 }
 

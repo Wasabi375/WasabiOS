@@ -7,9 +7,11 @@ use shared_derive::U8Enum;
 
 mod features;
 mod identify;
+mod io_queue;
 
 pub use features::*;
 pub use identify::*;
+pub use io_queue::*;
 
 /// Opcode for the different commands
 #[allow(missing_docs)]

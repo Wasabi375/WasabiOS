@@ -5,10 +5,12 @@
 #![allow(missing_docs)] // TODO temp
 
 pub mod admin_commands;
+pub mod io_commands;
 pub mod properties;
 
-use alloc::collections::VecDeque;
-use core::{hint::spin_loop, mem::size_of};
+use admin_commands::{CompletionQueueCreationStatus, SubmissionQueueCreationStatus};
+use alloc::{collections::VecDeque, vec::Vec};
+use core::{cmp::min, hint::spin_loop, mem::size_of, ops::Add};
 use log::error;
 
 use self::properties::{
@@ -16,7 +18,7 @@ use self::properties::{
 };
 use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
-    free_frame, free_page, map_frame, map_page,
+    frames_required_for, free_frame, free_page, map_frame, map_page,
     mem::{
         frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
         page_table::PageTableMapError, MemError, VirtAddrExt,
@@ -32,12 +34,14 @@ use crate::{
         CommonRegisterOffset, Device, RegisterAddress, PCI_ACCESS,
     },
     todo_error, unmap_page,
-    utils::log_hex_dump,
 };
 
 use bit_field::BitField;
 use derive_where::derive_where;
-use shared::sync::lockcell::LockCell;
+use shared::{
+    alloc_ext::{Strong, Weak},
+    sync::lockcell::LockCell,
+};
 use shared_derive::U8Enum;
 use static_assertions::const_assert_eq;
 use thiserror::Error;
@@ -58,7 +62,7 @@ const SUBMISSION_COMMAND_ENTRY_SIZE: u64 = 64;
 const COMPLETION_COMMAND_ENTRY_SIZE: u64 = 16;
 
 #[allow(missing_docs)]
-#[derive(Debug, PartialEq, Error)]
+#[derive(Debug, PartialEq, Error, Clone)]
 pub enum NVMEControllerError {
     #[error("Memory error: {0:?}")]
     Mem(#[from] MemError),
@@ -69,9 +73,13 @@ pub enum NVMEControllerError {
     #[error("the device is not supported: {0}")]
     DeviceNotSupported(&'static str),
     #[error("NVMe command failed: {0}")]
-    CommandFailed(#[from] CommandStatusCode),
+    AdminCommandFailed(CommandStatusCode),
     #[error("Command queue is full")]
     QueueFull,
+    #[error("Can't create {0} new io queues, because the maximum of {0} was reached")]
+    IOQueueLimitReached(u16, u16),
+    #[error("Failed to poll completions on the admin queue: {0}")]
+    AdminQueuePollCompletions(PollCompletionError),
 }
 
 impl From<PageTableMapError> for NVMEControllerError {
@@ -82,7 +90,7 @@ impl From<PageTableMapError> for NVMEControllerError {
 }
 
 /// Provides communication with an NVME Storage Controller
-#[derive(Debug)]
+#[derive_where(Debug)]
 #[allow(unused)] // TODO temp
 pub struct NVMEController {
     pci_dev: Device,
@@ -91,6 +99,7 @@ pub struct NVMEController {
     controller_base_vaddr: VirtAddr,
     doorbell_page: Page<Size4KiB>,
     doorbell_base_vaddr: VirtAddr,
+    doorbell_stride: u64,
     admin_queue: CommandQueue,
 
     controller_id: Option<ControllerId>,
@@ -98,6 +107,18 @@ pub struct NVMEController {
 
     max_number_completions_queues: u16,
     max_number_submission_queues: u16,
+
+    #[derive_where(skip)]
+    available_io_queues: Vec<Weak<CommandQueue>>,
+    #[derive_where(skip)]
+    used_io_queues: Vec<Weak<CommandQueue>>,
+
+    // right now we assume that queues are never freed, and we can therefor just increment this.
+    // If we ever allow for freeing queues we need to implement a better system to keep track of
+    // the unused io queue identifiers, because this must never reach max_number_sub/comp_queues
+    next_unused_io_queue_ident: QueueIdentifier,
+
+    maximum_queue_entries: u16,
 }
 
 impl NVMEController {
@@ -173,17 +194,20 @@ impl NVMEController {
             doorbell_base
         );
 
-        let (sub_tail, comp_head) = unsafe {
+        // TODO figure out good admin queue size
+        const ADMIN_QUEUE_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE) as u16;
+        let admin_queue = unsafe {
             // Safety: we just mapped the doorbell memory as part of properties.
             // We only create 1 queue with index 0 (admin) right here.
             // We check the stride later on, once we have proper access to the properties.
-            CommandQueue::get_doorbells(doorbell_base, 4, 0)
+            CommandQueue::allocate(
+                QueueIdentifier(0),
+                ADMIN_QUEUE_SIZE,
+                ADMIN_QUEUE_SIZE,
+                doorbell_base,
+                4,
+            )?
         };
-
-        // TODO figure out good admin queue size
-        const ADMIN_QUEUE_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE) as u16;
-        let admin_queue =
-            CommandQueue::allocate(ADMIN_QUEUE_SIZE, ADMIN_QUEUE_SIZE, sub_tail, comp_head)?;
 
         let mut this = Self {
             pci_dev,
@@ -192,11 +216,16 @@ impl NVMEController {
             controller_base_vaddr: properties_base_vaddr,
             doorbell_page,
             doorbell_base_vaddr: doorbell_base,
+            doorbell_stride: 4,
             admin_queue,
             controller_id: None,
-            io_command_sets: IOCommandSetVector::zero(),
+            io_command_sets: IOCommandSetVector::empty(),
             max_number_completions_queues: 0,
             max_number_submission_queues: 0,
+            available_io_queues: Vec::new(),
+            used_io_queues: Vec::new(),
+            next_unused_io_queue_ident: QueueIdentifier(1),
+            maximum_queue_entries: 0, // this starts at 1, as the admin queue takes up slot 0
         };
 
         this.ensure_disabled();
@@ -207,6 +236,8 @@ impl NVMEController {
             spin_loop();
         }
         let cap = this.read_capabilities();
+        trace!("maximum queue entreies: {}", cap.maximum_queue_entries);
+        this.maximum_queue_entries = cap.maximum_queue_entries;
 
         // 2. The host configures the Admin Queue by setting the Admin Queue Attributes (AQA), Admin
         // Submission Queue Base Address (ASQ), and Admin Completion Queue Base Address (ACQ) to
@@ -233,10 +264,15 @@ impl NVMEController {
             let (sub_tail, comp_head) = unsafe {
                 // Safety: we just mapped the doorbell memory as part of properties.
                 // we overwrite the old references, thereby ensuring no aliasing is done
-                CommandQueue::get_doorbells(doorbell_base, cap.doorbell_stride, 0)
+                CommandQueue::get_doorbells(
+                    doorbell_base,
+                    cap.doorbell_stride as u64,
+                    QueueIdentifier(0),
+                )
             };
             this.admin_queue.submission_queue_tail_doorbell = sub_tail;
             this.admin_queue.completion_queue_head_doorbell = comp_head;
+            this.doorbell_stride = cap.doorbell_stride as u64;
         }
 
         // 3. The host determines the supported I/O Command Sets by checking the state of CAP.CSS and
@@ -281,8 +317,8 @@ impl NVMEController {
 
         // TODO I think I can remove this
         // ensure the head doorbell is 0
-        debug!("enusre admin queue completion head is 0");
-        this.admin_queue.completion_queue_head_doorbell.write(0);
+        // debug!("enusre admin queue completion head is 0");
+        // this.admin_queue.completion_queue_head_doorbell.write(0);
 
         // 7. The host determines the configuration of the controller by issuing the Identify command specifying
         // the Identify Controller data structure (i.e., CNS 01h);
@@ -305,18 +341,10 @@ impl NVMEController {
             );
             if completion.status_and_phase.status().is_err() {
                 error!("identify controller command failed!");
-                return Err(completion.status_and_phase.status().into());
+                return Err(NVMEControllerError::AdminCommandFailed(
+                    completion.status_and_phase.status(),
+                ));
             }
-            unsafe {
-                log_hex_dump(
-                    "Identify data:",
-                    log::Level::Debug,
-                    module_path!(),
-                    page.start_address(),
-                    2048,
-                );
-            }
-
             // Safety: we mapped this page earlier
             let identify_data: &IdentifyControllerData = unsafe { &*page.start_address().as_ptr() };
             controller_id = identify_data.controller_id;
@@ -355,7 +383,9 @@ impl NVMEController {
             );
             if completion.status_and_phase.status().is_err() {
                 error!("identify IO Command Set command failed!");
-                return Err(completion.status_and_phase.status().into());
+                return Err(NVMEControllerError::AdminCommandFailed(
+                    completion.status_and_phase.status(),
+                ));
             }
 
             let command_sets = unsafe {
@@ -366,13 +396,13 @@ impl NVMEController {
             let rate_set = |set: IOCommandSetVector| {
                 // select the command set with the most options
                 let mut rating: u64 = 0;
-                if set.nvm() {
+                if set.contains(IOCommandSetVector::NVM) {
                     rating += 3;
                 }
-                if set.key_value() {
+                if set.contains(IOCommandSetVector::KEY_VALUE) {
                     rating += 2;
                 }
-                if set.zoned_namespace() {
+                if set.contains(IOCommandSetVector::ZONED_NAMESPACE) {
                     rating += 1;
                 }
 
@@ -415,10 +445,12 @@ impl NVMEController {
             );
             if completion.status_and_phase.status().is_err() {
                 error!("set feature: IO Command Set command failed!");
-                return Err(completion.status_and_phase.status().into());
+                return Err(NVMEControllerError::AdminCommandFailed(
+                    completion.status_and_phase.status(),
+                ));
             }
         } else if cap.command_sets_supported.get_bit(0) {
-            this.io_command_sets.set_nvm(true);
+            this.io_command_sets |= IOCommandSetVector::NVM;
         } else {
             return Err(NVMEControllerError::DeviceNotSupported(
                 "only admin command set supported",
@@ -440,6 +472,11 @@ impl NVMEController {
         //                Command Set specific Identify Controller data structure, and the I/O Command Set
         //                independent Identify Namespace data structure;
         todo_warn!("gather info about active command set");
+        let mut cc = this.read_configuration();
+        cc.io_submission_queue_entry_size = SUBMISSION_COMMAND_ENTRY_SIZE.try_into().unwrap();
+        cc.io_completion_queue_entry_size = COMPLETION_COMMAND_ENTRY_SIZE.try_into().unwrap();
+        todo_warn!("properly verify and set cc queue entry sizes");
+        this.write_configuration(cc);
 
         // 9. If the controller implements I/O queues, then the host should determine the number of I/O
         // Submission Queues and I/O Completion Queues supported using the Set Features command with
@@ -465,7 +502,9 @@ impl NVMEController {
             );
             if completion.status_and_phase.status().is_err() {
                 error!("set number of queue command failed!");
-                return Err(completion.status_and_phase.status().into());
+                return Err(NVMEControllerError::AdminCommandFailed(
+                    completion.status_and_phase.status(),
+                ));
             }
 
             let completion_data = completion.dword0;
@@ -608,10 +647,375 @@ impl NVMEController {
     fn write_acq(&mut self, acq: QueueBaseAddress) {
         self.write_property_64(0x30, acq.into())
     }
+
+    /// get an existing IO queue.
+    ///
+    /// This will return `None` if no queues exist or if all queues are already
+    /// given.
+    pub fn get_io_queue(&mut self) -> Option<Strong<CommandQueue>> {
+        self.available_io_queues
+            .pop()
+            .or_else(|| {
+                self.reclaim_io_queues();
+                self.available_io_queues.pop()
+            })
+            .map(|weak| {
+                weak.try_upgrade()
+                    .expect("weak pointer in available_io_queues should always be upgradable")
+            })
+    }
+
+    /// Tries to reclaim used io queues.
+    ///
+    /// A queue can be reclaimed if the [Strong] pointer to it is dropped
+    pub fn reclaim_io_queues(&mut self) -> u16 {
+        let mut index = 0;
+        let mut reclamied = 0;
+        while index < self.used_io_queues.len() {
+            if let Some(_strong) = self.used_io_queues[index].try_upgrade() {
+                let weak = self.used_io_queues.swap_remove(index);
+                self.available_io_queues.push(weak);
+                reclamied += 1;
+            } else {
+                index += 1;
+            }
+        }
+        reclamied
+    }
+
+    /// Tries to get an existing io queue, but will allocate a new queue if none is available
+    pub fn get_or_alloc_io_queue(&mut self) -> Result<Strong<CommandQueue>, NVMEControllerError> {
+        if let Some(queue) = self.get_io_queue() {
+            return Ok(queue);
+        }
+        self.allocate_io_queues(1)?;
+        Ok(self.get_io_queue().expect("Queue was just allocated"))
+    }
+
+    /// The maximum number of queues that can be created
+    pub fn max_io_queue_count(&self) -> u16 {
+        core::cmp::min(
+            self.max_number_submission_queues,
+            self.max_number_completions_queues,
+        )
+    }
+
+    /// Ensures that `count` io queues are available.
+    ///
+    /// This will allocate up to `count` new queues if necessary.
+    pub fn ensure_available_io_queues(&mut self, count: u16) -> Result<(), NVMEControllerError> {
+        if self.available_io_queues.len() >= count.into() {
+            return Ok(());
+        }
+        self.reclaim_io_queues();
+        if self.available_io_queues.len() >= count.into() {
+            return Ok(());
+        }
+        let to_alloc = count - (self.available_io_queues.len() as u16);
+        assert!(to_alloc > 0);
+        trace!("ensure available io queues needs to allocate");
+
+        self.allocate_io_queues(to_alloc)
+    }
+
+    /// allocates `count` new IO queues.
+    ///
+    /// Failure means that the creation of 1 queue failed. The other queues might or
+    /// might not have been created.
+    ///
+    /// The size of the queue is determined by the number of commands that fit into a single page
+    pub fn allocate_io_queues(&mut self, count: u16) -> Result<(), NVMEControllerError> {
+        let comp_size = Size4KiB::SIZE / COMPLETION_COMMAND_ENTRY_SIZE;
+        let sub_size = Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE;
+
+        self.allocate_io_queues_with_sizes(
+            count,
+            min(comp_size.try_into().unwrap(), self.maximum_queue_entries),
+            min(sub_size.try_into().unwrap(), self.maximum_queue_entries),
+        )
+    }
+
+    /// allocates `count` new IO queues.
+    ///
+    /// Failure means that the creation of 1 queue failed. The other queues might or
+    /// might not have been created.
+    pub fn allocate_io_queues_with_sizes(
+        &mut self,
+        count: u16,
+        completion_queue_size: u16,
+        submission_queue_size: u16,
+    ) -> Result<(), NVMEControllerError> {
+        trace!(
+            "allocate_io_queues_with_sizes(count: {}, comp_size: {}, sub_size: {})",
+            count,
+            completion_queue_size,
+            submission_queue_size
+        );
+
+        assert!(completion_queue_size <= self.maximum_queue_entries);
+        assert!(submission_queue_size <= self.maximum_queue_entries);
+
+        // TODO: possible off by 1 error. Does this count include or exclude the admin queue
+        if self
+            .next_unused_io_queue_ident
+            .checked_add(count)
+            .map(|requested_size| requested_size.as_u16() > self.max_io_queue_count())
+            .unwrap_or(false)
+        {
+            return Err(NVMEControllerError::IOQueueLimitReached(
+                count,
+                self.max_io_queue_count(),
+            ));
+        }
+
+        debug!("next unused ident: {:?}", self.next_unused_io_queue_ident);
+        let queue_idents =
+            (0..count).map(|ident_offset| self.next_unused_io_queue_ident + ident_offset);
+
+        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+
+        let comp_queue_requests = queue_idents
+            .clone()
+            .map(|ident| {
+                let queue_size: u16 = completion_queue_size;
+
+                let frame_count = frames_required_for!(
+                    Size4KiB,
+                    queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE
+                );
+                assert!(frame_count >= 1);
+
+                let Some(frames) = frame_allocator.alloc_range(frame_count) else {
+                    return (ident, Err(MemError::OutOfMemory.into()));
+                };
+                let command = admin_commands::create_io_completion_queue(ident, queue_size, frames);
+
+                let command_ident = self.admin_queue.submit(command);
+                (ident, command_ident)
+            })
+            .collect::<Vec<_>>();
+        drop(frame_allocator);
+
+        if let Some(err) = comp_queue_requests
+            .iter()
+            .map(|(_, cmd)| cmd.clone())
+            .filter_map(|cmd| cmd.err())
+            .next()
+        {
+            error!("failed to submit create io completion queue commands");
+            self.admin_queue.cancel_submissions();
+            return Err(err);
+        }
+
+        self.admin_queue.flush();
+        let mut comp_queue_requests_to_await: Vec<_> = comp_queue_requests
+            .into_iter()
+            .map(|(ident, request)| (ident, request.unwrap()))
+            .collect();
+
+        let mut comp_queue_creation_error = None;
+
+        loop {
+            let poll_result = self.admin_queue.poll_completions();
+            if !poll_result.some_new_entries {
+                if let Some(err) = poll_result.error_on_any_entry {
+                    error!("failed to poll completions while creating io completion queues");
+                    return Err(NVMEControllerError::AdminQueuePollCompletions(err));
+                }
+                spin_loop();
+                continue;
+            }
+
+            for completion in self.admin_queue.iter_completions() {
+                let Some(request_index) = comp_queue_requests_to_await
+                    .iter()
+                    .position(|(_, ci)| *ci == completion.command_ident)
+                else {
+                    continue;
+                };
+
+                let (queue_ident, _) = comp_queue_requests_to_await.swap_remove(request_index);
+
+                if completion.status_and_phase.status().is_err() {
+                    let generic_status = completion.status_and_phase.status();
+                    if let CommandStatusCode::CommandSpecificStatus(status) = generic_status {
+                        if let Some(comp_creation_error) =
+                            CompletionQueueCreationStatus::from_bits(status)
+                        {
+                            error!("Failed to create completion queue {queue_ident:?}: {comp_creation_error:?}");
+                        } else {
+                            error!("Failed to create completion queue {queue_ident:?}: {generic_status:?}");
+                        }
+                    } else {
+                        error!(
+                            "Failed to create completion queue {queue_ident:?}: {generic_status}"
+                        );
+                    }
+                    comp_queue_creation_error = Some(generic_status);
+                }
+            }
+
+            // TODO timeout
+            if comp_queue_requests_to_await.is_empty() {
+                break;
+            }
+        }
+
+        if let Some(err) = comp_queue_creation_error {
+            todo_error!("delete all newly created io completion queues");
+            return Err(NVMEControllerError::AdminCommandFailed(err));
+        }
+
+        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+
+        let sub_queue_requests = queue_idents
+            .clone()
+            .map(|ident| {
+                let queue_size: u16 = submission_queue_size;
+
+                let frame_count = frames_required_for!(
+                    Size4KiB,
+                    queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE
+                );
+                assert!(frame_count >= 1);
+
+                let Some(frames) = frame_allocator.alloc_range(frame_count) else {
+                    return (ident, Err(MemError::OutOfMemory.into()));
+                };
+                let command = admin_commands::create_io_submission_queue(ident, queue_size, frames);
+
+                let command_ident = self.admin_queue.submit(command);
+                (ident, command_ident)
+            })
+            .collect::<Vec<_>>();
+        drop(frame_allocator);
+
+        if let Some(err) = sub_queue_requests
+            .iter()
+            .map(|(_, cmd)| cmd.clone())
+            .filter_map(|cmd| cmd.err())
+            .next()
+        {
+            error!("failed to submit create io submission queue commands");
+            self.admin_queue.cancel_submissions();
+            return Err(err);
+        }
+
+        self.admin_queue.flush();
+        let mut sub_queue_requests_to_await: Vec<_> = sub_queue_requests
+            .into_iter()
+            .map(|(ident, request)| (ident, request.unwrap()))
+            .collect();
+
+        let mut sub_queue_creation_error = None;
+        loop {
+            let poll_result = self.admin_queue.poll_completions();
+            if !poll_result.some_new_entries {
+                if let Some(err) = poll_result.error_on_any_entry {
+                    error!("failed to poll completions while creating io submission queues");
+                    return Err(NVMEControllerError::AdminQueuePollCompletions(err));
+                }
+                spin_loop();
+                continue;
+            }
+
+            for completion in self.admin_queue.iter_completions() {
+                let Some(request_index) = sub_queue_requests_to_await
+                    .iter()
+                    .position(|(_, ci)| *ci == completion.command_ident)
+                else {
+                    continue;
+                };
+
+                let (queue_ident, _) = sub_queue_requests_to_await.swap_remove(request_index);
+
+                if completion.status_and_phase.status().is_err() {
+                    let generic_status = completion.status_and_phase.status();
+                    if let CommandStatusCode::CommandSpecificStatus(status) = generic_status {
+                        if let Ok(sub_creation_error) =
+                            SubmissionQueueCreationStatus::try_from(status)
+                        {
+                            error!("Failed to create completion queue {queue_ident:?}: {sub_creation_error:?}");
+                        } else {
+                            error!("Failed to create completion queue {queue_ident:?}: {generic_status:?}");
+                        }
+                    } else {
+                        error!(
+                            "Failed to create completion queue {queue_ident:?}: {generic_status}"
+                        );
+                    }
+                    sub_queue_creation_error = Some(generic_status);
+                }
+            }
+
+            // TODO timeout
+            if sub_queue_requests_to_await.is_empty() {
+                break;
+            }
+        }
+
+        if let Some(err) = sub_queue_creation_error {
+            todo_error!("delete all newly created io submission and completion queues");
+            return Err(NVMEControllerError::AdminCommandFailed(err));
+        }
+
+        let mut queues_to_add: Vec<CommandQueue> = Vec::with_capacity(count as usize);
+        for ident in queue_idents {
+            let queue = unsafe {
+                // Safety:
+                // doorbell_base_vaddr is properly mapped
+                // we ensured that `ident` is only used for this queue
+                CommandQueue::allocate(
+                    ident,
+                    submission_queue_size,
+                    completion_queue_size,
+                    self.doorbell_base_vaddr,
+                    self.doorbell_stride,
+                )
+            };
+            match queue {
+                Ok(queue) => queues_to_add.push(queue),
+                Err(err) => {
+                    error!("failed to allocate command queue for {:?}", ident);
+                    todo_error!("deallocate sub and comp queues");
+                    return Err(err);
+                }
+            }
+        }
+        for queue in queues_to_add {
+            self.available_io_queues.push(Weak::new(queue));
+        }
+        self.next_unused_io_queue_ident = self.next_unused_io_queue_ident + count;
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
+pub struct QueueIdentifier(u16);
+
+impl QueueIdentifier {
+    pub fn as_u16(self) -> u16 {
+        self.0
+    }
+
+    pub fn checked_add(self, rhs: u16) -> Option<Self> {
+        self.0.checked_add(rhs).map(|v| Self(v))
+    }
+}
+
+impl Add<u16> for QueueIdentifier {
+    type Output = QueueIdentifier;
+
+    fn add(self, rhs: u16) -> Self::Output {
+        QueueIdentifier(self.0 + rhs)
+    }
 }
 
 #[derive_where(Debug)]
 pub struct CommandQueue {
+    id: QueueIdentifier,
+
     submission_queue_size: u16,
     submission_queue_paddr: PhysAddr,
     submission_queue_vaddr: VirtAddr,
@@ -631,7 +1035,7 @@ pub struct CommandQueue {
     /// See: NVMe Base Spec: 3.3.1.5: Full Queue
     ///
     /// [CommandQueue::submission_queue_tail_doorbell] is writeonly
-    /// so we keep a copy of the value here.
+    /// so we keep a copy of the value here
     submission_queue_tail: u16,
     /// the last entry read by the controller.
     ///
@@ -675,7 +1079,8 @@ pub struct CommandQueue {
     completions: VecDeque<CommonCompletionEntry>,
 
     next_command_identifier: u16,
-    // TODO implement drop and free memory
+    // TODO implement drop and free memory. The owner is responsible for freeing allocations on the
+    // NVME controller
 }
 
 impl CommandQueue {
@@ -694,16 +1099,16 @@ impl CommandQueue {
     /// Caller must also ensure that no alias exists for the returned unique references
     unsafe fn get_doorbells(
         doorbell_base: VirtAddr,
-        stride: u32,
-        queue_index: u32,
+        stride: u64,
+        queue_index: QueueIdentifier,
     ) -> (
         Volatile<&'static mut u32, WriteOnly>,
         Volatile<&'static mut u32, WriteOnly>,
     ) {
         assert!(stride >= 4);
 
-        let submission = doorbell_base + (queue_index as u64 * stride as u64);
-        let completion = submission + stride as u64;
+        let submission = doorbell_base + (queue_index.0 as u64 * stride * 2);
+        let completion = submission + stride;
 
         trace!("doorbells: sub {:p}, comp {:p}", submission, completion);
 
@@ -716,11 +1121,21 @@ impl CommandQueue {
         }
     }
 
-    pub fn allocate(
+    /// Allocates a new command queue.
+    ///
+    /// The caller needs to ensure that a valid queue is created on the nvme controller first.
+    ///
+    /// # Saftey:
+    /// `doorbell_base` must be valid to write to for all queue doorbells up to `queue_id`.
+    /// Must not be called with the same `queue_id` as long as the resulting [CommandQueue] is
+    /// alive.
+    /// Caller ensures that all needed allocations on the [NVMEController] outlive this.
+    unsafe fn allocate(
+        queue_id: QueueIdentifier,
         submission_queue_size: u16,
         completion_queue_size: u16,
-        submission_tail_doorbell: Volatile<&'static mut u32, WriteOnly>,
-        completion_head_doorbell: Volatile<&'static mut u32, WriteOnly>,
+        doorbell_base: VirtAddr,
+        queue_doorbell_stride: u64,
     ) -> Result<Self, NVMEControllerError> {
         if submission_queue_size < 2 {
             return Err(NVMEControllerError::InvalidQueueSize(submission_queue_size));
@@ -728,6 +1143,11 @@ impl CommandQueue {
         if completion_queue_size < 2 {
             return Err(NVMEControllerError::InvalidQueueSize(completion_queue_size));
         }
+
+        let (sub_tail_doorbell, comp_head_doorbell) = unsafe {
+            // Safety: see our safety
+            CommandQueue::get_doorbells(doorbell_base, queue_doorbell_stride, queue_id)
+        };
 
         let sub_memory_size = submission_queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE;
 
@@ -786,17 +1206,18 @@ impl CommandQueue {
         }
 
         Ok(Self {
+            id: queue_id,
             submission_queue_size,
             submission_queue_paddr,
             submission_queue_vaddr,
             completion_queue_size,
             completion_queue_paddr,
             completion_queue_vaddr,
-            submission_queue_tail_doorbell: submission_tail_doorbell,
+            submission_queue_tail_doorbell: sub_tail_doorbell,
             submission_queue_tail: 0,
             submission_queue_tail_local: 0,
             submission_queue_head: 0,
-            completion_queue_head_doorbell: completion_head_doorbell,
+            completion_queue_head_doorbell: comp_head_doorbell,
             completion_queue_head: 0,
             completion_expected_phase: true,
             completions: VecDeque::new(),
@@ -809,9 +1230,7 @@ impl CommandQueue {
         mut command: CommonCommand,
     ) -> Result<CommandIdentifier, NVMEControllerError> {
         if self.is_full_for_submission() {
-            let new_completions = self
-                .poll_completions()
-                .unwrap_or_else(|(new_completions, _)| new_completions);
+            let new_completions = self.poll_completions().some_new_entries;
             if !new_completions || self.is_full_for_submission() {
                 return Err(NVMEControllerError::QueueFull);
             }
@@ -839,6 +1258,12 @@ impl CommandQueue {
         }
 
         Ok(identifier)
+    }
+
+    /// Cancells all submissions since the last call to [Self::flush].
+    pub fn cancel_submissions(&mut self) {
+        debug!("Cancel submissions for queue {:?}", self.id);
+        self.submission_queue_tail_local = self.submission_queue_tail;
     }
 
     /// Notify the controller about any pending submission command entries
@@ -899,7 +1324,7 @@ impl CommandQueue {
     ///         that could not be added to the completions list
     /// * Err((false, CompletionPollError)): No entires were found and added to the completions
     ///         list
-    pub fn poll_completions(&mut self) -> Result<bool, (bool, CompletionPollError)> {
+    pub fn poll_completions(&mut self) -> PollCompletionsResult {
         trace!("poll for completions");
         let mut any_found = false;
         let mut error = None;
@@ -923,10 +1348,9 @@ impl CommandQueue {
                 .write(self.completion_queue_head as u32);
         }
 
-        if let Some(err) = error {
-            Err((any_found, err))
-        } else {
-            Ok(any_found)
+        PollCompletionsResult {
+            some_new_entries: any_found,
+            error_on_any_entry: error,
         }
     }
 
@@ -956,7 +1380,7 @@ impl CommandQueue {
     /// contains an entry with the same identifier.
     /// Only `submission_queue_head` is advanced. `completion_queue_head`
     /// and `completion_expected_phase` are left unchanged.
-    fn poll_single_completion(&mut self) -> Result<bool, CompletionPollError> {
+    fn poll_single_completion(&mut self) -> Result<bool, PollCompletionError> {
         let slot_vaddr = self.completion_queue_vaddr
             + (COMPLETION_COMMAND_ENTRY_SIZE * self.completion_queue_head as u64);
         let possible_completion = unsafe {
@@ -985,7 +1409,7 @@ impl CommandQueue {
             .completions
             .binary_search_by_key(&possible_completion.command_ident, |c| c.command_ident)
         else {
-            return Err(CompletionPollError::IdentifierStillInUse(
+            return Err(PollCompletionError::IdentifierStillInUse(
                 possible_completion.command_ident,
             ));
         };
@@ -1016,7 +1440,7 @@ impl CommandQueue {
     pub fn wait_for(
         &mut self,
         ident: CommandIdentifier,
-    ) -> Result<CommonCompletionEntry, CompletionPollError> {
+    ) -> Result<CommonCompletionEntry, PollCompletionError> {
         trace!("Waiting for {ident:?}");
         let get_if_exists = |completions: &mut VecDeque<CommonCompletionEntry>| {
             if let Ok(index) = completions.binary_search_by_key(&ident, |c| c.command_ident) {
@@ -1033,34 +1457,38 @@ impl CommandQueue {
         }
 
         loop {
-            match self.poll_completions() {
-                Ok(true) => {
-                    if let Some(entry) = get_if_exists(&mut self.completions) {
-                        return Ok(entry);
-                    }
-                    // entry not in the new completions, cointinue waiting
-                    spin_loop()
+            let poll_result = self.poll_completions();
+            if poll_result.some_new_entries {
+                if let Some(entry) = get_if_exists(&mut self.completions) {
+                    return Ok(entry);
                 }
-                Ok(false) => {
-                    // no new entries, continue waiting
-                    spin_loop();
-                }
-                Err((new_entries, err)) => {
-                    if new_entries {
-                        if let Some(entry) = get_if_exists(&mut self.completions) {
-                            return Ok(entry);
-                        }
-                    }
+                // entry not in the new completions, cointinue waiting
+                spin_loop()
+            } else {
+                if let Some(err) = poll_result.error_on_any_entry {
                     return Err(err);
                 }
+                // no new entries, continue waiting
+                spin_loop();
             }
         }
     }
 }
 
+/// The return type used by [CommandQueue::poll_completions].
+pub struct PollCompletionsResult {
+    /// If `true` there is at least 1 new completion entry that was found.
+    pub some_new_entries: bool,
+    /// If `Some` then at least polling failed for at least 1 entry, meaning
+    /// that an entry was found, but it is not yet possible to store it in the
+    /// completions list (see [CompletionPollError]).
+    /// It is possible that other entries were polled successfully.
+    pub error_on_any_entry: Option<PollCompletionError>,
+}
+
 #[allow(missing_docs)]
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum CompletionPollError {
+#[derive(Error, Debug, PartialEq, Eq, Clone)]
+pub enum PollCompletionError {
     #[error("Failed to poll command, because the identifier {0:#x} is still active!")]
     IdentifierStillInUse(CommandIdentifier),
 }
@@ -1380,11 +1808,18 @@ pub fn experiment_nvme_device() {
         .unwrap()
         .clone();
 
-    let _nvme_controller = unsafe {
+    let mut nvme_controller = unsafe {
         // TODO: Safety: we don't care during experiments
         NVMEController::initialize(&mut pci, nvme_device, 0xffff)
     }
     .unwrap();
+
+    nvme_controller
+        .allocate_io_queues_with_sizes(4, 192, 16)
+        .unwrap();
+
+    assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(4));
+    assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(8));
 
     todo_warn!("Drop nvme_controller, which currently leaks data and makes it impossible to recover it properly.");
 }

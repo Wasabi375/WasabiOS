@@ -254,6 +254,11 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
         // todo!()
     }
 
+    /// allocate a range of contigous frames
+    pub fn alloc_range(&mut self, count: u64) -> Option<PhysFrameRangeInclusive<S>> {
+        return self.phys_alloc.lock().alloc_range(count);
+    }
+
     /// Frees a phys frame
     ///
     /// ## Safety

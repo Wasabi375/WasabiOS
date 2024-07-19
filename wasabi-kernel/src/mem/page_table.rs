@@ -38,7 +38,7 @@ impl PageTableKernelFlags for PageTableFlags {}
 pub static KERNEL_PAGE_TABLE: UnwrapTicketLock<RecursivePageTable> =
     unsafe { UnwrapTicketLock::new_uninit() };
 
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Debug, PartialEq, Eq, Clone)]
 #[allow(missing_docs)]
 pub enum PageTableMapError {
     #[error("Failed to alloc frame")]
