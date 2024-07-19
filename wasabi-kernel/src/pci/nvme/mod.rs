@@ -1082,8 +1082,6 @@ pub struct CommandQueue {
     completions: VecDeque<CommonCompletionEntry>,
 
     next_command_identifier: u16,
-    // TODO implement drop and free memory. The owner is responsible for freeing allocations on the
-    // NVME controller
 }
 
 impl CommandQueue {
@@ -1493,6 +1491,55 @@ impl CommandQueue {
                 // no new entries, continue waiting
                 spin_loop();
             }
+        }
+    }
+}
+
+impl Drop for CommandQueue {
+    fn drop(&mut self) {
+        trace!("dropping command queue: {:?}", self.id);
+        let sub_memory_size = self.submission_queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE;
+        assert!(sub_memory_size <= Size4KiB::SIZE);
+        let sub_page = Page::<Size4KiB>::from_start_address(self.submission_queue_vaddr)
+            .expect("submission_queue_vaddr should be a page start");
+        let sub_frame = PhysFrame::<Size4KiB>::from_start_address(self.submission_queue_paddr)
+            .expect("submission_queue_paddr should be a frame start");
+
+        let comp_memory_size = self.completion_queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE;
+        assert!(comp_memory_size <= Size4KiB::SIZE);
+        let comp_page = Page::<Size4KiB>::from_start_address(self.completion_queue_vaddr)
+            .expect("completion_queue_vaddr should be a page start");
+        let comp_frame = PhysFrame::<Size4KiB>::from_start_address(self.completion_queue_paddr)
+            .expect("completion_queue_paddr should be a frame start");
+
+        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
+
+        let (_, _, flush) = page_table
+            .unmap(sub_page)
+            .expect("failed to unmap submission queue page");
+        flush.flush();
+        let (_, _, flush) = page_table
+            .unmap(comp_page)
+            .expect("failed to unmap submission queue page");
+        flush.flush();
+
+        unsafe {
+            // # Safety:
+            //
+            // frames are no longer used, because we hold the only references
+            // directly into the queue.
+            //
+            // The queue won't write to the comp_frame, because of the safety guarantees of
+            // [Self::allocate].
+            frame_allocator.free(sub_frame);
+            frame_allocator.free(comp_frame);
+
+            // Safety: pages are no longer used, because we hold the only references
+            // directly into the queue
+            page_allocator.free_page(sub_page);
+            page_allocator.free_page(comp_page);
         }
     }
 }
