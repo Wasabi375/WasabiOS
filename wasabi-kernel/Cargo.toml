@@ -5,11 +5,11 @@ edition.workspace = true
 
 [features]
 no-color = ["colored/no-color"]
-no-unicode-log = []
-test = ["dep:testing", "shared/test", "mem-backed-guard-page"]
-mem-backed-guard-page = []
+no-unicode-log = ["shared/no-unicode-log"]
+test = ["dep:testing", "shared/test"]
+mem-backed-guard-page = []  # TODO broken I think, add to test
 
-default = ["mem-backed-guard-page"]
+default = []
 
 [dependencies]
 shared = { path = "../shared" }

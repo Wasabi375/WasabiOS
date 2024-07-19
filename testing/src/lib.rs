@@ -1,7 +1,6 @@
 //! Library providing #[test] like functionaility for my kernel
 
 #![no_std]
-#![feature(error_in_core)]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 

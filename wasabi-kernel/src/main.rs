@@ -1,17 +1,6 @@
 //! Main entry for hobby os-kernel written in Rust
 #![no_std]
 #![no_main]
-#![feature(
-    error_in_core,
-    ptr_alignment_type,
-    abi_x86_interrupt,
-    ascii_char,
-    let_chains,
-    allocator_api,
-    result_flattening,
-    maybe_uninit_uninit_array,
-    maybe_uninit_array_assume_init
-)]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 

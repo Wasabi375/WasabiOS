@@ -141,7 +141,7 @@ pub async fn build_kernel_elf(
     cmd.arg("--profile").arg(options.profile().as_os_str());
 
     let out_dir = latest_path(bin_name, &options.target, &options.profile());
-    cmd.arg("--out-dir").arg(&out_dir);
+    cmd.arg("--artifact-dir").arg(&out_dir);
 
     let success = cmd
         .status()

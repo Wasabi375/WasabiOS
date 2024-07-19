@@ -1,6 +1,6 @@
 use core::fmt::{Debug, Display, Formatter, Result};
 
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 use std::error::Error;
 
 /// This error indicates that an operation was attempted that would have increased the
@@ -16,8 +16,8 @@ impl<const N: usize> Display for CapacityError<N> {
     }
 }
 
-#[cfg(feature = "std")]
-#[doc(cfg(feature = "std"))]
+#[cfg(feature = "alloc")]
+#[doc(cfg(feature = "alloc"))]
 impl<const N: usize> Error for CapacityError<N> {}
 
 /// This error indicates that a push was attempted into a
@@ -87,10 +87,10 @@ impl<T: Debug, const N: usize> Debug for PushCapacityError<T, N> {
     }
 }
 
-#[cfg(feature = "std")]
-#[doc(cfg(feature = "std"))]
+#[cfg(feature = "alloc")]
+#[doc(cfg(feature = "alloc"))]
 impl<T: Debug, const N: usize> Error for PushCapacityError<T, N> {
-    #[doc(cfg(feature = "std"))]
+    #[doc(cfg(feature = "alloc"))]
     #[inline(always)]
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(&CapacityError::<N>)

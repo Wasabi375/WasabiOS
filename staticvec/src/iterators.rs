@@ -63,8 +63,8 @@ impl<'a, T: 'a, const N: usize> StaticVecIterConst<'a, T, N> {
     /// iterator's `start` and `end` elements on two separate lines.
     /// Locally requires that `T` implements [Debug](core::fmt::Debug)
     /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "std")]
-    #[doc(cfg(feature = "std"))]
+    #[cfg(feature = "alloc")]
+    #[doc(cfg(feature = "alloc"))]
     #[inline(always)]
     pub fn bounds_to_string(&self) -> String
     where
@@ -264,8 +264,8 @@ impl<'a, T: 'a, const N: usize> StaticVecIterMut<'a, T, N> {
     /// iterator's `start` and `end` elements on two separate lines.
     /// Locally requires that `T` implements [Debug](core::fmt::Debug)
     /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "std")]
-    #[doc(cfg(feature = "std"))]
+    #[cfg(feature = "alloc")]
+    #[doc(cfg(feature = "alloc"))]
     #[inline(always)]
     pub fn bounds_to_string(&self) -> String
     where
@@ -447,8 +447,8 @@ impl<T, const N: usize> StaticVecIntoIter<T, N> {
     /// iterator's `start` and `end` elements on two separate lines.
     /// Locally requires that `T` implements [Debug](core::fmt::Debug)
     /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "std")]
-    #[doc(cfg(feature = "std"))]
+    #[cfg(feature = "alloc")]
+    #[doc(cfg(feature = "alloc"))]
     #[inline(always)]
     pub fn bounds_to_string(&self) -> String
     where
@@ -699,8 +699,8 @@ impl<'a, T: 'a, const N: usize> StaticVecDrain<'a, T, N> {
     /// iterator's `start` and `end` elements on two separate lines.
     /// Locally requires that `T` implements [Debug](core::fmt::Debug)
     /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "std")]
-    #[doc(cfg(feature = "std"))]
+    #[cfg(feature = "alloc")]
+    #[doc(cfg(feature = "alloc"))]
     #[inline(always)]
     pub fn bounds_to_string(&self) -> String
     where

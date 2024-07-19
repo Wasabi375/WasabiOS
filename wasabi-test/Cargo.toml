@@ -6,7 +6,7 @@ edition.workspace = true
 [features]
 no-color = ["wasabi-kernel/no-color"]
 test-tests = []
-default = ["test-tests"]
+default = []
 
 [dependencies]
 shared = { path = "../shared" }

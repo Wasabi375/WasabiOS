@@ -20,7 +20,6 @@
     doc_cfg,
     exact_size_is_empty,
     generic_const_exprs,
-    inline_const,
     maybe_uninit_array_assume_init,
     maybe_uninit_uninit_array,
     pattern,
@@ -28,7 +27,6 @@
     specialization,
     trusted_len,
     trusted_random_access,
-    error_in_core,
     const_eval_select
 )]
 
@@ -1323,8 +1321,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     ///   [1, 2, 3, 4]
     /// );
     /// ```
-    #[cfg(feature = "std")]
-    #[doc(cfg(feature = "std"))]
+    #[cfg(feature = "alloc")]
+    #[doc(cfg(feature = "alloc"))]
     #[inline]
     pub fn sorted(&self) -> Self
     where
@@ -1787,8 +1785,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// let sv: StaticVec<i32, 3> = StaticVec::from_vec(v);
     /// assert_eq!(sv, [1, 2, 3]);
     /// ```
-    #[cfg(feature = "std")]
-    #[doc(cfg(feature = "std"))]
+    #[cfg(feature = "alloc")]
+    #[doc(cfg(feature = "alloc"))]
     #[inline]
     pub fn from_vec(mut vec: Vec<T>) -> Self {
         let vec_len = vec.len();
@@ -1827,8 +1825,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// let v = sv.into_vec();
     /// assert_eq!(v, [1, 2, 3]);
     /// ```
-    #[cfg(feature = "std")]
-    #[doc(cfg(feature = "std"))]
+    #[cfg(feature = "alloc")]
+    #[doc(cfg(feature = "alloc"))]
     #[inline(always)]
     pub fn into_vec(mut self) -> Vec<T> {
         let mut res = Vec::with_capacity(N);
