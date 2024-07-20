@@ -93,12 +93,46 @@ pub fn create_io_submission_queue(
     command
 }
 
-pub fn delete_io_completion_queue() -> CommonCommand {
-    todo!()
+pub fn delete_io_completion_queue(queue_ident: QueueIdentifier) -> CommonCommand {
+    trace!(
+        "delete io completion queue command, ident: {:?}",
+        queue_ident,
+    );
+
+    let mut dword0 = CDW0::zero();
+    dword0.set_opcode(CommandOpcode::DeleteIOCompletionQueue as u8);
+    dword0.set_prp_or_sgl(PrpOrSgl::Prp);
+
+    let mut command = CommonCommand::default();
+
+    command.dword0 = dword0;
+
+    let mut dword10: u32 = 0;
+    dword10.set_bits(0..=15, queue_ident.as_u16() as u32);
+    command.dword10 = dword10;
+
+    command
 }
 
-pub fn delete_io_submission_queue() -> CommonCommand {
-    todo!()
+pub fn delete_io_submission_queue(queue_ident: QueueIdentifier) -> CommonCommand {
+    trace!(
+        "delete io submission queue command, ident: {:?}",
+        queue_ident,
+    );
+
+    let mut dword0 = CDW0::zero();
+    dword0.set_opcode(CommandOpcode::DeleteIOSubmissionQueue as u8);
+    dword0.set_prp_or_sgl(PrpOrSgl::Prp);
+
+    let mut command = CommonCommand::default();
+
+    command.dword0 = dword0;
+
+    let mut dword10: u32 = 0;
+    dword10.set_bits(0..=15, queue_ident.as_u16() as u32);
+    command.dword10 = dword10;
+
+    command
 }
 
 bitflags! {
@@ -119,4 +153,13 @@ pub enum SubmissionQueueCreationStatus {
     InvalidCompletionQueue = 0x0,
     InvalidIdentifier = 0x1,
     InvalidSize = 0x2,
+}
+
+#[allow(missing_docs)]
+#[repr(u8)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, U8Enum)]
+pub enum QueueDeletionStatus {
+    InvalidIdentifier = 0x1,
+    /// Completion Queue still in use in submission queue
+    InvalidDeletion = 0xc,
 }

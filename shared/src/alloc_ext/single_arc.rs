@@ -37,7 +37,6 @@ struct Inner<T: ?Sized> {
 
 impl<T: ?Sized> Drop for SingleArc<T> {
     fn drop(&mut self) {
-        //atomic::fence(Ordering::SeqCst);
         self.inner().strong_ref.store(false, Ordering::SeqCst);
         if self.inner().ref_count.fetch_sub(1, Ordering::SeqCst) == 1 {
             let _ = unsafe {

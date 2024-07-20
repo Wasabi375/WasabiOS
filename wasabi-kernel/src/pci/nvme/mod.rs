@@ -135,7 +135,8 @@ impl NVMEController {
     /// # Safety:
     ///
     /// This must only be called once on an NVMe [Device] until the controller is properly
-    /// freed (TODO not implemented(disable controller and unmap memory)).
+    /// freed.
+    /// Also this can not be freed untill all external access to any [CommandQueue] is dropped.
     pub unsafe fn initialize(
         pci: &mut PCIAccess,
         pci_dev: Device,
@@ -147,6 +148,8 @@ impl NVMEController {
         ) {
             return Err(NVMEControllerError::InvalidPciDevice);
         }
+
+        info!("initializing NVMEController...");
 
         if pci_dev.functions > 1 {
             todo_warn!("support multi function nvme controllers not implemented!");
@@ -643,6 +646,10 @@ impl NVMEController {
     ///
     /// This will return `None` if no queues exist or if all queues are already
     /// given.
+    ///
+    /// # Safety:
+    ///
+    /// the resulting [Strong] must be dropped before `self` can be dropped.
     pub fn get_io_queue(&mut self) -> Option<Strong<CommandQueue>> {
         self.available_io_queues
             .pop()
@@ -651,8 +658,10 @@ impl NVMEController {
                 self.available_io_queues.pop()
             })
             .map(|weak| {
-                weak.try_upgrade()
-                    .expect("weak pointer in available_io_queues should always be upgradable")
+                let strong = weak.try_upgrade()
+                    .expect("weak pointer in available_io_queues should always be upgradable");
+                self.used_io_queues.push(weak);
+                strong
             })
     }
 
@@ -675,6 +684,10 @@ impl NVMEController {
     }
 
     /// Tries to get an existing io queue, but will allocate a new queue if none is available
+    ///
+    /// # Safety:
+    ///
+    /// the resulting [Strong] must be dropped before `self` can be dropped.
     pub fn get_or_alloc_io_queue(&mut self) -> Result<Strong<CommandQueue>, NVMEControllerError> {
         if let Some(queue) = self.get_io_queue() {
             return Ok(queue);
@@ -759,7 +772,6 @@ impl NVMEController {
             ));
         }
 
-        debug!("next unused ident: {:?}", self.next_unused_io_queue_ident);
         let queue_idents =
             (0..count).map(|ident_offset| self.next_unused_io_queue_ident + ident_offset);
 
@@ -979,6 +991,93 @@ impl NVMEController {
         self.next_unused_io_queue_ident = self.next_unused_io_queue_ident + count;
 
         Ok(())
+    }
+
+    /// It is  only save to drop this, if no IO-queue is still in use.
+    ///
+    /// This will try to reclaim all remaining IO-queues. If this is successfull
+    /// it is save to drop this, otherwise this must not be dropped.
+    pub fn is_safe_to_drop(&mut self) -> bool {
+        self.reclaim_io_queues();
+        if self.used_io_queues.len() > 0 {
+            false
+        } else {
+            true
+        }
+    }
+
+    /// tries to drop this instance.
+    ///
+    /// This will return `Err(self)` if it is not save to drop `self`.
+    ///
+    /// See [Self::is_safe_to_drop].
+    pub fn try_drop(mut self) -> Result<(), Self> {
+        if !self.is_safe_to_drop() {
+            return Err(self);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for NVMEController {
+    fn drop(&mut self) {
+        if !self.is_safe_to_drop() {
+            panic!("Tried to drop NVMEController while IO queues are still in use");
+        }
+
+        info!("Drop NVME Controller");
+
+        // clear all old incomming completions
+        self.admin_queue.clear_completions();
+
+        let mut command_idents = Vec::with_capacity(2 * self.available_io_queues.len());
+
+        // NOTE: we cant drain the queue, because that would drop the [CommandQueue] early and we
+        // first need to delete the sub and comp queue on the nvme device. Therefor this cant be
+        // done until after we polled all delete commands
+        for weak_queue in self.available_io_queues.iter() {
+            let queue = weak_queue
+                .try_upgrade()
+                .expect("We should have the only access to the queue at this point");
+
+            let delete_sub = admin_commands::delete_io_submission_queue(queue.id());
+            let delete_comp = admin_commands::delete_io_completion_queue(queue.id());
+
+            command_idents.push(
+                self.admin_queue
+                    .submit(delete_sub)
+                    .expect("Failed to submit delete submission queue command during drop"),
+            );
+            command_idents.push(
+                self.admin_queue
+                    .submit(delete_comp)
+                    .expect("Failed to submit delete completion queue command during drop"),
+            );
+        }
+        self.admin_queue.flush();
+
+        loop {
+            if let Some(err) = self.admin_queue.poll_completions().error_on_any_entry {
+                panic!("failed to poll admin queue during drop: {err}");
+            }
+            for completion in self.admin_queue.drain_completions() {
+                if let Some(pos) = command_idents
+                    .iter()
+                    .position(|ci| *ci == completion.command_ident)
+                {
+                    command_idents.swap_remove(pos);
+                } else {
+                    warn!(
+                        "unexpected completion entry in admin queue during drop: Id: {:?}",
+                        completion.command_ident
+                    );
+                }
+            }
+            if command_idents.is_empty() {
+                break;
+            }
+        }
+        trace!("all io queues delted");
     }
 }
 
@@ -1453,7 +1552,25 @@ impl CommandQueue {
     ///
     /// New entries are only visible after [Self::poll_completions] was executed.
     pub fn drain_completions(&mut self) -> impl Iterator<Item = CommonCompletionEntry> + '_ {
-        self.completions.drain(0..)
+        self.completions.drain(..)
+    }
+
+    /// clears all outstanding completions.
+    ///
+    /// This can lead to bugs if someone is still "waiting" for an completion entry that is dropped
+    /// by this function call.
+    fn clear_completions(&mut self) {
+        loop {
+            let _ = self.drain_completions();
+            let poll_result = self.poll_completions();
+            assert!(
+                poll_result.error_on_any_entry.is_none(), 
+                "We just cleard the completions, therefor there cant be an conflicting command ident"
+            );
+            if !poll_result.some_new_entries {
+                break;
+            }
+        }
     }
 
     /// Wait until a [CommonCompletionEntry] for a specific command exists.
@@ -1878,21 +1995,50 @@ pub fn experiment_nvme_device() {
         })
         .unwrap()
         .clone();
+    {
+        let mut nvme_controller = unsafe {
+            // TODO: Safety: we don't care during experiments
+            NVMEController::initialize(&mut pci, nvme_device, 0xffff)
+        }
+        .unwrap();
 
+        nvme_controller
+            .allocate_io_queues_with_sizes(4, 192, 16)
+            .unwrap();
+
+        assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(4));
+        assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(8));
+
+        debug!("should be save to drop");
+        assert!(nvme_controller.is_safe_to_drop());
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        
+        debug!("get queue");
+        let queue = nvme_controller.get_io_queue().unwrap();
+   
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        
+        debug!("should not be save to drop now!");
+        assert!(!nvme_controller.is_safe_to_drop());
+
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        drop(queue);
+        
+        debug!("should be save to drop again");
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        assert!(nvme_controller.is_safe_to_drop());
+
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        let _queue = nvme_controller.get_io_queue().unwrap();
+        debug!("ensure drop order means that Strong<queue> is dropped before controller");
+    }
+    debug!("ensure controller can be recrated after drop");
     let mut nvme_controller = unsafe {
         // TODO: Safety: we don't care during experiments
         NVMEController::initialize(&mut pci, nvme_device, 0xffff)
     }
     .unwrap();
-
-    nvme_controller
-        .allocate_io_queues_with_sizes(4, 192, 16)
-        .unwrap();
-
-    assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(4));
-    assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(8));
-
-    todo_warn!("Drop nvme_controller, which currently leaks data and makes it impossible to recover it properly.");
+    nvme_controller.ensure_available_io_queues(4).unwrap();
 }
 
 fn get_controller_properties_address(pci: &mut PCIAccess, nvme: Device, function: u8) -> PhysAddr {
