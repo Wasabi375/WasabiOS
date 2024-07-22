@@ -2,7 +2,10 @@ use bit_field::BitField;
 use shared_derive::U8Enum;
 use x86_64::structures::paging::PhysFrame;
 
-use crate::pci::nvme::{CommonCommand, PrpOrSgl, CDW0};
+use crate::pci::nvme::{
+    generic_command::{PrpOrSgl, CDW0},
+    CommonCommand,
+};
 
 use super::CommandOpcode;
 

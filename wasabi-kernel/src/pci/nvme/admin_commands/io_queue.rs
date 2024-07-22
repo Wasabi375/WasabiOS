@@ -4,8 +4,9 @@ use shared_derive::U8Enum;
 use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
 
 use crate::pci::nvme::{
-    admin_commands::CommandOpcode, CommonCommand, PrpOrSgl, QueueIdentifier, CDW0,
-    COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE,
+    admin_commands::CommandOpcode,
+    generic_command::{PrpOrSgl, CDW0},
+    CommonCommand, QueueIdentifier, COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE,
 };
 
 #[allow(unused_imports)]

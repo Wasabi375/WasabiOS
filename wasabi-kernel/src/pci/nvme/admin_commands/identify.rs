@@ -7,7 +7,10 @@ use x86_64::{
     VirtAddr,
 };
 
-use crate::pci::nvme::{CommonCommand, PrpOrSgl, CDW0};
+use crate::pci::nvme::{
+    generic_command::{PrpOrSgl, CDW0},
+    CommonCommand,
+};
 
 use super::CommandOpcode;
 
@@ -108,6 +111,7 @@ pub struct IdentifyControllerData {
     nvm_subsystem_report: u8,
     vpd_write_cycle_info: u8,
     management_endpoint_caps: u8,
+    // ...
 }
 
 bitflags! {
