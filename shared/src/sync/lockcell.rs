@@ -148,8 +148,11 @@ impl<'l, T, M: ?Sized + LockCellInternal<T>> LockCellGuard<'l, T, M> {
     ///
     /// # Example usage
     /// ```no_run
-    /// # let lock = todo!();
-    /// lock.lock().also(|_| { info!("lock acuired"); } ).something();
+    /// # use log::info;
+    /// # use shared::sync::lockcell::LockCell;
+    /// # fn test(lock: impl LockCell<u64>) {
+    /// lock.lock().also(|_| { info!("lock acuired"); } ).as_ref().clone();
+    /// # }
     /// ```
     pub fn also<F: FnOnce(&mut Self)>(mut self, f: F) -> Self {
         f(&mut self);

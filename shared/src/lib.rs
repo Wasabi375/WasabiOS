@@ -14,14 +14,14 @@
 extern crate alloc;
 
 pub mod cpu;
+pub mod math;
 pub mod primitive_enum;
 pub mod rangeset;
 pub mod sync;
+pub mod types;
 
 #[cfg(feature = "alloc")]
 pub mod alloc_ext;
-
-pub mod types;
 
 /// Calculat the number of bytes in n kilo bytes
 #[macro_export]

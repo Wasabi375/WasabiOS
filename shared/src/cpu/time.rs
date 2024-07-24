@@ -28,11 +28,14 @@ pub fn timestamp_now_tsc() -> TscTimestamp {
 ///
 /// This is the same as
 /// ```no_run
+/// # use std::arch::x86_64::_mm_lfence;
+/// # use std::arch::x86_64::_rdtsc;
+/// # unsafe {
 /// _mm_lfence();
 // _mm_mfence();
-/// let tsc = _rdtsc();
+/// let tsc: u64 = _rdtsc() ;
 /// _mm_lfence();
-/// tsc
+/// # }
 /// ```
 ///
 /// See [_mm_lfence], [_mm_mfence]
