@@ -90,17 +90,12 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
     if kernel.uefi {
         cmd.arg("-bios")
             .arg(host_arch.resolve(ovmf_prebuilt::ovmf_pure_efi()).await);
-        // TODO move to nvme once I have that fully figured out
-        cmd.arg("-drive").arg(concat(
-            "format=raw,file=",
-            host_arch.resolve(kernel.path).await,
-        ));
-    } else {
-        cmd.arg("-drive").arg(concat(
-            "format=raw,file=",
-            host_arch.resolve(kernel.path).await,
-        ));
     }
+    cmd.arg("-drive").arg(concat(
+        "format=raw,id=boot,if=none,file=",
+        host_arch.resolve(kernel.path).await,
+    ));
+    cmd.arg("-device").arg("nvme,serial=deadbeef,drive=boot");
 
     if qemu.serial.is_empty() {
         cmd.arg("-serial").arg("none");
@@ -111,9 +106,12 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
     }
 
     // TODO temp nvme
+    //  we use this device in integration tests and should find a way to keep it
+    //  for tests. I still want to get rid of this for the normal execution environment
     cmd.arg("-drive")
-        .arg("file=test_nvme_data.txt,if=none,id=nvm,format=raw");
-    cmd.arg("-device").arg("nvme,serial=deadbeef,drive=nvm");
+        .arg("file=test_nvme_data.txt,if=none,id=nvm_test,format=raw");
+    cmd.arg("-device")
+        .arg("nvme,serial=deadbeef,drive=nvm_test");
 
     if qemu.debug_log.is_none() {
         if host_arch.is_windows() {
