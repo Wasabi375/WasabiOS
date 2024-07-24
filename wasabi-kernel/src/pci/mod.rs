@@ -2,6 +2,7 @@
 //!
 //! See  https://wiki.osdev.org/PCI for more information
 //!
+//TODO move this module out of pci?
 
 // TODO temp
 #![allow(missing_docs)]
@@ -125,7 +126,7 @@ impl PCIAccess {
         trace!("check pci bus {bus}");
         for device in 0..32 {
             if let Some(device) = Device::from_pci(self, Address { bus, device }) {
-                info!("Device found: {device:#x?}");
+                debug!("Device found: {device:#x?}");
                 self.devices.push(device);
             }
         }
@@ -195,14 +196,6 @@ impl Device {
         let subclass = class_reg.get_bits(16..=23) as u8;
         let prog_if = class_reg.get_bits(8..=15) as u8;
         let revision = class_reg.get_bits(0..=7) as u8;
-
-        trace!(
-            "{:#x} {:#x} {:#x} {:#x}",
-            class,
-            subclass,
-            prog_if,
-            revision
-        );
 
         let class = Class::from_header(class, subclass, prog_if);
         let functions = pci.find_device_function_count(address);
@@ -441,7 +434,6 @@ impl PortWrite for RegisterAddress {
 }
 
 /// Initialize PCI access
-#[allow(unused_variables, unused_mut)] // TODO temp
 pub fn init() {
     info!("Initializing pci");
 

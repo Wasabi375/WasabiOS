@@ -1,6 +1,7 @@
 //! NVME pci device
 //!
 //! The specification documents can be found at https://nvmexpress.org/specifications/
+//TODO move this module out of pci?
 
 #![allow(missing_docs)] // TODO temp
 
@@ -40,7 +41,7 @@ use crate::{
 use admin_commands::{CompletionQueueCreationStatus, SubmissionQueueCreationStatus};
 use alloc::vec::Vec;
 use bit_field::BitField;
-use core::{cmp::min, hint::spin_loop};
+use core::{cmp::min, hint::spin_loop, sync::atomic::Ordering};
 use derive_where::derive_where;
 use log::error;
 use shared::{
@@ -232,13 +233,29 @@ impl NVMEController {
             maximum_queue_entries: 0, // this starts at 1, as the admin queue takes up slot 0
         };
 
-        this.ensure_disabled();
+        // ensure admin head and tail were set using the correct stride
+        let cap = this.read_capabilities();
+        if cap.doorbell_stride != 4 {
+            trace!("doorbell stride is not 4. This is fine, it just means we need to readjust the admin queue doorbells!");
+            // We guessed wrong
+            let (sub_tail, comp_head) = unsafe {
+                // Safety: we just mapped the doorbell memory as part of properties.
+                // we overwrite the old references, thereby ensuring no aliasing is done
+                CommandQueue::get_doorbells(
+                    doorbell_base,
+                    cap.doorbell_stride as u64,
+                    QueueIdentifier(0),
+                )
+            };
+            this.admin_queue.submission_queue_tail_doorbell = sub_tail;
+            this.admin_queue.completion_queue_head_doorbell = comp_head;
+            this.doorbell_stride = cap.doorbell_stride as u64;
+        }
 
         // 1. The host waits for the controller to indicate that any previous reset is complete by waiting for
         // CSTS.RDY to become ‘0’;
-        while this.read_controller_status().ready != false {
-            spin_loop();
-        }
+        this.ensure_disabled();
+
         let cap = this.read_capabilities();
         trace!("maximum queue entreies: {}", cap.maximum_queue_entries);
         this.maximum_queue_entries = cap.maximum_queue_entries;
@@ -260,23 +277,6 @@ impl NVMEController {
             let mut acq = this.read_acq();
             acq.paddr = this.admin_queue.completion_queue_paddr;
             this.write_acq(acq);
-        }
-        // ensure admin head and tail were set using the correct stride
-        if cap.doorbell_stride != 4 {
-            trace!("doorbell stride is not 4. This is fine, it just means we need to readjust the admin queue doorbells!");
-            // We guessed wrong
-            let (sub_tail, comp_head) = unsafe {
-                // Safety: we just mapped the doorbell memory as part of properties.
-                // we overwrite the old references, thereby ensuring no aliasing is done
-                CommandQueue::get_doorbells(
-                    doorbell_base,
-                    cap.doorbell_stride as u64,
-                    QueueIdentifier(0),
-                )
-            };
-            this.admin_queue.submission_queue_tail_doorbell = sub_tail;
-            this.admin_queue.completion_queue_head_doorbell = comp_head;
-            this.doorbell_stride = cap.doorbell_stride as u64;
         }
 
         // 3. The host determines the supported I/O Command Sets by checking the state of CAP.CSS and
@@ -306,23 +306,9 @@ impl NVMEController {
         this.write_configuration(cc.clone());
 
         // 5. The host enables the controller by setting CC.EN to ‘1’;
-        // NOTE: it is probably fine to set enabled with the same write we use to set the other
-        // configs, but just to be save we use a second write
-        cc.enable = true;
-        this.write_configuration(cc);
-
         // 6. The host waits for the controller to indicate that the controller is ready to process commands. The
         // controller is ready to process commands when CSTS.RDY is set to ‘1’;
-        while this.read_controller_status().ready != true {
-            // TODO timeout: [Capabilities::timeout]
-            spin_loop();
-        }
-        trace!("nvme device enabled!");
-
-        // TODO I think I can remove this
-        // ensure the head doorbell is 0
-        // debug!("enusre admin queue completion head is 0");
-        // this.admin_queue.completion_queue_head_doorbell.write(0);
+        this.ensure_enabled();
 
         // 7. The host determines the configuration of the controller by issuing the Identify command specifying
         // the Identify Controller data structure (i.e., CNS 01h);
@@ -557,6 +543,35 @@ impl NVMEController {
         trace!("disable nvme device");
         config.enable = false;
         self.write_configuration(config);
+
+        core::sync::atomic::fence(Ordering::SeqCst);
+
+        while self.read_controller_status().ready != false {
+            spin_loop();
+        }
+        core::sync::atomic::fence(Ordering::SeqCst);
+    }
+
+    /// Ensures that CC.EN is set to 1
+    ///
+    /// if it is already enable this does nothing,
+    /// otherwise sets CC.EN to 1
+    fn ensure_enabled(&mut self) {
+        let mut config = self.read_configuration();
+        if config.enable {
+            trace!("nvme device already enabled");
+            return;
+        }
+        trace!("enable nvme device");
+        config.enable = true;
+        self.write_configuration(config);
+
+        core::sync::atomic::fence(Ordering::SeqCst);
+
+        while self.read_controller_status().ready != true {
+            spin_loop();
+        }
+        core::sync::atomic::fence(Ordering::SeqCst);
     }
 
     /// Read a raw 32bit property
@@ -1057,7 +1072,9 @@ impl Drop for NVMEController {
                     .expect("Failed to submit delete completion queue command during drop"),
             );
         }
-        self.admin_queue.flush();
+        if !self.available_io_queues.is_empty() {
+            self.admin_queue.flush();
+        }
 
         loop {
             if let Some(err) = self.admin_queue.poll_completions().error_on_any_entry {
@@ -1115,24 +1132,24 @@ pub fn experiment_nvme_device() {
 
         debug!("should be save to drop");
         assert!(nvme_controller.is_safe_to_drop());
-        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        core::sync::atomic::fence(Ordering::SeqCst);
 
         debug!("get queue");
         let queue = nvme_controller.get_io_queue().unwrap();
 
-        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        core::sync::atomic::fence(Ordering::SeqCst);
 
         debug!("should not be save to drop now!");
         assert!(!nvme_controller.is_safe_to_drop());
 
-        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        core::sync::atomic::fence(Ordering::SeqCst);
         drop(queue);
 
         debug!("should be save to drop again");
-        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        core::sync::atomic::fence(Ordering::SeqCst);
         assert!(nvme_controller.is_safe_to_drop());
 
-        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        core::sync::atomic::fence(Ordering::SeqCst);
         let _queue = nvme_controller.get_io_queue().unwrap();
         debug!("ensure drop order means that Strong<queue> is dropped before controller");
     }
@@ -1204,5 +1221,95 @@ impl Into<u64> for QueueBaseAddress {
     fn into(self) -> u64 {
         assert_eq!(self.paddr.as_u64() & !QUEUE_BASE_ADDR_MAKS, 0);
         self.paddr.as_u64() & QUEUE_BASE_ADDR_MAKS | (self.reserved as u64)
+    }
+}
+
+#[cfg(feature = "test")]
+mod test {
+    use shared::sync::lockcell::LockCell;
+    use testing::{
+        kernel_test, t_assert, t_assert_eq, t_assert_matches, KernelTestError, TestUnwrapExt,
+    };
+
+    use crate::pci::{Class, StorageSubclass, PCI_ACCESS};
+
+    use super::NVMEController;
+
+    /// NOTE: device 0 is the boot device and should not be used
+    /// for tests if possible.
+    ///
+    /// # Safety:
+    ///
+    /// must only be called once until result is dropped
+    unsafe fn create_test_controller() -> Result<NVMEController, KernelTestError> {
+        let mut pci = PCI_ACCESS.lock();
+        let mut devices = pci.devices.iter().filter(|dev| {
+            matches!(
+                dev.class,
+                Class::Storage(StorageSubclass::NonVolatileMemory)
+            )
+        });
+        let pci_dev = devices
+            .nth(1)
+            .cloned()
+            .texpect("Failed to find pci_device")?;
+
+        unsafe { NVMEController::initialize(pci.as_mut(), pci_dev, 0xffff).tunwrap() }
+    }
+
+    #[kernel_test]
+    fn test_find_all_nvme_devices() -> Result<(), KernelTestError> {
+        let pci = PCI_ACCESS.lock();
+        let mut devices = pci.devices.iter().filter(|dev| {
+            matches!(
+                dev.class,
+                Class::Storage(StorageSubclass::NonVolatileMemory)
+            )
+        });
+        t_assert_matches!(devices.next(), Some(_),);
+        t_assert_matches!(devices.next(), Some(_));
+        t_assert_matches!(devices.next(), None);
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_create_and_drop_controller() -> Result<(), KernelTestError> {
+        for _ in 0..20 {
+            unsafe { create_test_controller() }.texpect("failed to create controller")?;
+        }
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_nvme_controller_save_to_drop() -> Result<(), KernelTestError> {
+        let mut nvme_controller =
+            unsafe { create_test_controller() }.texpect("failed to create controller")?;
+
+        nvme_controller
+            .allocate_io_queues_with_sizes(4, 192, 16)
+            .unwrap();
+
+        t_assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(4));
+        t_assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(8));
+
+        t_assert!(nvme_controller.is_safe_to_drop());
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+        let queue = nvme_controller.get_io_queue().unwrap();
+
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+        t_assert!(!nvme_controller.is_safe_to_drop());
+
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        drop(queue);
+
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        t_assert!(nvme_controller.is_safe_to_drop());
+
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        let _queue = nvme_controller.get_io_queue().unwrap();
+
+        Ok(())
     }
 }

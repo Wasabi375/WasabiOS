@@ -10,7 +10,7 @@ use thiserror::Error;
 use volatile::{access::WriteOnly, Volatile};
 use alloc::collections::VecDeque;
 use x86_64::{structures::paging::{PageSize, Mapper, Page, PageTableFlags, PhysFrame, Size4KiB}, PhysAddr, VirtAddr};
-use shared::sync::lockcell::LockCell;
+use shared::{math::WrappingValue, sync::lockcell::LockCell};
 
 use crate::{map_page, mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE, MemError, VirtAddrExt}};
 
@@ -89,7 +89,7 @@ pub struct CommandQueue {
     /// Indicates the index of the next "solt" to write a command entry
     /// in order to submit it to the controller. The slot is only free
     /// if the head is sufficiently ahead of the tail.
-    submission_queue_tail_local: u16,
+    submission_queue_tail_local: WrappingValue<u16>,
 
     pub(super) completion_queue_size: u16,
     pub(super) completion_queue_paddr: PhysAddr,
@@ -105,7 +105,7 @@ pub struct CommandQueue {
     ///
     /// [CommandQueue::completion_queue_head_doorbell] is writeonly
     /// so we keep a copy of the value here.
-    completion_queue_head: u16,
+    completion_queue_head: WrappingValue<u16>,
 
     /// The expected phase of the next completion entry.
     ///
@@ -259,10 +259,10 @@ impl CommandQueue {
             completion_queue_vaddr,
             submission_queue_tail_doorbell: sub_tail_doorbell,
             submission_queue_tail: 0,
-            submission_queue_tail_local: 0,
+            submission_queue_tail_local: WrappingValue::zero(submission_queue_size),
             submission_queue_head: 0,
             completion_queue_head_doorbell: comp_head_doorbell,
-            completion_queue_head: 0,
+            completion_queue_head: WrappingValue::zero(completion_queue_size),
             completion_expected_phase: true,
             completions: VecDeque::new(),
             next_command_identifier: 1,
@@ -297,10 +297,8 @@ impl CommandQueue {
 
         command.dword0.set_command_identifier(identifier);
 
-        let entry_slot_index = self.submission_queue_tail_local;
-        // FIXME: wrapping behaviour is probably wrong when size = u16::max
-        self.submission_queue_tail_local =
-            self.submission_queue_tail_local.wrapping_add(1) % self.submission_queue_size;
+        let entry_slot_index = self.submission_queue_tail_local.value();
+        self.submission_queue_tail_local += 1;
 
         let slot_vaddr =
             self.submission_queue_vaddr + (SUBMISSION_COMMAND_ENTRY_SIZE * entry_slot_index as u64);
@@ -317,7 +315,7 @@ impl CommandQueue {
     /// Cancells all submissions since the last call to [Self::flush].
     pub fn cancel_submissions(&mut self) {
         debug!("Cancel submissions for queue {:?}", self.id);
-        self.submission_queue_tail_local = self.submission_queue_tail;
+        self.submission_queue_tail_local = WrappingValue::new(self.submission_queue_tail, self.submission_queue_size);
     }
 
     /// Notify the controller about any pending submission command entries
@@ -333,8 +331,8 @@ impl CommandQueue {
         );
 
         self.submission_queue_tail_doorbell
-            .write(self.submission_queue_tail_local as u32);
-        self.submission_queue_tail = self.submission_queue_tail_local;
+            .write(self.submission_queue_tail_local.value() as u32);
+        self.submission_queue_tail = self.submission_queue_tail_local.value();
     }
 
     /// returns `true` if this queue is full for submissions
@@ -344,17 +342,14 @@ impl CommandQueue {
     ///
     /// See: NVMe Base Spec: 3.3.1.5: Full Queue
     pub fn is_full_for_submission(&self) -> bool {
-        // FIXME: wrapping behaviour is probably wrong when size = u16::max
-        // TODO unit test
-        self.submission_queue_head
-            == self.submission_queue_tail_local.wrapping_add(1) % self.submission_queue_size
+        self.submission_queue_head == (self.submission_queue_tail_local + 1).value()
     }
 
     /// returns `true` if there are no submission command entries pending
     ///
     /// See: NVMe Base Spec: 3.3.1.4: Empty Queue
     pub fn is_submissions_empty(&self) -> bool {
-        self.submission_queue_tail_local == self.submission_queue_head
+        self.submission_queue_head == self.submission_queue_tail_local.value()
     }
 
     /// returns `true` as long as there are submission in the queue
@@ -363,7 +358,7 @@ impl CommandQueue {
     /// Use [CommandQueue::flush] to notify the controller about new
     /// entries and clear this flag.
     pub fn has_submissions_pending_flush(&self) -> bool {
-        self.submission_queue_tail != self.submission_queue_tail_local
+        self.submission_queue_tail != self.submission_queue_tail_local.value()
     }
 
     /// Poll the controller for new completion entries.
@@ -399,7 +394,7 @@ impl CommandQueue {
             // we found at least 1 entry, so inform the controller that about the
             // read entries
             self.completion_queue_head_doorbell
-                .write(self.completion_queue_head as u32);
+                .write(self.completion_queue_head.value() as u32);
         }
 
         PollCompletionsResult {
@@ -436,7 +431,7 @@ impl CommandQueue {
     /// and `completion_expected_phase` are left unchanged.
     fn poll_single_completion(&mut self) -> Result<bool, PollCompletionError> {
         let slot_vaddr = self.completion_queue_vaddr
-            + (COMPLETION_COMMAND_ENTRY_SIZE * self.completion_queue_head as u64);
+            + (COMPLETION_COMMAND_ENTRY_SIZE * self.completion_queue_head.value() as u64);
         let possible_completion = unsafe {
             // Safety: completion queue is properly mapped for read access
             slot_vaddr.as_ptr::<CommonCompletionEntry>().read_volatile()
@@ -468,15 +463,11 @@ impl CommandQueue {
             ));
         };
 
-        // FIXME: wrapping behaviour on u16::max
-        let mut next_head = self.completion_queue_head + 1;
-        if next_head >= self.completion_queue_size {
+        self.completion_queue_head += 1;
+        if self.completion_queue_head.value() == 0 {
             trace!("completios queue wrapping");
-            // wrap head around to 0 and flip expected phase
-            next_head = 0;
             self.completion_expected_phase = !self.completion_expected_phase;
         }
-        self.completion_queue_head = next_head;
 
         self.completions.insert(insert_at, possible_completion);
 
