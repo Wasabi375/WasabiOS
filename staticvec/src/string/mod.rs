@@ -888,7 +888,7 @@ impl<const N: usize> StaticString<N> {
     /// assert_eq!("bna", s.as_str());
     /// ```
     #[inline]
-    pub fn remove_matches<'a, P: for<'x> Pattern<'x>>(&'a mut self, pat: P) {
+    pub fn remove_matches<'a, P: Pattern>(&'a mut self, pat: P) {
         let old_length = self.len();
         if old_length == 0 {
             return;
