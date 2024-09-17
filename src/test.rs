@@ -52,12 +52,12 @@ impl AddAssign for TestCount {
     }
 }
 
-pub async fn test(uefi: &Path, mut args: TestArgs) -> Result<()> {
+pub async fn test(kernel_path: &Path, mut args: TestArgs) -> Result<()> {
     if args.tcp_port == "none" {
         args.keep_going = false;
         args.isolated = false;
         args.fast = true;
-        return tests_no_tcp(uefi, args).await;
+        return tests_no_tcp(kernel_path, args).await;
     }
 
     let tcp_port: u16 = args.tcp_port.parse().context("invalid tcp_port")?;
@@ -72,10 +72,7 @@ pub async fn test(uefi: &Path, mut args: TestArgs) -> Result<()> {
         tcp_port,
     );
 
-    let kernel = Kernel {
-        path: &uefi,
-        uefi: true,
-    };
+    let kernel = Kernel { path: &kernel_path };
 
     let mut qemu_config = QemuConfig {
         devices: "isa-debug-exit,iobase=0xf4,iosize=0x04",
@@ -433,7 +430,7 @@ impl QemuInstance {
         config: &QemuConfig<'_>,
         socket_addr: &SocketAddr,
     ) -> Result<Self> {
-        let mut child = launch_qemu(kernel, config)
+        let (mut child, _keep_alive) = launch_qemu(kernel, config)
             .await
             .context("failed to launch qemu")?;
         let mut retries = TCP_CONNECTION_RETRY_COUNT;
@@ -625,10 +622,7 @@ async fn get_ignored_count(qemu: &mut QemuInstance, panicing: bool) -> Result<us
 }
 
 async fn tests_no_tcp(uefi: &Path, args: TestArgs) -> Result<()> {
-    let kernel = Kernel {
-        path: &uefi,
-        uefi: true,
-    };
+    let kernel = Kernel { path: &uefi };
 
     let qemu = QemuConfig {
         devices: "isa-debug-exit,iobase=0xf4,iosize=0x04",

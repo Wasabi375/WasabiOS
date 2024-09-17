@@ -241,6 +241,13 @@ pub async fn clean(args: CleanArgs) -> Result<()> {
         }
     }
 
+    if args.ovmf {
+        match remove_dir_all("target/ovmf") {
+            Ok(_) => {}
+            Err(e) => bail!("failed to clean ovmf prebuild binaries because {:?}", e),
+        }
+    }
+
     if args.workspace {
         let manifest = Manifest::from_path("Cargo.toml").context("failed to parse Cargo.toml")?;
         for member in &manifest

@@ -1,4 +1,7 @@
+mod ovmf;
+
 use anyhow::{bail, Context, Result};
+use ovmf::OvmfPaths;
 use std::{
     ffi::{OsStr, OsString},
     net::Ipv4Addr,
@@ -14,7 +17,7 @@ use tokio::{
     time,
 };
 
-use crate::args::QemuOptions;
+use crate::args::{QemuOptions, UefiOptions};
 
 pub enum Arch {
     X86_64,
@@ -31,7 +34,25 @@ impl Arch {
 #[derive(Debug)]
 pub struct Kernel<'a> {
     pub path: &'a Path,
-    pub uefi: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct UefiConfig<'a> {
+    pub ovmf_code: Option<&'a Path>,
+    pub ovmf_vars: Option<&'a Path>,
+}
+
+impl<'a> From<&'a UefiOptions> for UefiConfig<'a> {
+    fn from(value: &'a UefiOptions) -> Self {
+        let mut uefi = UefiConfig::default();
+        if let Some(code) = value.ovmf_code.as_ref() {
+            uefi.ovmf_code = Some(&code);
+        }
+        if let Some(vars) = value.ovmf_vars.as_ref() {
+            uefi.ovmf_vars = Some(&vars);
+        }
+        uefi
+    }
 }
 
 #[derive(Debug)]
@@ -43,6 +64,7 @@ pub struct QemuConfig<'a> {
     pub processor_count: u8,
     pub debug_log: Option<&'a Path>,
     pub debug_info: &'a str,
+    pub uefi: UefiConfig<'a>,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -55,6 +77,7 @@ impl<'a> QemuConfig<'a> {
             processor_count: args.processor_count,
             debug_log: args.qemu_log.as_ref().map(|p| p.as_path()),
             debug_info: args.qemu_info.as_str(),
+            uefi: (&args.uefi).into(),
         }
     }
 }
@@ -75,7 +98,7 @@ pub async fn launch_with_timeout<'a>(
     kernel: &Kernel<'a>,
     qemu: &QemuConfig<'a>,
 ) -> Result<ExitStatus> {
-    let mut child = launch_qemu(kernel, qemu).await?;
+    let (mut child, _keep_alive) = launch_qemu(kernel, qemu).await?;
 
     match time::timeout(timeout, child.wait()).await {
         Ok(result) => result.context("qemu execution"),
@@ -83,14 +106,32 @@ pub async fn launch_with_timeout<'a>(
     }
 }
 
-pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Result<Child> {
+/// A placeholder Trait to defer the drop call of an object
+pub trait AnyDrop {}
+impl<T> AnyDrop for T {}
+
+pub async fn launch_qemu<'a>(
+    kernel: &Kernel<'a>,
+    qemu: &QemuConfig<'a>,
+) -> Result<(Child, Box<dyn AnyDrop>)> {
     let host_arch = HostArchitecture::get().await;
 
+    let mut ovmf_paths = OvmfPaths::find(qemu).context("Load ovmf prebuild binaries for uefi")?;
+    ovmf_paths
+        .with_temp_vars()
+        .context("make ovmf_vars a writable temp file")?;
+
     let mut cmd = Command::new(host_arch.qemu(Arch::X86_64).await);
-    if kernel.uefi {
-        cmd.arg("-bios")
-            .arg(host_arch.resolve(ovmf_prebuilt::ovmf_pure_efi()).await);
-    }
+    cmd.arg("-drive")
+        .arg(&format!(
+            "if=pflash,format=raw,readonly=on,file={}",
+            ovmf_paths.code().display()
+        ))
+        .arg("-drive")
+        .arg(&format!(
+            "if=pflash,format=raw,readonly=off,file={}",
+            ovmf_paths.vars().display()
+        ));
     cmd.arg("-drive").arg(concat(
         "format=raw,id=boot,if=none,file=",
         host_arch.resolve(kernel.path).await,
@@ -141,7 +182,10 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
 
     log::info!("{:?}", cmd);
 
-    cmd.spawn().context("failed to spawn qemu")
+    Ok((
+        cmd.spawn().context("failed to spawn qemu")?,
+        Box::new(ovmf_paths),
+    ))
 }
 
 fn concat<A: AsRef<OsStr>, B: AsRef<OsStr>>(a: A, b: B) -> OsString {

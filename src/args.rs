@@ -38,6 +38,15 @@ pub enum RunCommand {
     /// run kernel tests in qemu
     Test(TestArgs),
 }
+#[derive(Args, Debug)]
+pub struct UefiOptions {
+    /// The ovmf code file to use
+    #[arg(long)]
+    pub ovmf_code: Option<PathBuf>,
+    /// The ovmf var file to use
+    #[arg(long)]
+    pub ovmf_vars: Option<PathBuf>,
+}
 
 #[derive(Args, Debug)]
 pub struct QemuOptions {
@@ -59,6 +68,10 @@ pub struct QemuOptions {
     /// The number of processors simulated by qemu
     #[arg(short, long, default_value_t = 4)]
     pub processor_count: u8,
+
+    /// Options for setting up uefi
+    #[command(flatten)]
+    pub uefi: UefiOptions,
 }
 
 #[derive(Args, Debug)]
@@ -159,6 +172,9 @@ pub struct CleanArgs {
 
     #[arg(long)]
     pub docs: bool,
+
+    #[arg(long)]
+    pub ovmf: bool,
 }
 
 #[derive(Args, Debug)]

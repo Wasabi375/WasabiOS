@@ -54,20 +54,13 @@ pub fn latest_path(bin_name: &OsStr, target: &Target, profile: &Profile) -> Path
 }
 
 /// runs the kernel in qemu
-pub async fn run(uefi: &Path, args: RunArgs) -> Result<()> {
-    let kernel = Kernel {
-        path: &uefi,
-        uefi: true,
-    };
+pub async fn run(kernel_path: &Path, args: RunArgs) -> Result<()> {
+    let kernel = Kernel { path: &kernel_path };
 
     let qemu = QemuConfig::from_options(&args.qemu);
 
-    launch_qemu(&kernel, &qemu)
-        .await
-        .context("start kernel")?
-        .wait()
-        .await
-        .context("waiting on qemu")?;
+    let (mut child, _keep_alive) = launch_qemu(&kernel, &qemu).await.context("start kernel")?;
+    child.wait().await.context("waiting on qemu")?;
 
     Ok(())
 }
