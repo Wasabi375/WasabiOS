@@ -43,7 +43,7 @@ fn kernel_main() -> ! {
     //sleep_tsc(Duration::Seconds(5));
     //stop_timer();
 
-    info!("OS Done! cpu::halt()");
+    info!("OS Done!\tcpu::halt()");
     cpu::halt();
 }
 

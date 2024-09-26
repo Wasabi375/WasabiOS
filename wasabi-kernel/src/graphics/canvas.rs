@@ -152,6 +152,10 @@ pub struct CanvasWriter<C: Canvas> {
     /// if set the writer will ignore all ansi control sequences
     #[builder(default = "false")]
     ignore_ansi: bool,
+
+    /// size of a single tab stop
+    #[builder(default = "4")]
+    tab_size: u32,
 }
 
 /// Error used by [CanvasWriterBuilder]
@@ -281,6 +285,17 @@ impl<C: Canvas> CanvasWriter<C> {
     ///
     /// This done automatically when calling [print_char]
     #[inline]
+    pub fn tab_stop(&mut self) {
+        self.cursor.x += self.font.char_width() * self.tab_size;
+        if self.cursor.x >= self.canvas.width() - self.border_width {
+            self.new_line();
+        }
+    }
+
+    /// advances the cursor by 1 character.
+    ///
+    /// This done automatically when calling [print_char]
+    #[inline]
     pub fn advance_cursor(&mut self) {
         self.cursor.x += self.font.char_width();
         if self.cursor.x >= self.canvas.width() - self.border_width {
@@ -359,6 +374,7 @@ impl<C: Canvas> Write for CanvasWriter<C> {
             match c {
                 '\n' => self.new_line(),
                 '\r' => self.carriage_return(),
+                '\t' => self.tab_stop(),
                 '\x1b' => self.handle_ansi_ctrl_seq(&mut chars).map_err(|e| {
                     if self.log_errors {
                         error!("Failed to write to canvas: {e}")
