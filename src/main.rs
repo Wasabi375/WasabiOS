@@ -59,8 +59,8 @@ pub async fn run(kernel_path: &Path, args: RunArgs) -> Result<()> {
 
     let qemu = QemuConfig::from_options(&args.qemu);
 
-    let (mut child, _keep_alive) = launch_qemu(&kernel, &qemu).await.context("start kernel")?;
-    child.wait().await.context("waiting on qemu")?;
+    let mut process = launch_qemu(&kernel, &qemu).await.context("start kernel")?;
+    process.wait().await.context("waiting on qemu")?;
 
     Ok(())
 }

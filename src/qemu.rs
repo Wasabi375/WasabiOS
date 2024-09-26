@@ -1,19 +1,27 @@
 mod ovmf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use ovmf::OvmfPaths;
 use std::{
     ffi::{OsStr, OsString},
     net::Ipv4Addr,
     os::unix::prelude::OsStrExt,
     path::Path,
-    process::ExitStatus,
+    process::{ExitStatus, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::{
     fs::File,
-    io::{AsyncBufReadExt, BufReader},
+    io::{
+        stderr, stdout, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
+        BufReader,
+    },
     process::{Child, Command},
+    task::JoinHandle,
     time,
 };
 
@@ -93,27 +101,52 @@ impl<'a> QemuConfig<'a> {
     }
 }
 
-pub async fn launch_with_timeout<'a>(
+pub struct QemuProcess {
+    process: Child,
+    // NOTE: we need to hold onto this, to ensure the temporary ovmf files don't get deleted
+    // until after qemu exits
+    _ovmf_paths: OvmfPaths,
+
+    finish: Arc<AtomicBool>,
+    out_forward: Option<JoinHandle<Result<(), anyhow::Error>>>,
+    err_forward: Option<JoinHandle<Result<(), anyhow::Error>>>,
+}
+
+impl QemuProcess {
+    pub async fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        let result = self.process.wait().await;
+
+        self.finish.store(true, Ordering::Release);
+        if let Some(forward) = self.out_forward.take() {
+            if let Err(e) = forward.await? {
+                log::error!("Failed to forward all of stdout from child:\n{e:#?}");
+            }
+        }
+
+        if let Some(forward) = self.err_forward.take() {
+            if let Err(e) = forward.await? {
+                log::error!("Failed to forward all of stdout from child:\n{e:#?}");
+            }
+        }
+
+        result
+    }
+}
+
+pub async fn execute_with_timeout<'a>(
     timeout: Duration,
     kernel: &Kernel<'a>,
     qemu: &QemuConfig<'a>,
 ) -> Result<ExitStatus> {
-    let (mut child, _keep_alive) = launch_qemu(kernel, qemu).await?;
+    let mut process = launch_qemu(kernel, qemu).await?;
 
-    match time::timeout(timeout, child.wait()).await {
+    match time::timeout(timeout, process.wait()).await {
         Ok(result) => result.context("qemu execution"),
         Err(_) => bail!("qemu execution timed out after {timeout:?}"),
     }
 }
 
-/// A placeholder Trait to defer the drop call of an object
-pub trait AnyDrop {}
-impl<T> AnyDrop for T {}
-
-pub async fn launch_qemu<'a>(
-    kernel: &Kernel<'a>,
-    qemu: &QemuConfig<'a>,
-) -> Result<(Child, Box<dyn AnyDrop>)> {
+pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Result<QemuProcess> {
     let host_arch = HostArchitecture::get().await;
 
     let mut ovmf_paths = OvmfPaths::find(qemu).context("Load ovmf prebuild binaries for uefi")?;
@@ -180,12 +213,32 @@ pub async fn launch_qemu<'a>(
 
     cmd.kill_on_drop(qemu.kill_on_drop);
 
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
     log::info!("{:?}", cmd);
 
-    Ok((
-        cmd.spawn().context("failed to spawn qemu")?,
-        Box::new(ovmf_paths),
-    ))
+    let mut process = cmd.spawn().context("failed to spawn qemu")?;
+
+    let finish = Arc::new(AtomicBool::new(false));
+    let child_out = process
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("Failed to take child stdout stream"))?;
+    let out_forward = forward_io(child_out, stdout(), finish.clone());
+    let child_err = process
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("Failed to take child stderr stream"))?;
+    let err_forward = forward_io(child_err, stderr(), finish.clone());
+
+    Ok(QemuProcess {
+        process,
+        finish,
+        _ovmf_paths: ovmf_paths,
+        out_forward: Some(out_forward),
+        err_forward: Some(err_forward),
+    })
 }
 
 fn concat<A: AsRef<OsStr>, B: AsRef<OsStr>>(a: A, b: B) -> OsString {
@@ -388,4 +441,34 @@ impl HostArchitecture {
             _ => Ok(Ipv4Addr::new(127, 0, 0, 1)),
         }
     }
+}
+
+fn forward_io<ChildStream, TargetStream>(
+    mut child_stream: ChildStream,
+    mut target: TargetStream,
+    finish: Arc<AtomicBool>,
+) -> JoinHandle<Result<(), anyhow::Error>>
+where
+    ChildStream: AsyncRead + Unpin + Send + 'static,
+    TargetStream: AsyncWrite + Unpin + Send + 'static,
+{
+    const BUFFER_SIZE: usize = 512;
+    tokio::spawn(async move {
+        let mut buf = [0u8; BUFFER_SIZE];
+        loop {
+            let len = child_stream
+                .read(&mut buf)
+                .await
+                .context("Failed to read from child process stream")?;
+
+            if len == 0 && finish.load(Ordering::Acquire) {
+                return Ok(());
+            }
+
+            target
+                .write(&buf[..len])
+                .await
+                .context("Failed to write to output stream")?;
+        }
+    })
 }

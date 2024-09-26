@@ -1,6 +1,6 @@
 use crate::{
     args::TestArgs,
-    qemu::{launch_qemu, launch_with_timeout, HostArchitecture, Kernel, QemuConfig},
+    qemu::{execute_with_timeout, launch_qemu, HostArchitecture, Kernel, QemuConfig, QemuProcess},
 };
 use anyhow::{bail, ensure, Context, Result};
 use log::{debug, trace};
@@ -17,7 +17,6 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    process::Child,
     select,
     time::{sleep, timeout},
 };
@@ -122,7 +121,7 @@ async fn run_combined_tests(
     qemu_config: &QemuConfig<'_>,
     host_socket_addr: &SocketAddr,
 ) -> Result<TestCount> {
-    let mut qemu = QemuInstance::create(kernel, qemu_config, host_socket_addr)
+    let mut qemu = QemuTestProcess::create(kernel, qemu_config, host_socket_addr)
         .await
         .context("failed to create qemu instance")?;
 
@@ -244,7 +243,7 @@ async fn run_isolated_test(
     host_socket_addr: &SocketAddr,
     panic_tests: bool,
 ) -> Result<TestCount> {
-    let mut qemu = QemuInstance::create(kernel, qemu_config, host_socket_addr)
+    let mut qemu = QemuTestProcess::create(kernel, qemu_config, host_socket_addr)
         .await
         .context("failed to create qemu instance")?;
 
@@ -276,7 +275,7 @@ async fn run_isolated_test(
         let mut qemu = if let Some(qemu) = first_iter_qemu.take() {
             qemu
         } else {
-            QemuInstance::create(kernel, qemu_config, host_socket_addr)
+            QemuTestProcess::create(kernel, qemu_config, host_socket_addr)
                 .await
                 .context("failed to create qemu instance")?
         };
@@ -339,7 +338,7 @@ async fn restart_qemu_if_required(
     config: &QemuConfig<'_>,
     host_socket_addr: &SocketAddr,
     next_test: usize,
-) -> Result<QemuInstance> {
+) -> Result<QemuTestProcess> {
     if !args.keep_going {
         bail!("Qemu exited during testing with {}", exit_status);
     }
@@ -347,7 +346,7 @@ async fn restart_qemu_if_required(
         !is_successful_exit(exit_status)?,
         "Qemu exited unexpectedly with success"
     );
-    let mut qemu = QemuInstance::create(kernel, config, &host_socket_addr)
+    let mut qemu = QemuTestProcess::create(kernel, config, &host_socket_addr)
         .await
         .context("restarting qemu failed")?;
 
@@ -416,21 +415,21 @@ impl From<anyhow::Error> for QemuError {
     }
 }
 
-struct QemuInstance {
-    child: Child,
+struct QemuTestProcess {
+    process: QemuProcess,
     tcp: TcpStream,
 }
 
 const TCP_CONNECTION_RETRY_COUNT: u32 = 5;
 const TCP_CONNECTION_RETRY_DELAY: Duration = Duration::from_millis(200);
 
-impl QemuInstance {
+impl QemuTestProcess {
     async fn create(
         kernel: &Kernel<'_>,
         config: &QemuConfig<'_>,
         socket_addr: &SocketAddr,
     ) -> Result<Self> {
-        let (mut child, _keep_alive) = launch_qemu(kernel, config)
+        let mut process = launch_qemu(kernel, config)
             .await
             .context("failed to launch qemu")?;
         let mut retries = TCP_CONNECTION_RETRY_COUNT;
@@ -453,17 +452,17 @@ impl QemuInstance {
             res = handshake(&mut tcp) => {
                 res.context("failed to perform test handshake")?;
             }
-            qemu_exit = child.wait() => {
+            qemu_exit = process.wait() => {
                 let exit_status = qemu_exit.context("failed to wait on qemu")?;
                 bail!("Qemu unexpectedly exited wiht {:?}", exit_status);
             }
         }
 
-        Ok(QemuInstance { child, tcp })
+        Ok(QemuTestProcess { process, tcp })
     }
 
     async fn wait(&mut self) -> Result<ExitStatus> {
-        self.child
+        self.process
             .wait()
             .await
             .context("waiting on qemu to finish failed")
@@ -485,7 +484,7 @@ impl QemuInstance {
                                     "failed to read u8 from qemu").await),
                 }
             }
-            qemu_exit = self.child.wait() => {
+            qemu_exit = self.process.wait() => {
                 Self::handle_qemu_exit(qemu_exit)?;
                 unreachable!()
             }
@@ -501,7 +500,7 @@ impl QemuInstance {
                                         "failed to write data to tcp stream").await)
                 }
             }
-            qemu_exit = self.child.wait() => {
+            qemu_exit = self.process.wait() => {
                 Self::handle_qemu_exit(qemu_exit)?;
                 unreachable!()
              }
@@ -515,7 +514,7 @@ impl QemuInstance {
     {
         match error.kind() {
             ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset => {
-                match timeout(QEMU_EOF_WAIT_TIMEOUT, self.child.wait()).await {
+                match timeout(QEMU_EOF_WAIT_TIMEOUT, self.process.wait()).await {
                     Ok(Ok(exit_status)) => QemuError::Exit(exit_status),
                     _ => {
                         let anyhow = anyhow::Error::new(error).context(context);
@@ -564,7 +563,7 @@ async fn handshake(tcp_stream: &mut TcpStream) -> Result<()> {
 }
 
 /// recieves a single line from qemu
-async fn recieve_line(qemu: &mut QemuInstance) -> Result<String, QemuError> {
+async fn recieve_line(qemu: &mut QemuTestProcess) -> Result<String, QemuError> {
     let mut buffer = String::new();
     loop {
         let b = qemu
@@ -579,7 +578,7 @@ async fn recieve_line(qemu: &mut QemuInstance) -> Result<String, QemuError> {
     }
 }
 
-async fn parse_line<T>(qemu: &mut QemuInstance) -> Result<T, QemuError>
+async fn parse_line<T>(qemu: &mut QemuTestProcess) -> Result<T, QemuError>
 where
     T: FromStr,
     T::Err: Debug + std::error::Error + Send + Sync + 'static,
@@ -591,7 +590,7 @@ where
         .context("failed to parse line")?)
 }
 
-async fn get_test_count(qemu: &mut QemuInstance, panicing: bool) -> Result<usize, QemuError> {
+async fn get_test_count(qemu: &mut QemuTestProcess, panicing: bool) -> Result<usize, QemuError> {
     let cmd: &[u8] = if panicing {
         b"count panic\n".as_ref()
     } else {
@@ -606,7 +605,7 @@ async fn get_test_count(qemu: &mut QemuInstance, panicing: bool) -> Result<usize
         .qcontext("failed to recieve test count")
 }
 
-async fn get_ignored_count(qemu: &mut QemuInstance, panicing: bool) -> Result<usize, QemuError> {
+async fn get_ignored_count(qemu: &mut QemuTestProcess, panicing: bool) -> Result<usize, QemuError> {
     let cmd: &[u8] = if panicing {
         b"count ignored panic\n".as_ref()
     } else {
@@ -629,14 +628,10 @@ async fn tests_no_tcp(uefi: &Path, args: TestArgs) -> Result<()> {
         ..QemuConfig::from_options(&args.qemu)
     };
 
-    let exit_status = launch_with_timeout(Duration::from_secs(args.timeout), &kernel, &qemu)
+    let exit_status = execute_with_timeout(Duration::from_secs(args.timeout), &kernel, &qemu)
         .await
         .context("test kernel")?;
 
-    validate_qemu_run(exit_status)
-}
-
-fn validate_qemu_run(exit_status: ExitStatus) -> Result<()> {
     if is_successful_exit(exit_status)? {
         debug!("Qemu instance finished successfully");
     } else {
