@@ -3,7 +3,7 @@ extern crate proc_macro;
 use paste::paste;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput};
+use syn::{parse_macro_input, DeriveInput, Expr, ExprLit, Lit};
 
 macro_rules! primitive_enum {
     ($type:ident) => {
@@ -16,12 +16,24 @@ macro_rules! primitive_enum {
 
             match data {
                 syn::Data::Enum(data) => {
+                    let mut last_discriminant = None;
                     let variants = data
                         .variants
                         .iter()
-                        .filter(|v| v.discriminant.is_some())
                         .map(|variant| {
-                            let disc = &variant.discriminant.as_ref().unwrap().1;
+                            let disc = if let Some(disc) = variant.discriminant.as_ref() {
+                                let Expr::Lit(ExprLit{lit: Lit::Int(ref lit_int), ..}) = disc.1 else {
+                                    panic!("$type enum only supports integer discriminants");
+                                };
+                                let disc = lit_int.base10_parse::<$type>().unwrap();
+                                last_discriminant = Some(disc);
+                                disc
+                            } else {
+                                let disc = last_discriminant.map(|l| l + 1).unwrap_or(0);
+                                last_discriminant = Some(disc);
+                                disc
+                            };
+
                             let var = &variant.ident;
                             quote! {
                                 #disc => Ok(#ident::#var)

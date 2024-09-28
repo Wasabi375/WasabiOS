@@ -52,7 +52,7 @@ paste = "1.0.12"
 proc-macro2 = "1.0.58"
 quote = "1.0.27"
 static_assertions = "1.1"
-syn = { version = "2.0.16", features = ["full"] }
+syn = { version = "2.0.16", features = ["full", "extra-traits"] }
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
 # TODO: why am I using my fork?
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
