@@ -5,32 +5,33 @@ edition.workspace = true
 
 [dependencies]
 anyhow = "1.0.75"
-clap = { version = "4.3.4", features = ["derive"] }
 bootloader.workspace = true
 cargo_toml = "0.15.3"
-tokio = { version = "1.32.0", features = ["full"] }
-simple_logger = { version = "4.2.0", default-features = false, features = ["colors"]}
-log.workspace = true
-ureq = "2.10.1"
+clap = { version = "4.3.4", features = ["derive"] }
 fs-err = "2.11.0"
-sha2 = "0.10.8"
-tar = "0.4.41"
+log.workspace = true
 lzma-rs = "0.3.0"
+nix = { version = "0.29.0", features = [ "term" ] }
+sha2 = "0.10.8"
+simple_logger = { version = "4.2.0", default-features = false, features = ["colors"]}
+tar = "0.4.41"
 tempfile = "3.12.0"
+tokio = { version = "1.32.0", features = ["full"] }
+ureq = "2.10.1"
 
 
 [workspace]
 members = [
-    "wasabi-kernel",
-    "wasabi-test",
-    "shared-derive",
-    "shared",
-    "logger",
-    "staticvec",
     "colored",
     "interrupt-fn-builder",
+    "logger",
+    "shared",
+    "shared-derive",
+    "staticvec",
     "testing",
     "testing/derive",
+    "wasabi-kernel",
+    "wasabi-test",
 ]
 
 [workspace.package]
