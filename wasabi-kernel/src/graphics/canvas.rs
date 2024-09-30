@@ -320,7 +320,7 @@ impl<C: Canvas> CanvasWriter<C> {
     #[cfg(feature = "no-color")]
     fn handle_ansi_ctrl_seq(
         &mut self,
-        chars: &mut impl Iterator<char>,
+        chars: &mut impl Iterator<Item = char>,
     ) -> Result<(), CanvasWriterError> {
         // skip ansi sgr sequence and ignore possible errors
         let _ = AnsiSGR::parse_from_chars(chars, true);
