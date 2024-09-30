@@ -18,12 +18,14 @@ pub struct Arguments {
 #[derive(Debug, Subcommand)]
 pub enum BuildCommand {
     /// rebuild the kernel
+    #[command(alias = "b")]
     Build(BuildArgs),
     /// use the latest available build. Fails if no build exists
     Latest(LatestArgs),
     /// Cleanup build artifacts
     Clean(CleanArgs),
     /// run cargo check on kernel
+    #[command(alias = "c")]
     Check(CheckArgs),
     /// run cargo expand on kernel
     Expand(ExpandArgs),
@@ -34,8 +36,10 @@ pub enum BuildCommand {
 #[derive(Debug, Subcommand)]
 pub enum RunCommand {
     /// run the kernel in qemu
+    #[command(alias = "r")]
     Run(RunArgs),
     /// run kernel tests in qemu
+    #[command(alias = "t")]
     Test(TestArgs),
 }
 #[derive(Args, Debug)]
