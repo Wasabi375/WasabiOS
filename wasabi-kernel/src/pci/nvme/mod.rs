@@ -43,7 +43,6 @@ use alloc::vec::Vec;
 use bit_field::BitField;
 use core::{cmp::min, hint::spin_loop, sync::atomic::Ordering};
 use derive_where::derive_where;
-use log::error;
 use shared::{
     alloc_ext::{Strong, Weak},
     sync::lockcell::LockCell,
@@ -57,7 +56,7 @@ use x86_64::{
 #[allow(unused_imports)]
 use crate::todo_warn;
 #[allow(unused_imports)]
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 /// The size of all submission command entries
 const SUBMISSION_COMMAND_ENTRY_SIZE: u64 = 64;

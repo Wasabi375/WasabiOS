@@ -98,8 +98,10 @@ pub unsafe fn init() {
     {
         // adjust log levels for tests
         dispatch_logger = dispatch_logger
+            .with_level(LevelFilter::Warn)
             .with_module_level("wasabi_test", LevelFilter::Info)
-            .with_module_level("wasabi_kernel::mem::page_table::test", LevelFilter::Info)
+            // .with_module_level("wasabi_kernel::mem::page_table::test", LevelFilter::Info)
+            // .with_module_level("wasabi_kernel::pci::nvme", LevelFilter::Debug)
             // test tests
             // .with_module_level("wasabi_test", LevelFilter::Trace)
             // .with_module_level("test_serial", LevelFilter::Trace)

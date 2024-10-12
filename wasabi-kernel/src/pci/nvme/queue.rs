@@ -23,6 +23,7 @@ use crate::{todo_warn, todo_error};
 use log::{debug, info, trace, warn};
 
 
+#[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub struct QueueIdentifier(pub(super) u16);
 
@@ -122,6 +123,12 @@ pub struct CommandQueue {
     #[derive_where(skip)]
     completions: VecDeque<CommonCompletionEntry>,
 
+    /// A unique id used to identify a command
+    ///
+    /// This value is both present on the submission and completion and needs to be unique
+    /// within a queue.
+    ///
+    /// TODO the value of 0xffff should never be used
     next_command_identifier: u16,
 }
 
@@ -265,7 +272,7 @@ impl CommandQueue {
             completion_queue_head: WrappingValue::zero(completion_queue_size),
             completion_expected_phase: true,
             completions: VecDeque::new(),
-            next_command_identifier: 1,
+            next_command_identifier: 0,
         })
     }
 
@@ -293,6 +300,8 @@ impl CommandQueue {
         trace!("submit command to queue");
 
         let identifier = CommandIdentifier(self.next_command_identifier);
+        // TODO identifier should never be 0xffff as some functions use 0xffff in the completion 
+        // to refer to a general error that is not associated with any command
         self.next_command_identifier = self.next_command_identifier.wrapping_add(1);
 
         command.dword0.set_command_identifier(identifier);
@@ -301,11 +310,13 @@ impl CommandQueue {
         self.submission_queue_tail_local += 1;
 
         let slot_vaddr =
-            self.submission_queue_vaddr + (SUBMISSION_COMMAND_ENTRY_SIZE * entry_slot_index as u64);
+            (self.submission_queue_vaddr + (SUBMISSION_COMMAND_ENTRY_SIZE * entry_slot_index as u64))
+                .as_mut_ptr::<CommonCommand>();
+
+        assert!(slot_vaddr.is_aligned());
         unsafe {
             // Safety: submission queue is properly mapped to allow write access
             slot_vaddr
-                .as_mut_ptr::<CommonCommand>()
                 .write_volatile(command);
         }
 
@@ -441,13 +452,26 @@ impl CommandQueue {
             // phase did not match, therefor this is the old completion entry
             return Ok(false);
         }
+        
+        // NOTE: It should be fine to keep using possible_completion after checking the phase.
+        // For some reason qemu returns only a partial completion entry on first read.
+        // It seems there is a race event in qemu or something. 
+        // We drop and read the completion again to ensure we don't encounter that race
+        drop(possible_completion);
+
+        let completion = unsafe {
+            // Safety: completion queue is properly mapped for read access
+            slot_vaddr.as_ptr::<CommonCompletionEntry>().read_volatile()
+        };
+        assert_eq!(completion.status_and_phase.phase(), self.completion_expected_phase);
+        assert_eq!(self.id, completion.submission_queue_ident, "Submission queue mismatch on polled completion entry");
 
         // it is fine to update the submission head, even if we can not yet store this completion
         // because this only indicates that the controller has read the submission
         // command, not that it is fully handled
         //
         // the controller ensures this is wrapped around to 0 when neccessary.
-        self.submission_queue_head = possible_completion.submission_queue_head;
+        self.submission_queue_head = completion.submission_queue_head;
 
         // binary search returns the index to insert at in the Err
         // if Ok the key is already in use, so we have to error
@@ -456,20 +480,21 @@ impl CommandQueue {
         // Otherwise this completion can never be read
         let Err(insert_at) = self
             .completions
-            .binary_search_by_key(&possible_completion.command_ident, |c| c.command_ident)
+            .binary_search_by_key(&completion.command_ident, |c| c.command_ident)
         else {
             return Err(PollCompletionError::IdentifierStillInUse(
-                possible_completion.command_ident,
+                completion.command_ident,
             ));
         };
 
+        // TODO document why we increment here and not earlier
         self.completion_queue_head += 1;
         if self.completion_queue_head.value() == 0 {
-            trace!("completios queue wrapping");
+            trace!("completion queue wrapping");
             self.completion_expected_phase = !self.completion_expected_phase;
         }
 
-        self.completions.insert(insert_at, possible_completion);
+        self.completions.insert(insert_at, completion);
 
         Ok(true)
     }

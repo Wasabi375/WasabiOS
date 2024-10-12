@@ -7,8 +7,9 @@ use static_assertions::const_assert_eq;
 use thiserror::Error;
 use x86_64::PhysAddr;
 
-use super::{COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
+use super::{queue::QueueIdentifier, COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
 
+#[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub struct CommandIdentifier(pub(super) u16);
 
@@ -137,16 +138,16 @@ impl Default for DataPtr {
     }
 }
 
-/// Common layout shared ba all completion entries
+/// Common layout shared by all completion entries
 ///
 /// See: NVM Express Base Spec: Figure 90: Common Completion Queue Entry Layout
 #[repr(C)]
-#[derive(Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CommonCompletionEntry {
     pub(super) dword0: u32,
     pub(super) dword1: u32,
     pub(super) submission_queue_head: u16,
-    pub(super) submission_queue_ident: u16,
+    pub(super) submission_queue_ident: QueueIdentifier,
     pub(super) command_ident: CommandIdentifier,
     pub(super) status_and_phase: StatusAndPhase,
 }
@@ -185,7 +186,7 @@ impl CommonCompletionEntry {
 // This struct uses a u16. The spec combines this field, with the command identifier
 // into a u32. Therefor bit 16 in the spec is represented as bit 0 in this struct.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct StatusAndPhase(u16);
 
 impl StatusAndPhase {
