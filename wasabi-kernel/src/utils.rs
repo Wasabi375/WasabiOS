@@ -116,7 +116,7 @@ fn slice_to_hex_dump_line(bytes: &[u8], width: usize, offset: u64) -> String {
     write!(out, "{:4X} | ", offset).expect("failed to write to output buffer");
 
     for b in bytes {
-        write!(out, "{:2X} ", b).expect("failed to write to output buffer");
+        write!(out, "{:02X} ", b).expect("failed to write to output buffer");
     }
 
     // pad the output to width "bytes"
