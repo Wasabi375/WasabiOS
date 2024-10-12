@@ -22,6 +22,8 @@ pub fn init_interrupt_state(interrupt_state: &'static dyn InterruptState) {
     }
 }
 
+#[track_caller]
+#[inline(always)]
 fn interrupt_state() -> &'static dyn InterruptState {
     unsafe { INTERRUPT_STATE.expect("Test interrupt state not initialized") }
 }
