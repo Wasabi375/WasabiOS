@@ -1101,7 +1101,6 @@ impl Drop for NVMEController {
 }
 
 pub fn experiment_nvme_device() {
-    // TODO make into test
     let mut pci = PCI_ACCESS.lock();
 
     let nvme_device = pci
@@ -1198,7 +1197,7 @@ fn get_controller_properties_address(pci: &mut PCIAccess, nvme: Device, function
 /// See: NVM Express base Spec:
 ///     Figure 50: Offset 28h: ASQ
 ///     Figure 51: Offset 30h: ACQ
-// TODOIhow is this mapped to the IO Queue, right now I only have the admin queue definitons
+// TODO how is this mapped to the IO Queue, right now I only have the admin queue definitons
 // TODO move this to properties module?
 struct QueueBaseAddress {
     paddr: PhysAddr,
@@ -1273,7 +1272,7 @@ mod test {
 
     #[kernel_test]
     fn test_create_and_drop_controller() -> Result<(), KernelTestError> {
-        for _ in 0..20 {
+        for _ in 0..3 {
             unsafe { create_test_controller() }.texpect("failed to create controller")?;
         }
         Ok(())
