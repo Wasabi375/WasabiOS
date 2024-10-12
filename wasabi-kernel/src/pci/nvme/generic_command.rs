@@ -189,6 +189,7 @@ impl CommonCompletionEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct StatusAndPhase(u16);
 
+#[allow(unused)]
 impl StatusAndPhase {
     pub fn phase(&self) -> bool {
         self.0.get_bit(0)
