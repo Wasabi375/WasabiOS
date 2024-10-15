@@ -9,12 +9,12 @@ use crate::mem::structs::GuardedPages;
 use crate::mem::structs::Mapped;
 use crate::mem::structs::Unmapped;
 use crate::mem::MemError;
+use crate::pages_required_for;
 use crate::prelude::TicketLock;
 use bootloader_api::info::FrameBuffer as BootFrameBuffer;
 use bootloader_api::info::FrameBufferInfo;
 use bootloader_api::info::PixelFormat;
 use shared::sync::lockcell::LockCell;
-use x86_64::structures::paging::PageSize;
 use x86_64::structures::paging::Size4KiB;
 use x86_64::VirtAddr;
 
@@ -65,7 +65,7 @@ pub struct Framebuffer {
 impl Framebuffer {
     /// Allocates a new memory backed framebuffer
     pub fn alloc_new(info: FrameBufferInfo) -> Result<Self, MemError> {
-        let page_count = (info.byte_len as u64 + Size4KiB::SIZE - 1) / Size4KiB::SIZE;
+        let page_count = pages_required_for!(Size4KiB, info.byte_len as u64);
 
         let pages = PageAllocator::get_kernel_allocator()
             .lock()
