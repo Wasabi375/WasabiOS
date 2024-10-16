@@ -29,11 +29,8 @@ use crate::{
     cpu::apic::ipi::{self, Ipi},
     enter_kernel_main, locals, map_page,
     mem::{
-        frame_allocator::PhysAllocator,
-        page_allocator::PageAllocator,
-        page_table::KERNEL_PAGE_TABLE,
-        structs::{GuardedPages, Mapped, Unmapped},
-        MemError,
+        frame_allocator::PhysAllocator, page_allocator::PageAllocator,
+        page_table::KERNEL_PAGE_TABLE, structs::GuardedPages, MemError,
     },
     processor_init,
     time::{sleep_tsc, time_since_tsc},
@@ -251,7 +248,7 @@ pub fn ap_startup() {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ApStack(Mapped<GuardedPages<Size4KiB>>);
+struct ApStack(GuardedPages<Size4KiB>);
 
 /// enum for all ap stack related errors
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -274,17 +271,16 @@ impl ApStack {
 
     fn alloc() -> Result<Self, ApStackError> {
         trace!("Allocate ap stack");
-        let pages: Unmapped<_> = PageAllocator::get_kernel_allocator()
+        let pages = PageAllocator::get_kernel_allocator()
             .lock()
             .allocate_guarded_pages(DEFAULT_STACK_PAGE_COUNT, true, true)
-            .map_err(ApStackError::from)?
-            .into();
+            .map_err(ApStackError::from)?;
         let pages = pages.alloc_and_map().map_err(ApStackError::from)?;
 
-        assert_eq!(pages.0.size(), DEFAULT_STACK_SIZE);
+        assert_eq!(pages.size(), DEFAULT_STACK_SIZE);
 
-        let start = pages.0.start_addr();
-        let end = pages.0.end_addr().align_down(Self::STACK_ALIGN);
+        let start = pages.start_addr();
+        let end = pages.end_addr().align_down(Self::STACK_ALIGN);
 
         assert!(
             start.is_aligned(Self::STACK_ALIGN),
@@ -301,7 +297,7 @@ impl ApStack {
                     "ap stack allocated to {:p}..{:p} (size: {})",
                     start,
                     end,
-                    pages.0.size()
+                    pages.size()
                 );
                 Ok(Self(pages))
             }
@@ -317,7 +313,7 @@ impl ApStack {
     }
 
     /// frees the pages of the AP stack.
-    fn free(pages: Mapped<GuardedPages<Size4KiB>>) {
+    fn free(pages: GuardedPages<Size4KiB>) {
         let unmapped = unsafe {
             // Safety:
             //  we never gave await the address to this memory and we
@@ -330,14 +326,14 @@ impl ApStack {
                 trace!("free unused stack pages");
                 PageAllocator::get_kernel_allocator()
                     .lock()
-                    .free_guarded_pages(unmapped.0);
+                    .free_guarded_pages(unmapped);
             }
             Err(err) => error!("Failed to unmap unsued ap stack. Leaking memory: {err:?}"),
         }
     }
 
     fn end(&self) -> VirtAddr {
-        self.0 .0.end_addr() + 1
+        self.0.end_addr() + 1
     }
 }
 

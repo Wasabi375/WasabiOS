@@ -3,20 +3,15 @@
 
 use core::slice;
 
-use crate::graphics::Color;
-use crate::mem::page_allocator::PageAllocator;
-use crate::mem::structs::GuardedPages;
-use crate::mem::structs::Mapped;
-use crate::mem::structs::Unmapped;
-use crate::mem::MemError;
-use crate::pages_required_for;
-use crate::prelude::TicketLock;
-use bootloader_api::info::FrameBuffer as BootFrameBuffer;
-use bootloader_api::info::FrameBufferInfo;
-use bootloader_api::info::PixelFormat;
+use crate::{
+    graphics::Color,
+    mem::{page_allocator::PageAllocator, structs::GuardedPages, MemError},
+    pages_required_for,
+    prelude::TicketLock,
+};
+use bootloader_api::info::{FrameBuffer as BootFrameBuffer, FrameBufferInfo, PixelFormat};
 use shared::sync::lockcell::LockCell;
-use x86_64::structures::paging::Size4KiB;
-use x86_64::VirtAddr;
+use x86_64::{structures::paging::Size4KiB, VirtAddr};
 
 use super::canvas::Canvas;
 
@@ -30,13 +25,13 @@ enum FramebufferSource {
     /// framebuffer is backed by the hardware buffer
     HardwareBuffer,
     /// framebuffer is backed by normal mapped memory
-    Owned(Mapped<GuardedPages<Size4KiB>>),
+    Owned(GuardedPages<Size4KiB>),
     /// framebuffer is dropped
     Dropped,
 }
 
 impl FramebufferSource {
-    fn drop(&mut self) -> Option<Mapped<GuardedPages<Size4KiB>>> {
+    fn drop(&mut self) -> Option<GuardedPages<Size4KiB>> {
         match self {
             FramebufferSource::HardwareBuffer => None,
             FramebufferSource::Owned(pages) => {
@@ -71,9 +66,8 @@ impl Framebuffer {
             .lock()
             .allocate_guarded_pages(page_count, true, true)?;
 
-        let pages = Unmapped(pages);
         let mapped_pages = pages.alloc_and_map()?;
-        let start = mapped_pages.0.start_addr();
+        let start = mapped_pages.start_addr();
 
         let source = FramebufferSource::Owned(mapped_pages);
 

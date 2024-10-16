@@ -24,7 +24,7 @@ use x86_64::{
     VirtAddr,
 };
 
-use super::structs::{Mapped, Pages};
+use super::structs::Pages;
 
 /// the size of the kernel heap in bytes
 pub const KERNEL_HEAP_SIZE: u64 = KernelHeapPageSize::SIZE * KERNEL_HEAP_PAGE_COUNT;
@@ -197,8 +197,7 @@ impl KernelHeap {
     ///
     /// caller ensures that [KernelHeap::init] is the first function called
     /// on this struct. In order to do that, the heap must be moved to static memory
-    unsafe fn new<S: PageSize>(pages: Mapped<Pages<S>>) -> Self {
-        let pages = pages.0;
+    unsafe fn new<S: PageSize>(pages: Pages<S>) -> Self {
         trace!("KernelHeap::new()");
         let heap = LockedAllocator {
             allocator: TicketLock::new(LinkedHeap::empty()),

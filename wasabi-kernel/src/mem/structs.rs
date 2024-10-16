@@ -21,31 +21,6 @@ use super::{
     MemError,
 };
 
-/// Marker trait for things that can be memory mapped.
-pub trait Mappable {}
-
-/// A memory mapped [T]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Mapped<T: Mappable>(pub T);
-
-impl<T: Mappable> From<T> for Mapped<T> {
-    fn from(value: T) -> Mapped<T> {
-        Mapped(value)
-    }
-}
-
-/// A [T] that is not yet mapped.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Unmapped<T: Mappable>(pub T);
-
-impl<T: Mappable> From<T> for Unmapped<T> {
-    fn from(value: T) -> Unmapped<T> {
-        Unmapped(value)
-    }
-}
-
-impl<S: PageSize> Mappable for Page<S> {}
-
 /// a number of consecutive pages in virtual memory.
 ///
 /// [Pages] only provides raw access to the virtual memory and does not imply
@@ -57,8 +32,6 @@ pub struct Pages<S: PageSize> {
     /// the number of consecutive pages in virtual memory
     pub count: u64,
 }
-
-impl<S: PageSize> Mappable for Pages<S> {}
 
 impl<S: PageSize> Pages<S> {
     /// the start addr of the fist page
@@ -93,9 +66,9 @@ impl<S: PageSize> Pages<S> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct GuardedPages<S: PageSize> {
     /// optional guard page before [GuardedPages::pages]
-    pub head_guard: Option<Unmapped<Page<Size4KiB>>>,
+    pub head_guard: Option<Page<Size4KiB>>,
     /// optional guard page after [GuardedPages::pages]
-    pub tail_guard: Option<Unmapped<Page<Size4KiB>>>,
+    pub tail_guard: Option<Page<Size4KiB>>,
 
     /// the pages
     pub pages: Pages<S>,
@@ -103,14 +76,13 @@ pub struct GuardedPages<S: PageSize> {
 
 // TODO this should be generic over page size, but WasabiFrameAllocator::get_for_kernel
 //      only works if this is specified
-impl Unmapped<GuardedPages<Size4KiB>> {
+// FIXME: rework this api
+impl GuardedPages<Size4KiB> {
     /// allocates [PhysFrames] and maps `self` to the allocated frames.
-    pub fn alloc_and_map(self) -> Result<Mapped<GuardedPages<Size4KiB>>, MemError> {
-        let pages = self.0;
-
+    pub fn alloc_and_map(self) -> Result<GuardedPages<Size4KiB>, MemError> {
         let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
 
-        for page in pages.iter() {
+        for page in self.iter() {
             let frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
             unsafe {
                 // page is unmapped
@@ -126,28 +98,28 @@ impl Unmapped<GuardedPages<Size4KiB>> {
             }
         }
 
-        if pages.head_guard.is_none() && pages.tail_guard.is_none() {
-            return Ok(Mapped(pages));
+        if self.head_guard.is_none() && self.tail_guard.is_none() {
+            return Ok(self);
         }
 
         unsafe {
             // Safety: frame used for guard pages
             let guard_frame = frame_allocator.guard_frame().ok_or(MemError::OutOfMemory)?;
 
-            if let Some(head_guard) = pages.head_guard {
+            if let Some(head_guard) = self.head_guard {
                 // head_guard is unmapped and we are mapping to the guard_frame
                 map_page!(
-                    head_guard.0,
+                    head_guard,
                     Size4KiB,
                     PageTableFlags::GUARD,
                     guard_frame,
                     frame_allocator.as_mut()
                 )?;
             }
-            if let Some(tail_guard) = pages.tail_guard {
+            if let Some(tail_guard) = self.tail_guard {
                 // tail_guard is unmapped and we are mapping to the guard_frame
                 map_page!(
-                    tail_guard.0,
+                    tail_guard,
                     Size4KiB,
                     PageTableFlags::GUARD,
                     guard_frame,
@@ -156,23 +128,22 @@ impl Unmapped<GuardedPages<Size4KiB>> {
             }
         }
 
-        Ok(Mapped(pages))
+        Ok(self)
     }
 }
 
-impl Mapped<GuardedPages<Size4KiB>> {
+// FIXME: rework api
+impl GuardedPages<Size4KiB> {
     /// unmaps `self` and deallocates the corresponding [PhysFrames]
     ///
     /// Safety:
     /// The caller must ensure that the pages are no longer used
-    pub unsafe fn unmap_and_free(self) -> Result<Unmapped<GuardedPages<Size4KiB>>, UnmapError> {
-        let pages = self.0;
-
+    pub unsafe fn unmap_and_free(self) -> Result<GuardedPages<Size4KiB>, UnmapError> {
         let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         trace!("unmap guarded pages");
-        for page in pages.iter() {
+        for page in self.iter() {
             let (frame, _flags, flusher) = page_table.unmap(page)?;
             flusher.flush();
             unsafe {
@@ -181,24 +152,22 @@ impl Mapped<GuardedPages<Size4KiB>> {
             }
         }
 
-        if let Some(guard) = pages.head_guard {
+        if let Some(guard) = self.head_guard {
             assert_matches!(
-                page_table.clear(guard.0)?,
+                page_table.clear(guard)?,
                 UnmappedFrame::NotPresent { entry: _ }
             );
         }
-        if let Some(guard) = pages.tail_guard {
+        if let Some(guard) = self.tail_guard {
             assert_matches!(
-                page_table.clear(guard.0)?,
+                page_table.clear(guard)?,
                 UnmappedFrame::NotPresent { entry: _ }
             );
         }
 
-        Ok(Unmapped(pages))
+        Ok(self)
     }
 }
-
-impl<S: PageSize> Mappable for GuardedPages<S> {}
 
 impl<S: PageSize> Deref for GuardedPages<S> {
     type Target = Pages<S>;
@@ -274,8 +243,6 @@ mod test {
 
     use crate::mem::{page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE, VirtAddrExt};
 
-    use super::Unmapped;
-
     #[kernel_test]
     fn alloc_guarded_page() -> Result<(), KernelTestError> {
         let mut allocator = PageAllocator::get_kernel_allocator().lock();
@@ -300,8 +267,7 @@ mod test {
             .allocate_guarded_pages::<Size4KiB>(1, true, true)
             .texpect("failed to allocate guarded page")?;
 
-        let unmapped = Unmapped(pages);
-        let mapped = unmapped
+        let mapped = pages
             .alloc_and_map()
             .texpect("failed to map guarded page")?;
 
@@ -310,7 +276,7 @@ mod test {
             // Don't hold onto it for unmapping, as that might dead lock
             // with clearing the mapping from the page table
             let page_table = KERNEL_PAGE_TABLE.lock();
-            let addr_in_page = mapped.0.first_page.start_address() + 50;
+            let addr_in_page = mapped.first_page.start_address() + 50;
 
             // assert that the mapping is valid
             match page_table.translate(addr_in_page) {
@@ -356,7 +322,7 @@ mod test {
 
         {
             let page_table = KERNEL_PAGE_TABLE.lock();
-            let addr_in_page = mapped.0.first_page.start_address() + 50;
+            let addr_in_page = mapped.first_page.start_address() + 50;
 
             t_assert_matches!(
                 page_table.translate(addr_in_page),

@@ -16,11 +16,7 @@ use x86_64::{
 
 use crate::{
     cpu::interrupts::{DOUBLE_FAULT_STACK_PAGE_COUNT, PAGE_FAULT_STACK_PAGE_COUNT},
-    mem::{
-        page_allocator::PageAllocator,
-        structs::{GuardedPages, Unmapped},
-        MemError,
-    },
+    mem::{page_allocator::PageAllocator, structs::GuardedPages, MemError},
 };
 
 /// IST INDEX used to access separate stack for double fault exceptions
@@ -128,12 +124,9 @@ impl GDTInfo {
     }
 
     fn allocate_stack(page_count: u64) -> Result<GuardedPages<Size4KiB>, MemError> {
-        let pages: Unmapped<_> = PageAllocator::get_kernel_allocator()
+        let pages = PageAllocator::get_kernel_allocator()
             .lock()
-            .allocate_guarded_pages(page_count, true, false)?
-            .into();
-        let stack = pages.alloc_and_map()?.0;
-
-        Ok(stack)
+            .allocate_guarded_pages(page_count, true, false)?;
+        pages.alloc_and_map()
     }
 }

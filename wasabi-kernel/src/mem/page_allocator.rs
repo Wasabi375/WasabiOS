@@ -6,7 +6,7 @@ use log::{debug, error, info, trace, warn};
 use crate::{
     mem::{
         page_table::RecursivePageTableExt,
-        structs::{GuardedPages, Pages, Unmapped},
+        structs::{GuardedPages, Pages},
         MemError, Result,
     },
     prelude::UnwrapTicketLock,
@@ -292,7 +292,7 @@ impl PageAllocator {
         let head_guard = if head_guard {
             let guard = Page::from_start_address(start).expect("head_gurad should be aligned");
             start += Size4KiB::SIZE;
-            Some(Unmapped(guard))
+            Some(guard)
         } else {
             None
         };
@@ -302,9 +302,7 @@ impl PageAllocator {
         let pages = Pages { first_page, count };
 
         let tail_guard = if tail_guard {
-            Some(Unmapped(
-                Page::from_start_address(start).expect("tail guard should be aligned"),
-            ))
+            Some(Page::from_start_address(start).expect("tail guard should be aligned"))
         } else {
             None
         };
@@ -360,10 +358,10 @@ impl PageAllocator {
     pub fn free_guarded_pages<S: PageSize>(&mut self, pages: GuardedPages<S>) {
         self.free_pages(pages.pages);
         if let Some(guard) = pages.head_guard {
-            self.free_page(guard.0);
+            self.free_page(guard);
         }
         if let Some(guard) = pages.tail_guard {
-            self.free_page(guard.0);
+            self.free_page(guard);
         }
     }
 }
