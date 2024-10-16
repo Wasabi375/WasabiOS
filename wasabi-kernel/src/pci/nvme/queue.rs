@@ -5,23 +5,36 @@
 
 use core::{hint::spin_loop, ops::Add};
 
+use alloc::{collections::VecDeque, vec::Vec};
 use derive_where::derive_where;
+use shared::{
+    math::WrappingValue,
+    sync::lockcell::{LockCell, LockCellGuard, LockCellInternal},
+};
 use thiserror::Error;
 use volatile::{access::WriteOnly, Volatile};
-use alloc::collections::VecDeque;
-use x86_64::{structures::paging::{PageSize, Mapper, Page, PageTableFlags, PhysFrame, Size4KiB}, PhysAddr, VirtAddr};
-use shared::{math::WrappingValue, sync::lockcell::LockCell};
+use x86_64::{
+    structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
+    PhysAddr, VirtAddr,
+};
 
-use crate::{map_page, mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE, MemError, VirtAddrExt}};
+use crate::{
+    map_page,
+    mem::{
+        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
+        page_table::KERNEL_PAGE_TABLE, MemError, VirtAddrExt,
+    },
+};
 
-use super::{CommandIdentifier, CommonCommand, CommonCompletionEntry, NVMEControllerError, COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
-
+use super::{
+    CommandIdentifier, CommonCommand, CommonCompletionEntry, NVMEControllerError,
+    COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE,
+};
 
 #[allow(unused_imports)]
-use crate::{todo_warn, todo_error};
+use crate::{todo_error, todo_warn};
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
-
 
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
@@ -172,7 +185,8 @@ impl CommandQueue {
 
     /// Allocates a new command queue.
     ///
-    /// The caller needs to ensure that a valid queue is created on the nvme controller first
+    /// This queue is only useable after the nvme controller has also created
+    /// the completion and submission queue on the nvme device.
     ///
     /// # Saftey:
     /// * `doorbell_base` must be valid to write to for all queue doorbells up to `queue_id` while
@@ -181,13 +195,19 @@ impl CommandQueue {
     ///     alive.
     /// * Caller ensures that all needed allocations on the [NVMEController] outlive this.
     /// * Caller must also ensure that the queue on the controller is disabled before dropping this.
-    pub(super) unsafe fn allocate(
+    pub(super) unsafe fn allocate<L1, L2>(
         queue_id: QueueIdentifier,
         submission_queue_size: u16,
         completion_queue_size: u16,
         doorbell_base: VirtAddr,
         queue_doorbell_stride: u64,
-    ) -> Result<Self, NVMEControllerError> {
+        frame_allocator: &mut LockCellGuard<WasabiFrameAllocator<'static, Size4KiB>, L1>,
+        page_allocator: &mut LockCellGuard<PageAllocator, L2>,
+    ) -> Result<Self, NVMEControllerError>
+    where
+        L1: LockCellInternal<WasabiFrameAllocator<'static, Size4KiB>>,
+        L2: LockCellInternal<PageAllocator>,
+    {
         if submission_queue_size < 2 {
             return Err(NVMEControllerError::InvalidQueueSize(submission_queue_size));
         }
@@ -212,9 +232,6 @@ impl CommandQueue {
             todo_error!("command queue larger than 1 page");
             return Err(NVMEControllerError::InvalidQueueSize(completion_queue_size));
         }
-
-        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
-        let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
 
         let sub_frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
         let sub_page = page_allocator.allocate_page_4k()?;
@@ -297,27 +314,26 @@ impl CommandQueue {
             }
         }
 
-        trace!("submit command to queue");
-
         let identifier = CommandIdentifier(self.next_command_identifier);
-        // TODO identifier should never be 0xffff as some functions use 0xffff in the completion 
+        // TODO identifier should never be 0xffff as some functions use 0xffff in the completion
         // to refer to a general error that is not associated with any command
         self.next_command_identifier = self.next_command_identifier.wrapping_add(1);
 
         command.dword0.set_command_identifier(identifier);
 
+        trace!("submit command({identifier:?}) to queue");
+
         let entry_slot_index = self.submission_queue_tail_local.value();
         self.submission_queue_tail_local += 1;
 
-        let slot_vaddr =
-            (self.submission_queue_vaddr + (SUBMISSION_COMMAND_ENTRY_SIZE * entry_slot_index as u64))
-                .as_mut_ptr::<CommonCommand>();
+        let slot_vaddr = (self.submission_queue_vaddr
+            + (SUBMISSION_COMMAND_ENTRY_SIZE * entry_slot_index as u64))
+            .as_mut_ptr::<CommonCommand>();
 
         assert!(slot_vaddr.is_aligned());
         unsafe {
             // Safety: submission queue is properly mapped to allow write access
-            slot_vaddr
-                .write_volatile(command);
+            slot_vaddr.write_volatile(command);
         }
 
         Ok(identifier)
@@ -326,7 +342,8 @@ impl CommandQueue {
     /// Cancells all submissions since the last call to [Self::flush].
     pub fn cancel_submissions(&mut self) {
         debug!("Cancel submissions for queue {:?}", self.id);
-        self.submission_queue_tail_local = WrappingValue::new(self.submission_queue_tail, self.submission_queue_size);
+        self.submission_queue_tail_local =
+            WrappingValue::new(self.submission_queue_tail, self.submission_queue_size);
     }
 
     /// Notify the controller about any pending submission command entries
@@ -338,7 +355,7 @@ impl CommandQueue {
 
         trace!(
             "flush command queue by writting {:#x} to doorbell",
-            self.submission_queue_tail_local
+            self.submission_queue_tail_local.value()
         );
 
         self.submission_queue_tail_doorbell
@@ -385,7 +402,6 @@ impl CommandQueue {
     /// * Err((false, CompletionPollError)): No entires were found and added to the completions
     ///         list
     pub fn poll_completions(&mut self) -> PollCompletionsResult {
-        trace!("poll for completions");
         let mut any_found = false;
         let mut error = None;
         loop {
@@ -452,10 +468,10 @@ impl CommandQueue {
             // phase did not match, therefor this is the old completion entry
             return Ok(false);
         }
-        
+
         // NOTE: It should be fine to keep using possible_completion after checking the phase.
         // For some reason qemu returns only a partial completion entry on first read.
-        // It seems there is a race event in qemu or something. 
+        // It seems there is a race event in qemu or something.
         // We drop and read the completion again to ensure we don't encounter that race
         drop(possible_completion);
 
@@ -463,8 +479,14 @@ impl CommandQueue {
             // Safety: completion queue is properly mapped for read access
             slot_vaddr.as_ptr::<CommonCompletionEntry>().read_volatile()
         };
-        assert_eq!(completion.status_and_phase.phase(), self.completion_expected_phase);
-        assert_eq!(self.id, completion.submission_queue_ident, "Submission queue mismatch on polled completion entry");
+        assert_eq!(
+            completion.status_and_phase.phase(),
+            self.completion_expected_phase
+        );
+        assert_eq!(
+            self.id, completion.submission_queue_ident,
+            "Submission queue mismatch on polled completion entry"
+        );
 
         // it is fine to update the submission head, even if we can not yet store this completion
         // because this only indicates that the controller has read the submission
@@ -486,6 +508,8 @@ impl CommandQueue {
                 completion.command_ident,
             ));
         };
+
+        trace!("Polled Completion entry({:?})", completion.command_ident);
 
         // TODO document why we increment here and not earlier
         self.completion_queue_head += 1;
@@ -522,7 +546,7 @@ impl CommandQueue {
             let _ = self.drain_completions();
             let poll_result = self.poll_completions();
             assert!(
-                poll_result.error_on_any_entry.is_none(), 
+                poll_result.error_on_any_entry.is_none(),
                 "We just cleard the completions, therefor there cant be an conflicting command ident"
             );
             if !poll_result.some_new_entries {
@@ -567,6 +591,39 @@ impl CommandQueue {
                 spin_loop();
             }
         }
+    }
+
+    #[inline]
+    pub fn submit_all<I: IntoIterator<Item = CommonCommand>>(
+        &mut self,
+        commands: I,
+    ) -> Result<Vec<CommandIdentifier>, NVMEControllerError> {
+        let commands = commands.into_iter();
+        let mut idents = Vec::with_capacity(commands.size_hint().0);
+
+        for command in commands {
+            idents.push(self.submit(command)?);
+        }
+
+        Ok(idents)
+    }
+
+    #[inline]
+    pub fn wait_for_all<I: IntoIterator<Item = CommandIdentifier>>(
+        &mut self,
+        idents: I,
+    ) -> Result<Vec<CommonCompletionEntry>, (Vec<CommonCompletionEntry>, PollCompletionError)> {
+        let idents = idents.into_iter();
+        let mut completed = Vec::with_capacity(idents.size_hint().0);
+
+        for ident in idents {
+            match self.wait_for(ident) {
+                Ok(entry) => completed.push(entry),
+                Err(err) => return Err((completed, err)),
+            }
+        }
+
+        Ok(completed)
     }
 }
 

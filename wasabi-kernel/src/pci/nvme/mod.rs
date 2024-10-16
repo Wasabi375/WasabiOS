@@ -24,10 +24,12 @@ use self::properties::{
 };
 use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
-    frames_required_for, free_frame, free_page, map_frame,
+    free_frame, free_page, locals, map_frame, map_page,
     mem::{
-        frame_allocator::WasabiFrameAllocator, page_table::PageTableMapError, MemError, VirtAddrExt,
+        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
+        page_table::PageTableMapError, MemError, VirtAddrExt,
     },
+    pages_required_for,
     pci::{
         nvme::{
             admin_commands::{
@@ -36,7 +38,7 @@ use crate::{
             },
             properties::ArbitrationMechanism,
         },
-        CommonRegisterOffset, Device, RegisterAddress,
+        CommonRegisterOffset, Device, RegisterAddress, PCI_ACCESS,
     },
     todo_error, unmap_page,
 };
@@ -209,6 +211,9 @@ impl NVMEController {
         // TODO figure out good admin queue size
         const ADMIN_QUEUE_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE) as u16;
         let admin_queue = unsafe {
+            let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
+            let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+
             // Safety: we just mapped the doorbell memory as part of properties.
             // We only create 1 queue with index 0 (admin) right here.
             // We check the stride later on, once we have proper access to the properties.
@@ -218,6 +223,8 @@ impl NVMEController {
                 ADMIN_QUEUE_SIZE,
                 doorbell_base,
                 4,
+                &mut frame_allocator,
+                &mut page_allocator,
             )?
         };
 
@@ -831,13 +838,19 @@ impl NVMEController {
     ///
     /// The size of the queue is determined by the number of commands that fit into a single page
     pub fn allocate_io_queues(&mut self, count: u16) -> Result<(), NVMEControllerError> {
-        let comp_size = Size4KiB::SIZE / COMPLETION_COMMAND_ENTRY_SIZE;
-        let sub_size = Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE;
+        const COMP_SIZE: u16 = (Size4KiB::SIZE / COMPLETION_COMMAND_ENTRY_SIZE) as u16;
+        const SUB_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE) as u16;
+
+        const QUEUE_SIZE: u16 = if COMP_SIZE < SUB_SIZE {
+            COMP_SIZE
+        } else {
+            SUB_SIZE
+        };
 
         self.allocate_io_queues_with_sizes(
             count,
-            min(comp_size.try_into().unwrap(), self.maximum_queue_entries),
-            min(sub_size.try_into().unwrap(), self.maximum_queue_entries),
+            min(QUEUE_SIZE, self.maximum_queue_entries),
+            min(QUEUE_SIZE, self.maximum_queue_entries),
         )
     }
 
@@ -861,10 +874,10 @@ impl NVMEController {
         assert!(completion_queue_size <= self.maximum_queue_entries);
         assert!(submission_queue_size <= self.maximum_queue_entries);
 
-        // TODO: possible off by 1 error. Does this count include or exclude the admin queue
         if self
             .next_unused_io_queue_ident
             .checked_add(count)
+            // TODO: possible off by 1 error. Does this count include or exclude the admin queue
             .map(|requested_size| requested_size.as_u16() > self.max_io_queue_count())
             .unwrap_or(false)
         {
@@ -877,217 +890,157 @@ impl NVMEController {
         let queue_idents =
             (0..count).map(|ident_offset| self.next_unused_io_queue_ident + ident_offset);
 
-        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
 
-        let comp_queue_requests = queue_idents
-            .clone()
-            .map(|ident| {
-                let queue_size: u16 = completion_queue_size;
-
-                let frame_count = frames_required_for!(
-                    Size4KiB,
-                    queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE
-                );
-                assert!(frame_count >= 1);
-
-                let Some(frames) = frame_allocator.alloc_range(frame_count) else {
-                    return (ident, Err(MemError::OutOfMemory.into()));
-                };
-                let command = admin_commands::create_io_completion_queue(ident, queue_size, frames);
-
-                let command_ident = self.admin_queue.submit(command);
-                (ident, command_ident)
-            })
-            .collect::<Vec<_>>();
-        drop(frame_allocator);
-
-        if let Some(err) = comp_queue_requests
-            .iter()
-            .map(|(_, cmd)| cmd.clone())
-            .filter_map(|cmd| cmd.err())
-            .next()
-        {
-            error!("failed to submit create io completion queue commands");
-            self.admin_queue.cancel_submissions();
-            return Err(err);
-        }
-
-        self.admin_queue.flush();
-        let mut comp_queue_requests_to_await: Vec<_> = comp_queue_requests
-            .into_iter()
-            .map(|(ident, request)| (ident, request.unwrap()))
-            .collect();
-
-        let mut comp_queue_creation_error = None;
-
-        loop {
-            let poll_result = self.admin_queue.poll_completions();
-            if !poll_result.some_new_entries {
-                if let Some(err) = poll_result.error_on_any_entry {
-                    error!("failed to poll completions while creating io completion queues");
-                    return Err(NVMEControllerError::AdminQueuePollCompletions(err));
-                }
-                spin_loop();
-                continue;
-            }
-
-            for completion in self.admin_queue.iter_completions() {
-                let Some(request_index) = comp_queue_requests_to_await
-                    .iter()
-                    .position(|(_, ci)| *ci == completion.command_ident)
-                else {
-                    continue;
-                };
-
-                let (queue_ident, _) = comp_queue_requests_to_await.swap_remove(request_index);
-
-                if completion.status().is_err() {
-                    let generic_status = completion.status();
-                    if let CommandStatusCode::CommandSpecificStatus(status) = generic_status {
-                        if let Some(comp_creation_error) =
-                            CompletionQueueCreationStatus::from_bits(status)
-                        {
-                            error!("Failed to create completion queue {queue_ident:?}: {comp_creation_error:?}");
-                        } else {
-                            error!("Failed to create completion queue {queue_ident:?}: {generic_status:?}");
-                        }
-                    } else {
-                        error!(
-                            "Failed to create completion queue {queue_ident:?}: {generic_status}"
-                        );
-                    }
-                    comp_queue_creation_error = Some(generic_status);
-                }
-            }
-
-            // TODO timeout
-            if comp_queue_requests_to_await.is_empty() {
-                break;
-            }
-        }
-
-        if let Some(err) = comp_queue_creation_error {
-            todo_error!("delete all newly created io completion queues");
-            return Err(NVMEControllerError::AdminCommandFailed(err));
-        }
-
-        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
-
-        let sub_queue_requests = queue_idents
-            .clone()
-            .map(|ident| {
-                let queue_size: u16 = submission_queue_size;
-
-                let frame_count = frames_required_for!(
-                    Size4KiB,
-                    queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE
-                );
-                assert!(frame_count >= 1);
-
-                let Some(frames) = frame_allocator.alloc_range(frame_count) else {
-                    return (ident, Err(MemError::OutOfMemory.into()));
-                };
-                let command = admin_commands::create_io_submission_queue(ident, queue_size, frames);
-
-                let command_ident = self.admin_queue.submit(command);
-                (ident, command_ident)
-            })
-            .collect::<Vec<_>>();
-        drop(frame_allocator);
-
-        if let Some(err) = sub_queue_requests
-            .iter()
-            .map(|(_, cmd)| cmd.clone())
-            .filter_map(|cmd| cmd.err())
-            .next()
-        {
-            error!("failed to submit create io submission queue commands");
-            self.admin_queue.cancel_submissions();
-            return Err(err);
-        }
-
-        self.admin_queue.flush();
-        let mut sub_queue_requests_to_await: Vec<_> = sub_queue_requests
-            .into_iter()
-            .map(|(ident, request)| (ident, request.unwrap()))
-            .collect();
-
-        let mut sub_queue_creation_error = None;
-        loop {
-            let poll_result = self.admin_queue.poll_completions();
-            if !poll_result.some_new_entries {
-                if let Some(err) = poll_result.error_on_any_entry {
-                    error!("failed to poll completions while creating io submission queues");
-                    return Err(NVMEControllerError::AdminQueuePollCompletions(err));
-                }
-                spin_loop();
-                continue;
-            }
-
-            for completion in self.admin_queue.iter_completions() {
-                let Some(request_index) = sub_queue_requests_to_await
-                    .iter()
-                    .position(|(_, ci)| *ci == completion.command_ident)
-                else {
-                    continue;
-                };
-
-                let (queue_ident, _) = sub_queue_requests_to_await.swap_remove(request_index);
-
-                if completion.status().is_err() {
-                    let generic_status = completion.status();
-                    if let CommandStatusCode::CommandSpecificStatus(status) = generic_status {
-                        if let Ok(sub_creation_error) =
-                            SubmissionQueueCreationStatus::try_from(status)
-                        {
-                            error!("Failed to create completion queue {queue_ident:?}: {sub_creation_error:?}");
-                        } else {
-                            error!("Failed to create completion queue {queue_ident:?}: {generic_status:?}");
-                        }
-                    } else {
-                        error!(
-                            "Failed to create completion queue {queue_ident:?}: {generic_status}"
-                        );
-                    }
-                    sub_queue_creation_error = Some(generic_status);
-                }
-            }
-
-            // TODO timeout
-            if sub_queue_requests_to_await.is_empty() {
-                break;
-            }
-        }
-
-        if let Some(err) = sub_queue_creation_error {
-            todo_error!("delete all newly created io submission and completion queues");
-            return Err(NVMEControllerError::AdminCommandFailed(err));
-        }
-
-        let mut queues_to_add: Vec<CommandQueue> = Vec::with_capacity(count as usize);
-        for ident in queue_idents {
-            let queue = unsafe {
-                // Safety:
-                // doorbell_base_vaddr is properly mapped
-                // we ensured that `ident` is only used for this queue
+        let mut error = None;
+        let queues: Vec<_> = queue_idents
+            .map(|ident| unsafe {
                 CommandQueue::allocate(
                     ident,
                     submission_queue_size,
                     completion_queue_size,
                     self.doorbell_base_vaddr,
                     self.doorbell_stride,
+                    &mut frame_alloc,
+                    &mut page_alloc,
                 )
-            };
-            match queue {
-                Ok(queue) => queues_to_add.push(queue),
+            })
+            .filter_map(|queue_or_err| match queue_or_err {
+                Ok(queue) => Some(queue),
                 Err(err) => {
-                    error!("failed to allocate command queue for {:?}", ident);
-                    todo_error!("deallocate sub and comp queues");
-                    return Err(err);
+                    error!("Failed to allocate IO-Command Queue: {err}");
+                    if error.is_none() {
+                        error = Some(err);
+                    }
+                    None
+                }
+            })
+            .collect();
+        if let Some(err) = error {
+            return Err(err);
+        }
+
+        drop(page_alloc);
+        drop(frame_alloc);
+
+        let create_comp_queue_commands = queues.iter().map(|queue| {
+            admin_commands::create_io_completion_queue(
+                queue.id(),
+                queue.completion_queue_size,
+                queue.completion_queue_paddr,
+            )
+        });
+        let idents = match self.admin_queue.submit_all(create_comp_queue_commands) {
+            Ok(idents) => idents,
+            Err(err) => {
+                error!("failed to submit command to create completion queue: {err}");
+                self.admin_queue.cancel_submissions();
+                return Err(err);
+            }
+        };
+        self.admin_queue.flush();
+        let create_comp_queue_results = match self.admin_queue.wait_for_all(idents) {
+            Ok(ok) => ok,
+            Err((_created, err)) => {
+                todo_error!("delete all newly created io completion queues");
+                return Err(NVMEControllerError::AdminQueuePollCompletions(err));
+            }
+        };
+
+        if create_comp_queue_results
+            .iter()
+            .any(|res| res.status().is_err())
+        {
+            let mut error_status = None;
+            for (failure, queue) in create_comp_queue_results
+                .iter()
+                .zip(queues.iter())
+                .filter(|(res, _)| res.status().is_err())
+            {
+                let generic_status = failure.status();
+                error_status = Some(generic_status);
+                let queue_ident = queue.id();
+                if let CommandStatusCode::CommandSpecificStatus(status) = generic_status {
+                    if let Some(comp_creation_error) =
+                        CompletionQueueCreationStatus::from_bits(status)
+                    {
+                        error!("Failed to create completion queue {queue_ident:?}: {comp_creation_error:?}");
+                    } else {
+                        error!(
+                            "Failed to create completion queue {queue_ident:?}: {generic_status:?}"
+                        );
+                    }
+                } else {
+                    error!("Failed to create completion queue {queue_ident:?}: {generic_status}");
                 }
             }
+
+            todo_error!("delete all newly created io completion queues");
+
+            let err = error_status.expect("We already check that there is an error");
+            return Err(NVMEControllerError::AdminCommandFailed(err));
         }
-        for queue in queues_to_add {
+
+        let create_sub_queue_commands = queues.iter().map(|queue| {
+            admin_commands::create_io_submission_queue(
+                queue.id(),
+                queue.submission_queue_size,
+                queue.submission_queue_paddr,
+            )
+        });
+        let idents = match self.admin_queue.submit_all(create_sub_queue_commands) {
+            Ok(idents) => idents,
+            Err(err) => {
+                error!("failed to submit command to create submission queue: {err}");
+                self.admin_queue.cancel_submissions();
+                return Err(err);
+            }
+        };
+        self.admin_queue.flush();
+        let create_sub_queue_results = match self.admin_queue.wait_for_all(idents) {
+            Ok(ok) => ok,
+            Err((_created, err)) => {
+                todo_error!("delete all newly created io submission and completion queues");
+                return Err(NVMEControllerError::AdminQueuePollCompletions(err));
+            }
+        };
+
+        if create_sub_queue_results
+            .iter()
+            .any(|res| res.status().is_err())
+        {
+            let mut error_status = None;
+            for (failure, queue) in create_sub_queue_results
+                .iter()
+                .zip(queues.iter())
+                .filter(|(res, _)| res.status().is_err())
+            {
+                let generic_status = failure.status();
+                error_status = Some(generic_status);
+                let queue_ident = queue.id();
+                if let CommandStatusCode::CommandSpecificStatus(status) = generic_status {
+                    if let Some(sub_creation_error) =
+                        CompletionQueueCreationStatus::from_bits(status)
+                    {
+                        error!("Failed to create submission queue {queue_ident:?}: {sub_creation_error:?}");
+                    } else {
+                        error!(
+                            "Failed to create submission queue {queue_ident:?}: {generic_status:?}"
+                        );
+                    }
+                } else {
+                    error!("Failed to create submission queue {queue_ident:?}: {generic_status}");
+                }
+            }
+
+            todo_error!("delete all newly created io submission and completion queues");
+
+            let err = error_status.expect("We already check that there is an error");
+            return Err(NVMEControllerError::AdminCommandFailed(err));
+        }
+
+        for queue in queues {
             self.available_io_queues.push(Weak::new(queue));
         }
         self.next_unused_io_queue_ident = self.next_unused_io_queue_ident + count;
@@ -1191,7 +1144,7 @@ impl Drop for NVMEController {
 }
 
 pub fn experiment_nvme_device() {
-    /*    assert!(locals!().is_bsp());
+    assert!(locals!().is_bsp());
 
     let mut pci = PCI_ACCESS.lock();
 
@@ -1216,6 +1169,7 @@ pub fn experiment_nvme_device() {
 
     info!("Controller cap: {:#?}", nvme_controller.capabilities());
 
+    /*
     nvme_controller
         .allocate_io_queues_with_sizes(1, 64, 64)
         .expect("Failed to allocate nvme command queue");
