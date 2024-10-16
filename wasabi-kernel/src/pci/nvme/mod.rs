@@ -1246,7 +1246,11 @@ pub fn experiment_nvme_device() {
 
     todo_warn!("Memory leak {page_count} pages for nvme read experiment");
 
-    let command = io_commands::create_read_command(frames.start, LBA::new(0), 1);
+    let command = io_commands::create_read_command(
+        frames.start,
+        LBA::new(0),
+        blocks_to_read.try_into().unwrap(),
+    );
     let ident = io_queue.submit(command).unwrap();
 
     io_queue.flush();
@@ -1333,8 +1337,18 @@ mod test {
     use testing::{
         kernel_test, t_assert, t_assert_eq, t_assert_matches, KernelTestError, TestUnwrapExt,
     };
+    use x86_64::structures::paging::{PageTableFlags, Size4KiB};
 
-    use crate::pci::{Class, StorageSubclass, PCI_ACCESS};
+    use crate::{
+        map_page,
+        mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator},
+        pages_required_for,
+        pci::{
+            nvme::io_commands::{self, LBA},
+            Class, StorageSubclass, PCI_ACCESS,
+        },
+        todo_warn,
+    };
 
     use super::NVMEController;
 
@@ -1412,6 +1426,72 @@ mod test {
 
         core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         let _queue = nvme_controller.get_io_queue().unwrap();
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    pub fn test_nvme_read_data() -> Result<(), KernelTestError> {
+        let mut nvme_controller =
+            unsafe { create_test_controller() }.texpect("failed to create controller")?;
+
+        nvme_controller
+            .allocate_io_queues_with_sizes(1, 64, 64)
+            .expect("Failed to allocate nvme command queue");
+
+        let mut io_queue = nvme_controller
+            .get_io_queue()
+            .expect("We juste allocated a queue so where is it?");
+
+        let capabilities = nvme_controller.capabilities();
+
+        let blocks_to_read = 1;
+
+        let bytes = blocks_to_read * capabilities.lba_block_size;
+
+        let page_count = pages_required_for!(Size4KiB, bytes);
+        assert_eq!(page_count, 1, "TODO multipage not implemented");
+
+        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+
+        let pages = page_alloc.allocate_pages(page_count).unwrap();
+        // TODO I don't think I need consecutive frames. PRP lists should support separate frames
+        let frames = frame_alloc.alloc_range(page_count).unwrap();
+
+        drop(page_alloc);
+        drop(frame_alloc);
+
+        for (page, frame) in pages.iter().zip(frames) {
+            unsafe {
+                map_page!(
+                    page,
+                    Size4KiB,
+                    PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT,
+                    frame
+                )
+                .unwrap();
+            }
+        }
+
+        todo_warn!("Memory leak {page_count} pages for nvme read test");
+
+        let command = io_commands::create_read_command(
+            frames.start,
+            LBA::new(0),
+            blocks_to_read.try_into().unwrap(),
+        );
+        let ident = io_queue.submit(command).unwrap();
+
+        io_queue.flush();
+
+        let io_result = io_queue.wait_for(ident).unwrap();
+        io_result.status().assert_success();
+
+        // Safety: we just mapped this
+        let read_data: &[u8; 4] = unsafe { &*pages.start_addr().as_ptr() };
+
+        assert_eq!(read_data, b"test");
 
         Ok(())
     }
