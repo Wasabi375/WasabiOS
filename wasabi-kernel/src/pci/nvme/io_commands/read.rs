@@ -19,6 +19,7 @@ pub fn create_read_command(frame: PhysFrame, slba: LBA, block_count: u16) -> Com
     command.dword0 = cdw0;
 
     command.namespace_ident = 1;
+    command.data_ptr.prp_entry_1 = frame.start_address();
 
     // ignored because we don't use protection
     command.dword2 = 0;
