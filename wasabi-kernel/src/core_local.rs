@@ -356,7 +356,9 @@ pub unsafe fn init(core_id: CoreId) {
         // exit the critical boot section and let next core enter
         // safety: at this point we are still in the boot process so we still
         // have unique access to [BOOT_CORE_LOCALS]
-        BOOT_CORE_LOCALS.boot_lock.fetch_add(1, Ordering::SeqCst);
+        (*addr_of_mut!(BOOT_CORE_LOCALS))
+            .boot_lock
+            .fetch_add(1, Ordering::SeqCst);
     }
     CORE_READY_COUNT.fetch_add(1, Ordering::Release);
 

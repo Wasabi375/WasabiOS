@@ -10,6 +10,8 @@ pub use instructions::*;
 
 #[allow(unsafe_op_in_unsafe_fn)]
 mod instructions {
+    use core::ptr::addr_of_mut;
+
     use x86_64::{
         instructions::{self, interrupts},
         registers::model_specific::Msr,
@@ -18,8 +20,16 @@ mod instructions {
     /// MSR for active FS base
     static mut IA32_FS_BASE: Msr = Msr::new(0xc0000100);
 
+    unsafe fn ia32_fs_base() -> &'static mut Msr {
+        &mut *addr_of_mut!(IA32_FS_BASE)
+    }
+
     /// MSR for active GS base
     static mut IA32_GS_BASE: Msr = Msr::new(0xc0000101);
+
+    unsafe fn ia32_gs_base() -> &'static mut Msr {
+        &mut *addr_of_mut!(IA32_GS_BASE)
+    }
 
     /// issues a single halt instruction
     #[inline]
@@ -67,7 +77,7 @@ mod instructions {
     #[inline]
     pub fn gs_base() -> u64 {
         // Safety: accessing reading gs segment is save
-        unsafe { IA32_GS_BASE.read() }
+        unsafe { ia32_gs_base().read() }
     }
 
     /// Set the GS base
@@ -75,7 +85,7 @@ mod instructions {
     pub fn set_gs_base(base: u64) {
         unsafe {
             // Safety: accessing reading gs segment is save
-            IA32_GS_BASE.write(base);
+            ia32_gs_base().write(base);
         }
     }
 
@@ -83,7 +93,7 @@ mod instructions {
     #[inline]
     pub fn fs_base() -> u64 {
         // Safety: accessing reading fs segment is save
-        unsafe { IA32_FS_BASE.read() }
+        unsafe { ia32_fs_base().read() }
     }
 
     /// Set the FS base
@@ -91,7 +101,7 @@ mod instructions {
     pub fn set_fs_base(base: u64) {
         unsafe {
             // Safety: accessing reading fs segment is save
-            IA32_FS_BASE.write(base);
+            ia32_fs_base().write(base);
         }
     }
 }

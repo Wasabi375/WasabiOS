@@ -2,7 +2,7 @@
 
 use core::{
     panic::PanicInfo,
-    ptr::null_mut,
+    ptr::{addr_of, null_mut},
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
@@ -161,7 +161,7 @@ unsafe fn recreate_logger() {
     // Safety: we are in panic reset
     unsafe {
         SERIAL_LOGGER = Some(serial_logger);
-        set_global_logger(SERIAL_LOGGER.as_ref().unwrap_unchecked());
+        set_global_logger((&*addr_of!(SERIAL_LOGGER)).as_ref().unwrap_unchecked());
     }
 }
 

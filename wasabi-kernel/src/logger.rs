@@ -1,6 +1,6 @@
 //! A module containing logging and debug utilities
 
-use core::ptr::addr_of;
+use core::ptr::{addr_of, addr_of_mut};
 
 use log::{info, LevelFilter, Log};
 use logger::{dispatch::TargetLogger, LogSetup, RefLogger};
@@ -29,9 +29,13 @@ pub type DispatchLogger<'a, const N: usize, const L: usize> =
 ///
 /// # Safety:
 /// this should not be modified outside of panics and [init].
-/// Accessing the [DispatchLogger] via shared ref is safe.
-pub static mut LOGGER: Option<DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> =
-    None;
+/// Accessing the [DispatchLogger] via shared ref is therefor safe.
+#[inline]
+pub fn static_logger(
+) -> Option<&'static DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> {
+    unsafe { &*addr_of_mut!(LOGGER) }.as_ref()
+}
+static mut LOGGER: Option<DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> = None;
 
 /// the static serial logger.
 static mut SERIAL_LOGGER: Option<
@@ -119,7 +123,7 @@ pub unsafe fn init() {
         SERIAL_LOGGER = Some(serial_logger);
         dispatch_logger.with_logger(TargetLogger::new_primary(
             "serial",
-            SERIAL_LOGGER.as_ref().unwrap(),
+            (&*addr_of_mut!(SERIAL_LOGGER)).as_ref().unwrap(),
         ));
     }
 
@@ -130,7 +134,7 @@ pub unsafe fn init() {
     if unsafe {
         LOGGER = Some(dispatch_logger);
 
-        set_global_logger(LOGGER.as_ref().unwrap_unchecked());
+        set_global_logger(static_logger().unwrap_unchecked());
 
         log::set_logger(&*addr_of!(GLOBAL_LOGGER))
     }

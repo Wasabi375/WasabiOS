@@ -23,7 +23,7 @@ use self::{
 use crate::{
     core_local::CoreInterruptState,
     graphics::canvas::Canvas,
-    logger::{setup_logger_module_rename, LOGGER},
+    logger::{setup_logger_module_rename, static_logger},
     prelude::TicketLock,
 };
 
@@ -114,7 +114,7 @@ fn init_framebuffer_logger() {
         OwnLogger::new(canvas_lock);
     setup_logger_module_rename(&mut fb_logger);
 
-    if let Some(dispatch_logger) = unsafe { LOGGER.as_ref() } {
+    if let Some(dispatch_logger) = static_logger() {
         let logger = TargetLogger::new_secondary_boxed("framebuffer", Box::from(fb_logger));
 
         dispatch_logger.with_logger(logger)
