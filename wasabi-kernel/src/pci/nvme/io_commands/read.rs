@@ -10,7 +10,7 @@ use crate::pci::nvme::{
 
 use super::{CommandOpcode, LBA};
 
-pub fn create_read_command(frame: PhysFrame, lba: LBA, block_count: u16) -> CommonCommand {
+pub fn create_read_command(frame: PhysFrame, slba: LBA, block_count: u16) -> CommonCommand {
     let mut cdw0 = CDW0::zero();
     cdw0.set_opcode(CommandOpcode::Read as u8);
     cdw0.set_prp_or_sgl(PrpOrSgl::Prp);
@@ -24,9 +24,9 @@ pub fn create_read_command(frame: PhysFrame, lba: LBA, block_count: u16) -> Comm
     command.dword2 = 0;
     command.dword3 = 0;
 
-    let lba = lba.value();
-    command.dword10 = (lba & 0xffff_ffff) as u32;
-    command.dword11 = (lba >> 32) as u32;
+    let slba = slba.value();
+    command.dword10 = (slba & 0xffff_ffff) as u32;
+    command.dword11 = (slba >> 32) as u32;
 
     let mut dword12 = 0;
     // dword12.set_bit(31, true); // limit retry

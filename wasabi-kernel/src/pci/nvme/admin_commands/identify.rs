@@ -21,9 +21,19 @@ use super::CommandOpcode;
 /// CNS Value
 /// See: NVM Express Base Spec: Figure 274: Identify CNS Value
 pub enum ControllerOrNamespace {
-    Namespace { nsid: u32 },
+    Namespace {
+        nsid: u32,
+    },
     Controller,
-    IOCommandSet { controller_id: ControllerId },
+    ActiveNamespaces {
+        /// only active namespace ids greater this will be returned.
+        ///
+        /// Can be 0 to get nsid 1. Should never be `0xffff_ffff` or `0xffff_fffe`
+        starting_nsid: u32,
+    },
+    IOCommandSet {
+        controller_id: ControllerId,
+    },
 }
 
 impl ControllerOrNamespace {
@@ -31,6 +41,7 @@ impl ControllerOrNamespace {
         match self {
             ControllerOrNamespace::Namespace { nsid: _ } => 0x0,
             ControllerOrNamespace::Controller => 0x1,
+            ControllerOrNamespace::ActiveNamespaces { starting_nsid: _ } => 0x2,
             ControllerOrNamespace::IOCommandSet { controller_id: _ } => 0x1c,
         }
     }
@@ -50,7 +61,10 @@ pub fn create_identify_command(cns: ControllerOrNamespace, data_frame: PhysFrame
     dword10.set_bits(0..=8, cns.cns() as u32);
 
     match cns {
-        ControllerOrNamespace::Namespace { nsid } => {
+        ControllerOrNamespace::Namespace { nsid }
+        | ControllerOrNamespace::ActiveNamespaces {
+            starting_nsid: nsid,
+        } => {
             command.namespace_ident = nsid;
         }
         ControllerOrNamespace::IOCommandSet { controller_id } => {

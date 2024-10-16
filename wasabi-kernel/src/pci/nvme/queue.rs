@@ -215,6 +215,8 @@ impl CommandQueue {
             return Err(NVMEControllerError::InvalidQueueSize(completion_queue_size));
         }
 
+        trace!("allocate Command Queue {queue_id:?}");
+
         let (sub_tail_doorbell, comp_head_doorbell) = unsafe {
             // Safety: see our safety
             CommandQueue::get_doorbells(doorbell_base, queue_doorbell_stride, queue_id)

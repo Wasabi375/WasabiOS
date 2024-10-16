@@ -44,9 +44,7 @@ use crate::{
     todo_error, unmap_page,
     utils::log_hex_dump,
 };
-use admin_commands::{
-    CompletionQueueCreationStatus, IdentifyNamespaceData, SubmissionQueueCreationStatus,
-};
+use admin_commands::{CompletionQueueCreationStatus, IdentifyNamespaceData};
 use alloc::vec::Vec;
 use bit_field::BitField;
 use core::{cmp::min, hint::spin_loop, sync::atomic::Ordering};
@@ -304,7 +302,11 @@ impl NVMEController {
         //          to 000b;
         let mut cc = this.read_configuration();
         if cap.command_sets_supported.get_bit(7) {
-            cc.command_set_selected = 0b111;
+            error!(
+                "Only admin command set supported. We ignore this and try to use nvme IO anyways"
+            );
+            // cc.command_set_selected = 0b111;
+            cc.command_set_selected = 0b000;
         } else if cap.command_sets_supported.get_bit(6) {
             cc.command_set_selected = 0b110;
         } else if cap.command_sets_supported.get_bit(0) {
@@ -552,8 +554,9 @@ impl NVMEController {
         // to ‘1’).
         todo_warn!("enable async notification events, eg for errors");
 
+        // read namespace info to get block size
+        // Also read list of active namespaces and assert that NSID is active.
         {
-            // read namespace info to get block size
             debug!("Assume that NVM namespace 1 is valid and active");
 
             let identy_result_pt_flags =
@@ -571,7 +574,7 @@ impl NVMEController {
                 "Wait for should always succeed because there is exactly 1 open submission",
             );
             if completion.status().is_err() {
-                error!("identify IO Command-Set command failed!");
+                error!("identify namespace 1 command failed!");
                 return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
             }
 
@@ -588,6 +591,13 @@ impl NVMEController {
             this.capabilities.namespace_capacity_blocks = identify_data.namespace_capacity;
             this.capabilities.namespace_features = identify_data.features;
 
+            if identify_data.active_lba_format().metadata_size != 0 {
+                warn!(
+                    "Metadata size is not 0: {}",
+                    identify_data.active_lba_format().metadata_size
+                );
+            }
+
             // invalidate the reference into the page so we can reuse it
             let _ = identify_data;
 
@@ -603,13 +613,37 @@ impl NVMEController {
                 "Wait for should always succeed because there is exactly 1 open submission",
             );
             if completion.status().is_err() {
-                error!("identify IO Command-Set command failed!");
+                error!("identify namespace 2 command failed!");
                 return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
             }
 
             // Safety: we mapped this page earlier
             if unsafe { IdentifyNamespaceData::from_vaddr(page.start_address()) }.is_some() {
                 warn!("There is a second NVM namespace on the device");
+            }
+
+            trace!("get active namesapce list");
+            let command = admin_commands::create_identify_command(
+                admin_commands::ControllerOrNamespace::ActiveNamespaces { starting_nsid: 0 },
+                frame,
+            );
+
+            let ident = this.admin_queue.submit(command)?;
+            this.admin_queue.flush();
+            let completion = this.admin_queue.wait_for(ident).expect(
+                "Wait for should always succeed because there is exactly 1 open submission",
+            );
+            if completion.status().is_err() {
+                error!("identify active namespaces command failed!");
+                return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
+            }
+
+            // Safety: We mapped the page above and it is no longer used for the previous identify
+            // command
+            let active_namespaces: &[u32; 1024] = unsafe { &*page.start_address().as_ptr() };
+            if active_namespaces[0] != 1 {
+                error!("Namespace 1 is not active");
+                return Err(NVMEControllerError::NoNamespace);
             }
 
             let (frame, _pt_flags) = unmap_page!(page)?;
