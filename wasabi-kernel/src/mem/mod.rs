@@ -1,4 +1,29 @@
-//! module containing memory implementation
+//! # Memory and Type usage in the kernel
+//!
+//! ## Pointer Types
+//!
+//! * **Memory Mapped Pointers**:
+//!     In places where it is necessary to store memory mapped pointers,
+//!     when possible [NonNull] should be prefered to [VirtAddr].
+//!     Optional/Nullable pointers should be of type `Option<NonNull<T>>`.
+//! * **Unmapped Memory**:
+//!     When dealing with fixed static addresses that may not be mapped to physical
+//!     memory [VirtAddr] should be used.
+//! * **Physical Memory**:
+//!     [PhysAddr] is used to refer to physicall addresses.
+//!
+//! ## Data Structures
+//!
+//! Sometimes it is usefull to link the lifetime of a memory mapping to the lifetime
+//! of a data structure, e.g. when reading a file the lifetime of that mapping should
+//! match the lifetime of the file object.
+//!
+//! Data Structures that own a memory mapping should contain the following:
+//! 1. The page(s) that are mapped. This also includes any guard pages that are mapped to
+//!    non-physical memory.
+//! 2. The frame(s) that any pages are mapped to. In case of guard pages, there is no need to store
+//!    the guard frame (if any exists).
+//! 3. Non-reference pointers into the page(s) should be of type [NonNull] and not [VirtAddr].
 
 pub mod frame_allocator;
 pub mod kernel_heap;
