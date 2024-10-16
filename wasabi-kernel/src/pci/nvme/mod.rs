@@ -17,6 +17,7 @@ pub use generic_command::{
     CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
     GenericCommandStatus,
 };
+use io_commands::LBA;
 use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
 
 use self::properties::{
@@ -41,6 +42,7 @@ use crate::{
         CommonRegisterOffset, Device, RegisterAddress, PCI_ACCESS,
     },
     todo_error, unmap_page,
+    utils::log_hex_dump,
 };
 use admin_commands::{
     CompletionQueueCreationStatus, IdentifyNamespaceData, SubmissionQueueCreationStatus,
@@ -1169,7 +1171,6 @@ pub fn experiment_nvme_device() {
 
     info!("Controller cap: {:#?}", nvme_controller.capabilities());
 
-    /*
     nvme_controller
         .allocate_io_queues_with_sizes(1, 64, 64)
         .expect("Failed to allocate nvme command queue");
@@ -1228,7 +1229,6 @@ pub fn experiment_nvme_device() {
             bytes as usize,
         );
     }
-    */
 }
 
 fn get_controller_properties_address(pci: &mut PCIAccess, nvme: Device, function: u8) -> PhysAddr {
