@@ -6,11 +6,13 @@
 #![allow(missing_docs)] // TODO temp
 
 pub mod admin_commands;
+pub mod capabilities;
 mod generic_command;
 pub mod io_commands;
 pub mod properties;
 pub mod queue;
 
+use capabilities::{ControllerCapabilities, Fuses, OptionalAdminCommands};
 pub use generic_command::{
     CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
     GenericCommandStatus,
@@ -18,7 +20,7 @@ pub use generic_command::{
 use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
 
 use self::properties::{
-    AdminQueueAttributes, Capabilites, ControllerConfiguration, ControllerStatus,
+    AdminQueueAttributes, Capabilities, ControllerConfiguration, ControllerStatus,
 };
 use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
@@ -34,11 +36,13 @@ use crate::{
             },
             properties::ArbitrationMechanism,
         },
-        CommonRegisterOffset, Device, RegisterAddress, PCI_ACCESS,
+        CommonRegisterOffset, Device, RegisterAddress,
     },
     todo_error, unmap_page,
 };
-use admin_commands::{CompletionQueueCreationStatus, SubmissionQueueCreationStatus};
+use admin_commands::{
+    CompletionQueueCreationStatus, IdentifyNamespaceData, SubmissionQueueCreationStatus,
+};
 use alloc::vec::Vec;
 use bit_field::BitField;
 use core::{cmp::min, hint::spin_loop, sync::atomic::Ordering};
@@ -82,6 +86,8 @@ pub enum NVMEControllerError {
     IOQueueLimitReached(u16, u16),
     #[error("Failed to poll completions on the admin queue: {0}")]
     AdminQueuePollCompletions(PollCompletionError),
+    #[error("No NVM Namespace found")]
+    NoNamespace,
 }
 
 impl From<PageTableMapError> for NVMEControllerError {
@@ -121,6 +127,8 @@ pub struct NVMEController {
     next_unused_io_queue_ident: QueueIdentifier,
 
     maximum_queue_entries: u16,
+
+    capabilities: ControllerCapabilities,
 }
 
 impl NVMEController {
@@ -230,6 +238,7 @@ impl NVMEController {
             used_io_queues: Vec::new(),
             next_unused_io_queue_ident: QueueIdentifier(1),
             maximum_queue_entries: 0, // this starts at 1, as the admin queue takes up slot 0
+            capabilities: Default::default(),
         };
 
         // ensure admin head and tail were set using the correct stride
@@ -302,6 +311,7 @@ impl NVMEController {
         //      b. The memory page size should be initialized in CC.MPS;
         cc.arbitration_mechanism = ArbitrationMechanism::RoundRobbin;
         cc.memory_page_size = Size4KiB::SIZE as u32;
+        this.capabilities.memory_page_size = cc.memory_page_size;
         this.write_configuration(cc.clone());
 
         // 5. The host enables the controller by setting CC.EN to ‘1’;
@@ -318,7 +328,7 @@ impl NVMEController {
             let (page, frame) = map_frame!(Size4KiB, identy_result_pt_flags)?;
 
             let command = admin_commands::create_identify_command(
-                admin_commands::IdentifyNamespaceIdent::Controller,
+                admin_commands::ControllerOrNamespace::Controller,
                 frame,
             );
 
@@ -341,6 +351,11 @@ impl NVMEController {
                 // TODO get info about NVM IO command set. Do I need to do something here?
             }
 
+            this.capabilities.fuses = Fuses::from_bits_truncate(identify_data.fuses);
+            this.capabilities.optional_admin_commands = OptionalAdminCommands::from_bits_truncate(
+                identify_data.optional_admin_command_support,
+            );
+
             let (frame, _pt_flags) = unmap_page!(page)?;
             free_page!(page);
             unsafe {
@@ -360,7 +375,7 @@ impl NVMEController {
             //     i.  Issue the Identify command specifying the Identify I/O Command Set data structure (CNS
             //         1Ch); and
             let command = admin_commands::create_identify_command(
-                admin_commands::IdentifyNamespaceIdent::IOCommandSet { controller_id },
+                admin_commands::ControllerOrNamespace::IOCommandSet { controller_id },
                 frame,
             );
             let ident = this.admin_queue.submit(command)?;
@@ -519,12 +534,82 @@ impl NVMEController {
         // supported by the controller. The I/O Submission Queues are allocated using the Create I/O
         // Submission Queue command; and
 
+        // NOTE: step 10 and 11 are done using the allocate_io_queues function
+
         // 12. To enable asynchronous notification of optional events, the host should issue a Set Features
         // command specifying the events to enable. To enable asynchronous notification of events, the host
         // should submit an appropriate number of Asynchronous Event Request commands. This step may
         // be done at any point after the controller signals that the controller is ready (i.e., CSTS.RDY is set
         // to ‘1’).
         todo_warn!("enable async notification events, eg for errors");
+
+        {
+            // read namespace info to get block size
+            debug!("Assume that NVM namespace 1 is valid and active");
+
+            let identy_result_pt_flags =
+                PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
+            let (page, frame) = map_frame!(Size4KiB, identy_result_pt_flags)?;
+
+            let command = admin_commands::create_identify_command(
+                admin_commands::ControllerOrNamespace::Namespace { nsid: 1 },
+                frame,
+            );
+
+            let ident = this.admin_queue.submit(command)?;
+            this.admin_queue.flush();
+            let completion = this.admin_queue.wait_for(ident).expect(
+                "Wait for should always succeed because there is exactly 1 open submission",
+            );
+            if completion.status().is_err() {
+                error!("identify IO Command-Set command failed!");
+                return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
+            }
+
+            // Safety: we mapped this page earlier
+            let Some(identify_data) =
+                (unsafe { IdentifyNamespaceData::from_vaddr(page.start_address()) })
+            else {
+                error!("Could not find NVM Namespace 1");
+                return Err(NVMEControllerError::NoNamespace);
+            };
+
+            this.capabilities.lba_block_size = identify_data.active_lba_format().lba_data_size();
+            this.capabilities.namespace_size_blocks = identify_data.namespace_size;
+            this.capabilities.namespace_capacity_blocks = identify_data.namespace_capacity;
+            this.capabilities.namespace_features = identify_data.features;
+
+            // invalidate the reference into the page so we can reuse it
+            let _ = identify_data;
+
+            trace!("check that there is only 1 namespace");
+            let command = admin_commands::create_identify_command(
+                admin_commands::ControllerOrNamespace::Namespace { nsid: 2 },
+                frame,
+            );
+
+            let ident = this.admin_queue.submit(command)?;
+            this.admin_queue.flush();
+            let completion = this.admin_queue.wait_for(ident).expect(
+                "Wait for should always succeed because there is exactly 1 open submission",
+            );
+            if completion.status().is_err() {
+                error!("identify IO Command-Set command failed!");
+                return Err(NVMEControllerError::AdminCommandFailed(completion.status()));
+            }
+
+            // Safety: we mapped this page earlier
+            if unsafe { IdentifyNamespaceData::from_vaddr(page.start_address()) }.is_some() {
+                warn!("There is a second NVM namespace on the device");
+            }
+
+            let (frame, _pt_flags) = unmap_page!(page)?;
+            free_page!(page);
+            unsafe {
+                // frame is unmapped and no longer used
+                free_frame!(Size4KiB, frame);
+            }
+        }
 
         Ok(this)
     }
@@ -611,7 +696,7 @@ impl NVMEController {
         property.write(value)
     }
 
-    pub fn read_capabilities(&self) -> Capabilites {
+    pub fn read_capabilities(&self) -> Capabilities {
         self.read_property_64(0x0).into()
     }
 
@@ -1034,6 +1119,11 @@ impl NVMEController {
         }
         Ok(())
     }
+
+    /// The [Capabilites] of the controller
+    pub fn capabilities(&self) -> &ControllerCapabilities {
+        &self.capabilities
+    }
 }
 
 impl Drop for NVMEController {
@@ -1101,63 +1191,90 @@ impl Drop for NVMEController {
 }
 
 pub fn experiment_nvme_device() {
+    /*    assert!(locals!().is_bsp());
+
     let mut pci = PCI_ACCESS.lock();
 
     let nvme_device = pci
         .devices
         .iter()
-        .find(|dev| {
+        .filter(|dev| {
             matches!(
                 dev.class,
                 Class::Storage(StorageSubclass::NonVolatileMemory)
             )
         })
-        .unwrap()
-        .clone();
-    {
-        let mut nvme_controller = unsafe {
-            // TODO: Safety: we don't care during experiments
-            NVMEController::initialize(&mut pci, nvme_device, 0xffff)
-        }
-        .unwrap();
+        .nth(1)
+        .cloned()
+        .expect("Failed to find test nvme device");
 
-        nvme_controller
-            .allocate_io_queues_with_sizes(4, 192, 16)
-            .unwrap();
-
-        assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(4));
-        assert_eq!(Ok(()), nvme_controller.ensure_available_io_queues(8));
-
-        debug!("should be save to drop");
-        assert!(nvme_controller.is_safe_to_drop());
-        core::sync::atomic::fence(Ordering::SeqCst);
-
-        debug!("get queue");
-        let queue = nvme_controller.get_io_queue().unwrap();
-
-        core::sync::atomic::fence(Ordering::SeqCst);
-
-        debug!("should not be save to drop now!");
-        assert!(!nvme_controller.is_safe_to_drop());
-
-        core::sync::atomic::fence(Ordering::SeqCst);
-        drop(queue);
-
-        debug!("should be save to drop again");
-        core::sync::atomic::fence(Ordering::SeqCst);
-        assert!(nvme_controller.is_safe_to_drop());
-
-        core::sync::atomic::fence(Ordering::SeqCst);
-        let _queue = nvme_controller.get_io_queue().unwrap();
-        debug!("ensure drop order means that Strong<queue> is dropped before controller");
-    }
-    debug!("ensure controller can be recrated after drop");
     let mut nvme_controller = unsafe {
         // TODO: Safety: we don't care during experiments
         NVMEController::initialize(&mut pci, nvme_device, 0xffff)
     }
     .unwrap();
-    nvme_controller.ensure_available_io_queues(4).unwrap();
+
+    info!("Controller cap: {:#?}", nvme_controller.capabilities());
+
+    nvme_controller
+        .allocate_io_queues_with_sizes(1, 64, 64)
+        .expect("Failed to allocate nvme command queue");
+
+    let mut io_queue = nvme_controller
+        .get_io_queue()
+        .expect("We juste allocated a queue so where is it?");
+
+    let capabilities = nvme_controller.capabilities();
+
+    let blocks_to_read = min(4, capabilities.namespace_size_blocks);
+
+    let bytes = blocks_to_read * capabilities.lba_block_size;
+
+    let page_count = pages_required_for!(Size4KiB, bytes);
+    assert_eq!(page_count, 1, "TODO multipage not implemented");
+
+    let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
+    let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+
+    let pages = page_alloc.allocate_pages(page_count).unwrap();
+    // TODO I don't think I need consecutive frames. PRP lists should support separate frames
+    let frames = frame_alloc.alloc_range(page_count).unwrap();
+
+    drop(page_alloc);
+    drop(frame_alloc);
+
+    for (page, frame) in pages.iter().zip(frames) {
+        unsafe {
+            map_page!(
+                page,
+                Size4KiB,
+                PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT,
+                frame
+            )
+            .unwrap();
+        }
+    }
+
+    todo_warn!("Memory leak {page_count} pages for nvme read experiment");
+
+    let command = io_commands::create_read_command(frames.start, LBA::new(0), 1);
+    let ident = io_queue.submit(command).unwrap();
+
+    io_queue.flush();
+
+    let io_result = io_queue.wait_for(ident).unwrap();
+    io_result.status().assert_success();
+
+    unsafe {
+        log_hex_dump(
+            "NVME read first few blocks",
+            log::Level::Info,
+            module_path!(),
+            pages.start_addr(),
+            bytes as usize,
+        );
+    }
+    */
 }
 
 fn get_controller_properties_address(pci: &mut PCIAccess, nvme: Device, function: u8) -> PhysAddr {

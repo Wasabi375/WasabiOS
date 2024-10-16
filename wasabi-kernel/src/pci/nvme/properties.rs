@@ -14,7 +14,7 @@ use shared_derive::U8Enum;
 ///
 /// See: NVM Express Base Spec: Figure 36: Offset 0h: CAP
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Capabilites {
+pub struct Capabilities {
     /// The maximum size of IO submission and completion queues.
     ///
     /// This value must be 2 or greater
@@ -42,7 +42,7 @@ pub struct Capabilites {
     reserved_2: u8,
 }
 
-impl From<u64> for Capabilites {
+impl From<u64> for Capabilities {
     fn from(value: u64) -> Self {
         let maximum_queue_entries: u16 = value.get_bits(0..=15).try_into().unwrap();
         let contiguous_queues_required: bool = value.get_bit(16);
@@ -84,7 +84,7 @@ impl From<u64> for Capabilites {
     }
 }
 
-impl Into<u64> for Capabilites {
+impl Into<u64> for Capabilities {
     fn into(self) -> u64 {
         let doorbell_stride = self.doorbell_stride.ilog2() - 2;
         assert_eq!(
