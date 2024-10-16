@@ -9,6 +9,10 @@ mod features;
 mod identify;
 mod io_queue;
 
+// TODO most commands take a PhysAddr or PhysFrame as an argument.
+//      Using that is unsafe. Look into what functions need the unsafe keyword
+//      and where I can add better abstractions
+
 pub use features::*;
 pub use identify::*;
 pub use io_queue::*;

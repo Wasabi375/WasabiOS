@@ -70,9 +70,7 @@ pub unsafe fn init() {
     );
 
     let mut dispatch_logger = DispatchLogger::new()
-        .with_level(LevelFilter::Debug)
-        // .with_level(LevelFilter::Info)
-        // .with_level(LevelFilter::Trace)
+        .with_level(LevelFilter::Info)
      // comment to move ; to separate line - easy uncomment of module log levels
         ;
     #[cfg(not(feature = "test"))]
@@ -80,7 +78,7 @@ pub unsafe fn init() {
         dispatch_logger = dispatch_logger
             // .with_module_level("wasabi_kernel", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
-            .with_module_level("wasabi_kernel::cpu::acpi", LevelFilter::Trace)
+            // .with_module_level("wasabi_kernel::cpu::acpi", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu::apic", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
@@ -89,7 +87,8 @@ pub unsafe fn init() {
             // .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu::apic::ap_startup", LevelFilter::Debug)
             // .with_module_level("wasabi_kernel::panic", LevelFilter::Trace);
-            .with_module_level("wasabi_kernel::pci", LevelFilter::Trace)
+            // .with_module_level("wasabi_kernel::pci", LevelFilter::Trace)
+            .with_module_level("wasabi_kernel::pci::nvme", LevelFilter::Debug)
             // comment to move ; to separate line - easy uncomment of module log levels
             ;
     }

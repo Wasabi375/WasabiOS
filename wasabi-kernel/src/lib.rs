@@ -8,6 +8,8 @@
     ascii_char,
     assert_matches,
     box_into_inner,
+    debug_closure_helpers,
+    extern_types,
     let_chains,
     maybe_uninit_array_assume_init,
     maybe_uninit_uninit_array,
@@ -16,7 +18,7 @@
     ptr_alignment_type,
     result_flattening,
     stmt_expr_attributes,
-    extern_types
+    strict_overflow_ops
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![allow(rustdoc::private_intra_doc_links)]

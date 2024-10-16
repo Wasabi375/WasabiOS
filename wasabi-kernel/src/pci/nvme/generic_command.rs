@@ -1,6 +1,8 @@
 //! Data shared between all Command types
 //!
 
+use core::assert_matches::assert_matches;
+
 use bit_field::BitField;
 use shared_derive::U8Enum;
 use static_assertions::const_assert_eq;
@@ -251,6 +253,18 @@ impl CommandStatusCode {
     #[inline]
     pub fn is_success(self) -> bool {
         self == CommandStatusCode::GenericStatus(GenericCommandStatus::Success)
+    }
+
+    /// asserts that the status code does not represent any type of error.
+    ///
+    /// Same as [Self::is_success] but with a nicer debug print layout.
+    #[inline]
+    #[track_caller]
+    pub fn assert_success(self) {
+        assert_matches!(
+            self,
+            CommandStatusCode::GenericStatus(GenericCommandStatus::Success)
+        );
     }
 }
 
