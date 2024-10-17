@@ -6,6 +6,9 @@
 //!     In places where it is necessary to store memory mapped pointers,
 //!     when possible [NonNull] should be prefered to [VirtAddr].
 //!     Optional/Nullable pointers should be of type `Option<NonNull<T>>`.
+//! * **Untyped Mapped Pointers**
+//!     For untyped ptrs, e.g. stack or heap pointers, [UntypedPtr] should
+//!     be used. Again Optional/Nullable pointers should be of type `Option<UntypedPtr>`
 //! * **Unmapped Memory**:
 //!     When dealing with fixed static addresses that may not be mapped to physical
 //!     memory [VirtAddr] should be used.
@@ -24,12 +27,28 @@
 //! 2. The frame(s) that any pages are mapped to. In case of guard pages, there is no need to store
 //!    the guard frame (if any exists).
 //! 3. Non-reference pointers into the page(s) should be of type [NonNull] and not [VirtAddr].
+//!
+//! ## TODO
+//!
+//! * cpu
+//! * graphics
+//! * mem
+//! * pci
+//! * testing
+//! * core_local
+//! * logger
+//! * serial
+//! * time
+//! * utils
+//!
+//! [UntypedPtr]: ptr::UntypedPtr
 
 pub mod frame_allocator;
 pub mod kernel_heap;
 pub mod page_allocator;
 pub mod page_table;
 pub mod page_table_debug_ext;
+pub mod ptr;
 pub mod structs;
 
 use log::Level;
@@ -47,7 +66,7 @@ use bootloader_api::{
 };
 use core::{
     ops::{Deref, DerefMut},
-    ptr::{self, NonNull},
+    ptr::NonNull,
 };
 use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use thiserror::Error;
@@ -435,6 +454,9 @@ macro_rules! frames_required_for {
 }
 
 /// Extensiont trait for [VirtAddr]
+// TODO delete
+//  None of those operations are valid on unmapped memory. We should use NonNull or UntypedPtr for
+//  this
 pub trait VirtAddrExt {
     /// returns a [Volatile] that provides access to the value behind this address
     ///
@@ -467,7 +489,7 @@ impl VirtAddrExt for VirtAddr {
 
     unsafe fn zero_memory(self, bytes: usize) {
         let p: *mut u8 = self.as_mut_ptr();
-        ptr::write_bytes(p, 0, bytes);
+        core::ptr::write_bytes(p, 0, bytes);
     }
 }
 
