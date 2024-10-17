@@ -30,9 +30,6 @@
 //!
 //! ## TODO
 //!
-//! * cpu
-//!     * acpi
-//!     * interrupts
 //! * graphics
 //! * mem
 //! * pci

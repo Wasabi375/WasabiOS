@@ -134,6 +134,12 @@ impl From<NonNull<u8>> for UntypedPtr {
     }
 }
 
+impl Into<VirtAddr> for UntypedPtr {
+    fn into(self) -> VirtAddr {
+        VirtAddr::from_ptr(self.as_ptr::<u8>())
+    }
+}
+
 impl Pointer for UntypedPtr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Pointer::fmt(&self.0, f)

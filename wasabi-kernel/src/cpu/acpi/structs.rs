@@ -1,7 +1,9 @@
 use core::{mem::size_of, ptr::addr_of, str::from_utf8};
 
 use static_assertions::const_assert_eq;
-use x86_64::{PhysAddr, VirtAddr};
+use x86_64::PhysAddr;
+
+use crate::mem::ptr::UntypedPtr;
 
 use super::AcpiError;
 
@@ -74,9 +76,9 @@ impl XSDT {
     /// converts vaddr to [XSDT] and checks that it is valid
     ///
     /// # Safety: vaddr must point to valid XSDT struct
-    pub unsafe fn from_vaddr(vaddr: VirtAddr) -> Result<Self, AcpiError> {
+    pub unsafe fn from_ptr(ptr: UntypedPtr) -> Result<Self, AcpiError> {
         // see function definition
-        let header: &Header = unsafe { &*(vaddr.as_u64() as *const Header) };
+        let header: &Header = unsafe { ptr.as_ref() };
         header.verify("XSDT")?;
         if header.signature != *b"XSDT" {
             return Err(AcpiError::InvalidSignature("XSDT"));
@@ -118,9 +120,9 @@ impl AcpiTable {
     /// converts vaddr to [AcpiTable] and checks that it is valid
     ///
     /// # Safety: vaddr must point to valid [Header] struct followed by its data
-    pub unsafe fn from_vaddr(vaddr: VirtAddr) -> Result<Self, AcpiError> {
+    pub unsafe fn from_ptr(ptr: UntypedPtr) -> Result<Self, AcpiError> {
         // see function definition
-        let header: &Header = unsafe { &*(vaddr.as_u64() as *const Header) };
+        let header: &Header = unsafe { ptr.as_ref() };
         header.verify("XSDT entry")?;
 
         let this = match header.signature {
