@@ -128,6 +128,12 @@ impl UntypedPtr {
     }
 }
 
+impl<T: ?Sized> From<&T> for UntypedPtr {
+    fn from(value: &T) -> Self {
+        NonNull::from(value).cast::<u8>().into()
+    }
+}
+
 impl From<NonNull<u8>> for UntypedPtr {
     fn from(value: NonNull<u8>) -> Self {
         Self(value)

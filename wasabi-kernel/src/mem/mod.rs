@@ -36,9 +36,6 @@
 //! * testing
 //! * core_local
 //! * logger
-//! * serial
-//! * time
-//! * utils
 //!
 //! [UntypedPtr]: ptr::UntypedPtr
 

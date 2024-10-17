@@ -28,7 +28,7 @@ use crate::{
     free_frame, free_page, locals, map_frame, map_page,
     mem::{
         frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
-        page_table::PageTableMapError, MemError, VirtAddrExt,
+        page_table::PageTableMapError, ptr::UntypedPtr, MemError, VirtAddrExt,
     },
     pages_required_for,
     pci::{
@@ -1263,7 +1263,7 @@ pub fn experiment_nvme_device() {
             "NVME read first few blocks",
             log::Level::Info,
             module_path!(),
-            pages.start_addr(),
+            UntypedPtr::new(pages.start_addr()).unwrap(),
             bytes as usize,
         );
     }

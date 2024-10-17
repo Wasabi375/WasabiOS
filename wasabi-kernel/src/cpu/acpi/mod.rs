@@ -106,7 +106,7 @@ impl ACPI {
                 "XSDT: ",
                 log::Level::Debug,
                 module_path!(),
-                xsdt_ptr.into(),
+                xsdt_ptr,
                 xsdt.header.length as usize,
             );
 
@@ -114,7 +114,7 @@ impl ACPI {
                 "XSDT entries",
                 log::Level::Debug,
                 module_path!(),
-                xsdt_ptr.offset(36).into(),
+                xsdt_ptr.offset(36),
                 (xsdt.header.length - 36) as usize,
             );
         }
