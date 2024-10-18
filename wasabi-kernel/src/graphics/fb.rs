@@ -1,7 +1,7 @@
 //! utilites for framebuffer access
 // TODO rename file to frambuffer
 
-use core::slice;
+use core::ptr::NonNull;
 
 use crate::{
     graphics::Color,
@@ -11,7 +11,7 @@ use crate::{
 };
 use bootloader_api::info::{FrameBuffer as BootFrameBuffer, FrameBufferInfo, PixelFormat};
 use shared::sync::lockcell::LockCell;
-use x86_64::{structures::paging::Size4KiB, VirtAddr};
+use x86_64::structures::paging::Size4KiB;
 
 use super::canvas::Canvas;
 
@@ -48,7 +48,7 @@ impl FramebufferSource {
 /// A framebuffer used for rendering to the screen
 pub struct Framebuffer {
     /// The start address of the framebuffer
-    pub(super) start: VirtAddr,
+    pub(super) buffer: NonNull<[u8]>,
 
     /// the source of the fb memory
     source: FramebufferSource,
@@ -56,6 +56,9 @@ pub struct Framebuffer {
     /// info about the framebuffer memory layout
     pub info: FrameBufferInfo,
 }
+
+unsafe impl Send for Framebuffer {}
+unsafe impl Sync for Framebuffer {}
 
 impl Framebuffer {
     /// Allocates a new memory backed framebuffer
@@ -67,12 +70,16 @@ impl Framebuffer {
             .allocate_guarded_pages(page_count, true, true)?;
 
         let mapped_pages = pages.alloc_and_map()?;
-        let start = mapped_pages.start_addr();
+        let buffer = NonNull::slice_from_raw_parts(
+            NonNull::new(mapped_pages.start_addr().as_mut_ptr())
+                .expect("Allocated page should never be at 0"),
+            info.byte_len,
+        );
 
         let source = FramebufferSource::Owned(mapped_pages);
 
         Ok(Framebuffer {
-            start,
+            buffer,
             source,
             info,
         })
@@ -84,9 +91,9 @@ impl Framebuffer {
     ///
     /// `vaddr` must be a valid memory location with a lifetime of at least the result of
     /// this function, that cannot be accessed in any other way.
-    pub unsafe fn new_at_virt_addr(vaddr: VirtAddr, info: FrameBufferInfo) -> Self {
+    pub unsafe fn new_hardware(buffer: NonNull<[u8]>, info: FrameBufferInfo) -> Self {
         Framebuffer {
-            start: vaddr,
+            buffer,
             source: FramebufferSource::HardwareBuffer,
             info,
         }
@@ -95,22 +102,20 @@ impl Framebuffer {
     /// Gives read access to the buffer
     pub fn buffer(&self) -> &[u8] {
         // Safety: buffer_start + byte_len is memory owned by this framebuffer
-        unsafe { slice::from_raw_parts(self.start.as_ptr(), self.info.byte_len) }
+        unsafe { self.buffer.as_ref() }
     }
 
     /// Gives write access to the buffer
     pub fn buffer_mut(&mut self) -> &mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.start.as_mut_ptr(), self.info.byte_len) }
+        unsafe { self.buffer.as_mut() }
     }
 }
 
 impl From<BootFrameBuffer> for Framebuffer {
     fn from(value: BootFrameBuffer) -> Self {
-        // TODO use VirtAddr::from_slice once that is available
-        let start = VirtAddr::new(value.buffer() as *const [u8] as *const u8 as u64);
         // Safety: start points to valid FB memory,
         // since we got it from the bootloader framebuffer
-        unsafe { Self::new_at_virt_addr(start, value.info()) }
+        unsafe { Self::new_hardware(value.buffer().into(), value.info()) }
     }
 }
 
@@ -228,13 +233,14 @@ fn set_pixel_at_pos(buffer: &mut [u8], index: usize, color: Color, pixel_format:
 
 /// module containing startup/panic recovery functionality for the framebuffer
 pub mod startup {
+    use core::ptr::NonNull;
+
     use bootloader_api::info::{FrameBuffer, FrameBufferInfo, Optional};
-    use x86_64::VirtAddr;
 
     use crate::boot_info;
 
-    /// The start addr of the hardware framebuffer. Used during panic to recreate the fb
-    pub static mut HARDWARE_FRAMEBUFFER_START_INFO: Option<(VirtAddr, FrameBufferInfo)> = None;
+    /// The buffer and info of the hardware framebuffer. Used during panic to recreate the fb
+    pub static mut HARDWARE_FRAMEBUFFER_START_INFO: Option<(NonNull<[u8]>, FrameBufferInfo)> = None;
 
     /// Extracts the frambuffer from the boot info
     ///

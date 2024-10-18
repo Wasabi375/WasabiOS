@@ -30,7 +30,6 @@
 //!
 //! ## TODO
 //!
-//! * graphics
 //! * mem
 //! * pci
 //! * logger
