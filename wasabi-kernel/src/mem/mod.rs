@@ -33,8 +33,6 @@
 //! * graphics
 //! * mem
 //! * pci
-//! * testing
-//! * core_local
 //! * logger
 //!
 //! [UntypedPtr]: ptr::UntypedPtr
