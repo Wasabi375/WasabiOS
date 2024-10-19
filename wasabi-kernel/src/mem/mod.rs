@@ -48,7 +48,7 @@ use log::Level;
 use log::{debug, error, info, trace, warn};
 
 use crate::{
-    boot_info,
+    kernel_info::KernelInfo,
     mem::{page_table::KERNEL_PAGE_TABLE, page_table_debug_ext::PageTableDebugExt},
     prelude::LockCell,
 };
@@ -113,7 +113,7 @@ impl From<PageTableMapError> for MemError {
 ///
 /// # Safety:
 ///
-/// Must be called only once during kernel boot process. Requires locks and logging
+/// Must be called only once during kernel boot process on bsp. Requires locks and logging
 pub unsafe fn init() {
     let (level_4_page_table, _) = Cr3::read();
 
@@ -154,8 +154,7 @@ pub unsafe fn init() {
             );
         }
 
-        // Safety: during kernel boot
-        frame_allocator::init(&unsafe { boot_info() }.memory_regions);
+        frame_allocator::init(&KernelInfo::get().boot_info.memory_regions);
 
         page_allocator::init(&mut recursive_page_table);
     }
@@ -531,7 +530,7 @@ fn print_debug_info(
     recursive_page_table.print_all_mapped_regions(true, Level::Info);
 
     // TODO this is unsafe
-    let boot_info = unsafe { boot_info() };
+    let boot_info = &KernelInfo::get().boot_info;
 
     recursive_page_table.print_page_flags_for_vaddr(
         bootloader_page_table_vaddr,
@@ -540,7 +539,7 @@ fn print_debug_info(
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
-        VirtAddr::new(boot_info as *const BootInfo as u64),
+        VirtAddr::new(*boot_info as *const BootInfo as u64),
         level,
         Some("Boot Info"),
     );
@@ -599,8 +598,7 @@ fn print_debug_info(
 
 /// asserts that the given phys addr is not within the memory regions of the boot info
 fn assert_phys_not_available(addr: PhysAddr, message: &str) {
-    // TODO this is unsafe
-    let avail_mem = &unsafe { boot_info() }.memory_regions;
+    let avail_mem = &KernelInfo::get().boot_info.memory_regions;
 
     let available = avail_mem.iter().any(|region| {
         region.start <= addr.as_u64()

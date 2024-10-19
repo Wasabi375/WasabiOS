@@ -42,11 +42,12 @@ pub fn init(regions: &MemoryRegions) {
         trace!("regions: ");
         for region in regions.iter() {
             trace!(
-                "    {:?}: {:#X} - {:#X} | Size: {}",
+                "    {:?}: {:#X} - {:#X} | Size: {} bytes / {} page(s)",
                 region.kind,
                 region.start,
                 region.end - 1,
-                region.end - 1 - region.start
+                region.end - region.start,
+                (region.end - region.start) / 4096
             );
         }
     }
@@ -67,10 +68,11 @@ pub fn init(regions: &MemoryRegions) {
         info!("Available Physical Ranges:");
         for entry in ranges.entries() {
             debug!(
-                "    {:#X} - {:#X} | Size: {}",
+                "    {:#X} - {:#X} | Size: {} bytes / {} page(s)",
                 entry.start,
                 entry.end,
-                entry.end - entry.start
+                entry.end - entry.start,
+                (entry.end - entry.start) / 4096
             );
         }
     }

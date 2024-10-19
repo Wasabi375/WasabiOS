@@ -3,7 +3,7 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, log, trace, warn};
 
-use crate::prelude::UnwrapTicketLock;
+use crate::{kernel_info::KernelInfo, prelude::UnwrapTicketLock};
 use thiserror::Error;
 use x86_64::{
     structures::paging::{
@@ -132,20 +132,9 @@ pub trait RecursivePageTableExt {
 }
 
 /// get the recursive [PageTableIndex] of the page table, provided by the bootloader.
-/// TODO: remove pub. pub(super) is probably enough. This shouldn't be after the
-///     boot process is done anyways
 #[inline]
 pub fn recursive_index() -> PageTableIndex {
-    // TODO this is unsafe. I should extract the recursive index and store it where it's
-    // easy to access it
-    let boot_info = unsafe { crate::boot_info() };
-
-    let index = *boot_info
-        .recursive_index
-        .as_ref()
-        .expect("Expected boot info to contain recursive index");
-
-    PageTableIndex::new(index)
+    PageTableIndex::new(KernelInfo::get().recursive_index)
 }
 
 impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {

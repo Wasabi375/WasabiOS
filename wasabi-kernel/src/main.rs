@@ -13,8 +13,9 @@ use log::{debug, error, info, trace, warn};
 use bootloader_api::BootInfo;
 use shared::sync::lockcell::LockCell;
 use wasabi_kernel::{
-    boot_info, bootloader_config_common,
+    bootloader_config_common,
     cpu::{self, apic::timer::TimerConfig, interrupts::InterruptVector},
+    kernel_info::KernelInfo,
     pci, time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
@@ -34,7 +35,7 @@ fn kernel_main() -> ! {
 
     if locals!().is_bsp() {
         // TODO temp
-        info!("rsdp at: {:?}", unsafe { boot_info() }.rsdp_addr);
+        info!("rsdp at: {:?}", KernelInfo::get().boot_info.rsdp_addr);
         pci::pci_experiment();
     }
 

@@ -31,12 +31,20 @@ static KERNEL_PAGE_ALLOCATOR: UnwrapTicketLock<PageAllocator> =
 /// that a virt addr can point to.
 const MAX_VIRT_ADDR: u64 = 0x0000_ffff_ffff_ffff;
 
+/// the index of the first page that can be allocated by
+/// the kernel [PageAllocator].
+///
+/// It might be possible to allocate pages before this, but the allocator
+/// will not do so automatically.
+pub const MIN_ALLOCATED_PAGE: u64 = 2;
+
 /// initialize the kernel page allocator.
 ///
 /// The `page_table` is used to figure out, which part of the virt memory space
 /// was allready allocated by the bootloader, e.g. kerenel code, stack, etc
 pub fn init(page_table: &mut RecursivePageTable) {
     /// helper function to recursively iterate over l4, l3, l2 and l1 page tables
+    /// and remove the found pages from `vaddrs`
     fn recurse_page_tables(
         level: u8,
         page_table: &PageTable,
@@ -126,7 +134,7 @@ pub fn init(page_table: &mut RecursivePageTable) {
 
     let mut vaddrs = RangeSet::new();
     vaddrs.insert(Range {
-        start: 2 * Size4KiB::SIZE,
+        start: MIN_ALLOCATED_PAGE * Size4KiB::SIZE,
         end: MAX_VIRT_ADDR,
     });
 

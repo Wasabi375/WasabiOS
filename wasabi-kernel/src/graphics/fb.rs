@@ -237,7 +237,7 @@ pub mod startup {
 
     use bootloader_api::info::{FrameBuffer, FrameBufferInfo, Optional};
 
-    use crate::boot_info;
+    use crate::kernel_info::KernelInfo;
 
     /// The buffer and info of the hardware framebuffer. Used during panic to recreate the fb
     pub static mut HARDWARE_FRAMEBUFFER_START_INFO: Option<(NonNull<[u8]>, FrameBufferInfo)> = None;
@@ -246,10 +246,12 @@ pub mod startup {
     ///
     /// # Safety
     ///
-    /// this is racy and must only be called while only a single execution has access
-    pub unsafe fn take_boot_framebuffer() -> Option<FrameBuffer> {
-        let boot_info = unsafe { boot_info() };
-        let fb = core::mem::replace(&mut boot_info.framebuffer, Optional::None);
+    /// Must only be called on bsp during startup
+    pub fn take_boot_framebuffer() -> Option<FrameBuffer> {
+        let fb = core::mem::replace(
+            &mut KernelInfo::get_mut_for_bsp().boot_info.framebuffer,
+            Optional::None,
+        );
         fb.into_option()
     }
 }
