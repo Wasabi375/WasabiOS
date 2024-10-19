@@ -430,7 +430,6 @@ pub trait VirtAddrExt {
 #[allow(unsafe_op_in_unsafe_fn)]
 impl VirtAddrExt for VirtAddr {
     unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly> {
-        trace!("new volatile at {self:p}");
         let r: &T = &*self.as_ptr();
         Volatile::new_read_only(r)
     }
