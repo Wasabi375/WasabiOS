@@ -31,7 +31,6 @@
 //! ## TODO
 //!
 //! * mem
-//! * pci
 //! * logger
 //!
 //! [UntypedPtr]: ptr::UntypedPtr

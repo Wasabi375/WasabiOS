@@ -12,23 +12,12 @@ pub mod io_commands;
 pub mod properties;
 pub mod queue;
 
-use capabilities::{ControllerCapabilities, Fuses, OptionalAdminCommands};
-pub use generic_command::{
-    CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
-    GenericCommandStatus,
-};
-use io_commands::LBA;
-use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
-
-use self::properties::{
-    AdminQueueAttributes, Capabilities, ControllerConfiguration, ControllerStatus,
-};
 use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
     free_frame, free_page, locals, map_frame, map_page,
     mem::{
         frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
-        page_table::PageTableMapError, ptr::UntypedPtr, MemError, VirtAddrExt,
+        page_table::PageTableMapError, ptr::UntypedPtr, MemError,
     },
     pages_required_for,
     pci::{
@@ -47,8 +36,17 @@ use crate::{
 use admin_commands::{CompletionQueueCreationStatus, IdentifyNamespaceData};
 use alloc::vec::Vec;
 use bit_field::BitField;
+use capabilities::{ControllerCapabilities, Fuses, OptionalAdminCommands};
 use core::{cmp::min, hint::spin_loop, sync::atomic::Ordering};
 use derive_where::derive_where;
+pub use generic_command::{
+    CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
+    GenericCommandStatus,
+};
+use generic_command::{COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
+use io_commands::LBA;
+use properties::{AdminQueueAttributes, Capabilities, ControllerConfiguration, ControllerStatus};
+use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
 use shared::{
     alloc_ext::{Strong, Weak},
     sync::lockcell::LockCell,
@@ -56,18 +54,13 @@ use shared::{
 use thiserror::Error;
 use x86_64::{
     structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
-    PhysAddr, VirtAddr,
+    PhysAddr,
 };
 
 #[allow(unused_imports)]
 use crate::todo_warn;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
-
-/// The size of all submission command entries
-const SUBMISSION_COMMAND_ENTRY_SIZE: u64 = 64;
-/// The size of all completion command entries
-const COMPLETION_COMMAND_ENTRY_SIZE: u64 = 16;
 
 #[allow(missing_docs)]
 #[derive(Debug, PartialEq, Error, Clone)]
@@ -106,10 +99,10 @@ pub struct NVMEController {
     pci_dev: Device,
     controller_base_paddr: PhysAddr,
     controller_page: Page<Size4KiB>,
-    controller_base_vaddr: VirtAddr,
+    controller_base_ptr: UntypedPtr,
     doorbell_page: Page<Size4KiB>,
-    doorbell_base_vaddr: VirtAddr,
-    doorbell_stride: u64,
+    doorbell_base_ptr: UntypedPtr,
+    doorbell_stride: isize,
     admin_queue: CommandQueue,
 
     controller_id: Option<ControllerId>,
@@ -184,12 +177,17 @@ impl NVMEController {
             // Safety: only called once for frame, assuming function safety
             map_frame!(Size4KiB, properties_page_table_falgs, properties_frame).unwrap()
         };
-        let properties_base_vaddr = properties_page.start_address() + properties_frame_offset;
+        let properties_base_ptr = unsafe {
+            // Safety: We jsute mapped the page
+            UntypedPtr::new_from_page(properties_page)
+                .expect("Allocated page should not be the 0 page")
+                .add(properties_frame_offset as usize)
+        };
 
         trace!(
             "nvme controller properties at phys {:p} mapped to {:p}",
             properties_base_paddr,
-            properties_base_vaddr
+            properties_base_ptr
         );
 
         /// See NVME over PCIe Transport Spec: Figure 4: PCI Express Specific Property
@@ -201,15 +199,19 @@ impl NVMEController {
             // Safety: only called once for frame, assuming function safety
             map_frame!(Size4KiB, properties_page_table_falgs, doorbell_frame)?
         };
-        let doorbell_base: VirtAddr = doorbell_page.start_address();
+        let doorbell_base_ptr: UntypedPtr = unsafe {
+            UntypedPtr::new_from_page(doorbell_page)
+                .expect("Allocated page should never be the 0 page")
+        };
         trace!(
             "nvme controller doorbells starting at phys {:p} mapped to {:p}",
             doorbell_frame.start_address(),
-            doorbell_base
+            doorbell_base_ptr
         );
 
         // TODO figure out good admin queue size
-        const ADMIN_QUEUE_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE) as u16;
+        const ADMIN_QUEUE_SIZE: u16 =
+            (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE as u64) as u16;
         let admin_queue = unsafe {
             let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
             let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
@@ -221,7 +223,7 @@ impl NVMEController {
                 QueueIdentifier(0),
                 ADMIN_QUEUE_SIZE,
                 ADMIN_QUEUE_SIZE,
-                doorbell_base,
+                doorbell_base_ptr,
                 4,
                 &mut frame_allocator,
                 &mut page_allocator,
@@ -232,9 +234,9 @@ impl NVMEController {
             pci_dev,
             controller_base_paddr: properties_base_paddr,
             controller_page: properties_page,
-            controller_base_vaddr: properties_base_vaddr,
+            controller_base_ptr: properties_base_ptr,
             doorbell_page,
-            doorbell_base_vaddr: doorbell_base,
+            doorbell_base_ptr,
             doorbell_stride: 4,
             admin_queue,
             controller_id: None,
@@ -257,14 +259,14 @@ impl NVMEController {
                 // Safety: we just mapped the doorbell memory as part of properties.
                 // we overwrite the old references, thereby ensuring no aliasing is done
                 CommandQueue::get_doorbells(
-                    doorbell_base,
-                    cap.doorbell_stride as u64,
+                    doorbell_base_ptr,
+                    cap.doorbell_stride as isize,
                     QueueIdentifier(0),
                 )
             };
             this.admin_queue.submission_queue_tail_doorbell = sub_tail;
             this.admin_queue.completion_queue_head_doorbell = comp_head;
-            this.doorbell_stride = cap.doorbell_stride as u64;
+            this.doorbell_stride = cap.doorbell_stride as isize;
         }
 
         // 1. The host waits for the controller to indicate that any previous reset is complete by waiting for
@@ -702,39 +704,39 @@ impl NVMEController {
     }
 
     /// Read a raw 32bit property
-    fn read_property_32(&self, offset: u64) -> u32 {
-        assert!(offset + 4 < Size4KiB::SIZE);
+    fn read_property_32(&self, offset: isize) -> u32 {
+        assert!(offset + 4 < Size4KiB::SIZE as isize);
         let property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have shared access to self
-            (self.controller_base_vaddr + offset).as_volatile()
+            self.controller_base_ptr.offset(offset).as_volatile()
         };
         property.read()
     }
 
-    fn write_property_32(&mut self, offset: u64, value: u32) {
-        assert!(offset + 4 < Size4KiB::SIZE);
+    fn write_property_32(&mut self, offset: isize, value: u32) {
+        assert!(offset + 4 < Size4KiB::SIZE as isize);
         let mut property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have mutable access to self
-            (self.controller_base_vaddr + offset).as_volatile_mut()
+            self.controller_base_ptr.offset(offset).as_volatile_mut()
         };
         property.write(value)
     }
 
     /// Read a raw 64bit property
-    fn read_property_64(&self, offset: u64) -> u64 {
-        assert!(offset + 8 < Size4KiB::SIZE);
+    fn read_property_64(&self, offset: isize) -> u64 {
+        assert!(offset + 8 < Size4KiB::SIZE as isize);
         let property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have shared access to self
-            (self.controller_base_vaddr + offset).as_volatile()
+            self.controller_base_ptr.offset(offset).as_volatile()
         };
         property.read()
     }
 
-    fn write_property_64(&mut self, offset: u64, value: u64) {
-        assert!(offset + 8 < Size4KiB::SIZE);
+    fn write_property_64(&mut self, offset: isize, value: u64) {
+        assert!(offset + 8 < Size4KiB::SIZE as isize);
         let mut property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have mutable access to self
-            (self.controller_base_vaddr + offset).as_volatile_mut()
+            self.controller_base_ptr.offset(offset).as_volatile_mut()
         };
         property.write(value)
     }
@@ -874,8 +876,8 @@ impl NVMEController {
     ///
     /// The size of the queue is determined by the number of commands that fit into a single page
     pub fn allocate_io_queues(&mut self, count: u16) -> Result<(), NVMEControllerError> {
-        const COMP_SIZE: u16 = (Size4KiB::SIZE / COMPLETION_COMMAND_ENTRY_SIZE) as u16;
-        const SUB_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE) as u16;
+        const COMP_SIZE: u16 = (Size4KiB::SIZE / COMPLETION_COMMAND_ENTRY_SIZE as u64) as u16;
+        const SUB_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE as u64) as u16;
 
         const QUEUE_SIZE: u16 = if COMP_SIZE < SUB_SIZE {
             COMP_SIZE
@@ -936,7 +938,7 @@ impl NVMEController {
                     ident,
                     submission_queue_size,
                     completion_queue_size,
-                    self.doorbell_base_vaddr,
+                    self.doorbell_base_ptr,
                     self.doorbell_stride,
                     &mut frame_alloc,
                     &mut page_alloc,

@@ -8,7 +8,10 @@ use core::{
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use volatile::{access::ReadOnly, Volatile};
-use x86_64::VirtAddr;
+use x86_64::{
+    structures::paging::{Page, PageSize},
+    VirtAddr,
+};
 
 /// A ptr to an untyped region of memory.
 ///
@@ -29,6 +32,15 @@ impl UntypedPtr {
     pub unsafe fn new(vaddr: VirtAddr) -> Option<Self> {
         NonNull::new(vaddr.as_mut_ptr()).map(|ptr| ptr.into())
     }
+
+    /// Constructs a new [UntypedPtr]
+    ///
+    /// # Safety:
+    /// The caller must guarantee that the page is mapped in the current context
+    pub unsafe fn new_from_page<S: PageSize>(page: Page<S>) -> Option<Self> {
+        unsafe { Self::new(page.start_address()) }
+    }
+
     /// Constructs a new [UntypedPtr]
     ///
     /// # Safety:

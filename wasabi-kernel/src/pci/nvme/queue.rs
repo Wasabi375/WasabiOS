@@ -15,14 +15,14 @@ use thiserror::Error;
 use volatile::{access::WriteOnly, Volatile};
 use x86_64::{
     structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
-    PhysAddr, VirtAddr,
+    PhysAddr,
 };
 
 use crate::{
     map_page,
     mem::{
         frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
-        page_table::KERNEL_PAGE_TABLE, MemError, VirtAddrExt,
+        page_table::KERNEL_PAGE_TABLE, ptr::UntypedPtr, MemError,
     },
 };
 
@@ -76,7 +76,7 @@ pub struct CommandQueue {
 
     pub(super) submission_queue_size: u16,
     pub(super) submission_queue_paddr: PhysAddr,
-    pub(super) submission_queue_vaddr: VirtAddr,
+    pub(super) submission_queue_ptr: UntypedPtr,
 
     /// dorbell that is written to to inform the controller that
     /// new command entries have been submited
@@ -107,7 +107,7 @@ pub struct CommandQueue {
 
     pub(super) completion_queue_size: u16,
     pub(super) completion_queue_paddr: PhysAddr,
-    pub(super) completion_queue_vaddr: VirtAddr,
+    pub(super) completion_queue_ptr: UntypedPtr,
 
     /// dorbell that is written to to inform the controller that
     /// completion entries have been read, freeing the slots
@@ -149,9 +149,9 @@ impl CommandQueue {
     /// calculates the submission and completion doorbells for a [CommandQueue]
     ///
     /// # Arguments:
-    /// * `doorbell_base`: The [VirtAddr] for the first doorbell. This should
+    /// * `doorbell_base`: An [UntypedPtr] to the first doorbell. This should
     ///         be in the properties at offset `0x1000`
-    /// * `stride`: [properties::Capabilites::doorbell_stride] for this controller
+    /// * `stride`: [Capabilites::doorbell_stride] for this controller
     /// * `queue_index`: The index of the queue, starting at 0 for the admin queu
     ///         and iterating through the I/O queues
     ///
@@ -160,8 +160,8 @@ impl CommandQueue {
     /// `queue_index`.
     /// Caller must also ensure that no alias exists for the returned unique references
     pub(super) unsafe fn get_doorbells(
-        doorbell_base: VirtAddr,
-        stride: u64,
+        doorbell_base: UntypedPtr,
+        stride: isize,
         queue_index: QueueIdentifier,
     ) -> (
         Volatile<&'static mut u32, WriteOnly>,
@@ -169,8 +169,8 @@ impl CommandQueue {
     ) {
         assert!(stride >= 4);
 
-        let submission = doorbell_base + (queue_index.0 as u64 * stride * 2);
-        let completion = submission + stride;
+        let submission = doorbell_base.offset(queue_index.0 as isize * stride * 2);
+        let completion = submission.offset(stride);
 
         trace!("doorbells: sub {:p}, comp {:p}", submission, completion);
 
@@ -199,8 +199,8 @@ impl CommandQueue {
         queue_id: QueueIdentifier,
         submission_queue_size: u16,
         completion_queue_size: u16,
-        doorbell_base: VirtAddr,
-        queue_doorbell_stride: u64,
+        doorbell_base: UntypedPtr,
+        queue_doorbell_stride: isize,
         frame_allocator: &mut LockCellGuard<WasabiFrameAllocator<'static, Size4KiB>, L1>,
         page_allocator: &mut LockCellGuard<PageAllocator, L2>,
     ) -> Result<Self, NVMEControllerError>
@@ -222,14 +222,14 @@ impl CommandQueue {
             CommandQueue::get_doorbells(doorbell_base, queue_doorbell_stride, queue_id)
         };
 
-        let sub_memory_size = submission_queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE;
+        let sub_memory_size = submission_queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE as u64;
 
         if sub_memory_size > Size4KiB::SIZE {
             todo_error!("command queue larger than 1 page");
             return Err(NVMEControllerError::InvalidQueueSize(submission_queue_size));
         }
 
-        let comp_memory_size = completion_queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE;
+        let comp_memory_size = completion_queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE as u64;
         if comp_memory_size > Size4KiB::SIZE {
             todo_error!("command queue larger than 1 page");
             return Err(NVMEControllerError::InvalidQueueSize(completion_queue_size));
@@ -238,17 +238,18 @@ impl CommandQueue {
         let sub_frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
         let sub_page = page_allocator.allocate_page_4k()?;
         let submission_queue_paddr = sub_frame.start_address();
-        let submission_queue_vaddr = sub_page.start_address();
-
         let comp_frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
         let comp_page = page_allocator.allocate_page_4k()?;
         let completion_queue_paddr = comp_frame.start_address();
-        let completion_queue_vaddr = comp_page.start_address();
 
         let queue_pt_flags = PageTableFlags::PRESENT
             | PageTableFlags::WRITABLE
             | PageTableFlags::NO_CACHE
             | PageTableFlags::NO_EXECUTE;
+
+        let submission_queue_ptr;
+        let completion_queue_ptr;
+
         unsafe {
             // Safety: we just allocated page and frame
             map_page!(
@@ -259,9 +260,6 @@ impl CommandQueue {
                 frame_allocator.as_mut()
             )?;
 
-            // Safety: we just mapped this region of memory
-            submission_queue_vaddr.zero_memory(sub_memory_size as usize);
-
             // Safety: we just allocated page and frame
             map_page!(
                 comp_page,
@@ -271,18 +269,26 @@ impl CommandQueue {
                 frame_allocator.as_mut()
             )?;
 
-            // Safety: we just mapped this region of memory
-            completion_queue_vaddr.zero_memory(comp_memory_size as usize);
+            // Safety: we just mapped the page
+            submission_queue_ptr = UntypedPtr::new_from_page(sub_page)
+                .expect("Allocated page should never be the 0 page");
+
+            submission_queue_ptr.write_bytes(0, sub_memory_size as usize);
+
+            // Safety: we just mapped the page
+            completion_queue_ptr = UntypedPtr::new_from_page(comp_page)
+                .expect("Allocated page should never be the 0 page");
+            completion_queue_ptr.write_bytes(0, comp_memory_size as usize);
         }
 
         Ok(Self {
             id: queue_id,
             submission_queue_size,
             submission_queue_paddr,
-            submission_queue_vaddr,
+            submission_queue_ptr,
             completion_queue_size,
             completion_queue_paddr,
-            completion_queue_vaddr,
+            completion_queue_ptr,
             submission_queue_tail_doorbell: sub_tail_doorbell,
             submission_queue_tail: 0,
             submission_queue_tail_local: WrappingValue::zero(submission_queue_size),
@@ -328,9 +334,10 @@ impl CommandQueue {
         let entry_slot_index = self.submission_queue_tail_local.value();
         self.submission_queue_tail_local += 1;
 
-        let slot_vaddr = (self.submission_queue_vaddr
-            + (SUBMISSION_COMMAND_ENTRY_SIZE * entry_slot_index as u64))
-            .as_mut_ptr::<CommonCommand>();
+        let slot_vaddr = self
+            .submission_queue_ptr
+            .add(SUBMISSION_COMMAND_ENTRY_SIZE * entry_slot_index as usize)
+            .as_ptr::<CommonCommand>();
 
         assert!(slot_vaddr.is_aligned());
         unsafe {
@@ -459,11 +466,12 @@ impl CommandQueue {
     /// Only `submission_queue_head` is advanced. `completion_queue_head`
     /// and `completion_expected_phase` are left unchanged.
     fn poll_single_completion(&mut self) -> Result<bool, PollCompletionError> {
-        let slot_vaddr = self.completion_queue_vaddr
-            + (COMPLETION_COMMAND_ENTRY_SIZE * self.completion_queue_head.value() as u64);
-        let possible_completion = unsafe {
+        let slot_ptr = self
+            .completion_queue_ptr
+            .add(COMPLETION_COMMAND_ENTRY_SIZE * self.completion_queue_head.value() as usize);
+        let possible_completion: CommonCompletionEntry = unsafe {
             // Safety: completion queue is properly mapped for read access
-            slot_vaddr.as_ptr::<CommonCompletionEntry>().read_volatile()
+            slot_ptr.as_volatile().read()
         };
 
         if possible_completion.status_and_phase.phase() != self.completion_expected_phase {
@@ -475,11 +483,11 @@ impl CommandQueue {
         // For some reason qemu returns only a partial completion entry on first read.
         // It seems there is a race event in qemu or something.
         // We drop and read the completion again to ensure we don't encounter that race
-        drop(possible_completion);
+        let _ = possible_completion;
 
-        let completion = unsafe {
+        let completion: CommonCompletionEntry = unsafe {
             // Safety: completion queue is properly mapped for read access
-            slot_vaddr.as_ptr::<CommonCompletionEntry>().read_volatile()
+            slot_ptr.as_volatile().read()
         };
         assert_eq!(
             completion.status_and_phase.phase(),
@@ -632,16 +640,18 @@ impl CommandQueue {
 impl Drop for CommandQueue {
     fn drop(&mut self) {
         trace!("dropping command queue: {:?}", self.id);
-        let sub_memory_size = self.submission_queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE;
+        let sub_memory_size =
+            self.submission_queue_size as u64 * SUBMISSION_COMMAND_ENTRY_SIZE as u64;
         assert!(sub_memory_size <= Size4KiB::SIZE);
-        let sub_page = Page::<Size4KiB>::from_start_address(self.submission_queue_vaddr)
+        let sub_page = Page::<Size4KiB>::from_start_address(self.submission_queue_ptr.into())
             .expect("submission_queue_vaddr should be a page start");
         let sub_frame = PhysFrame::<Size4KiB>::from_start_address(self.submission_queue_paddr)
             .expect("submission_queue_paddr should be a frame start");
 
-        let comp_memory_size = self.completion_queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE;
+        let comp_memory_size =
+            self.completion_queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE as u64;
         assert!(comp_memory_size <= Size4KiB::SIZE);
-        let comp_page = Page::<Size4KiB>::from_start_address(self.completion_queue_vaddr)
+        let comp_page = Page::<Size4KiB>::from_start_address(self.completion_queue_ptr.into())
             .expect("completion_queue_vaddr should be a page start");
         let comp_frame = PhysFrame::<Size4KiB>::from_start_address(self.completion_queue_paddr)
             .expect("completion_queue_paddr should be a frame start");
