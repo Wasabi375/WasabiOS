@@ -7,10 +7,7 @@ use core::{hint::spin_loop, ops::Add};
 
 use alloc::{collections::VecDeque, vec::Vec};
 use derive_where::derive_where;
-use shared::{
-    math::WrappingValue,
-    sync::lockcell::{LockCell, LockCellGuard, LockCellInternal},
-};
+use shared::{math::WrappingValue, sync::lockcell::LockCell};
 use thiserror::Error;
 use volatile::{access::WriteOnly, Volatile};
 use x86_64::{
@@ -195,19 +192,15 @@ impl CommandQueue {
     ///     alive.
     /// * Caller ensures that all needed allocations on the [NVMEController] outlive this.
     /// * Caller must also ensure that the queue on the controller is disabled before dropping this.
-    pub(super) unsafe fn allocate<L1, L2>(
+    pub(super) unsafe fn allocate(
         queue_id: QueueIdentifier,
         submission_queue_size: u16,
         completion_queue_size: u16,
         doorbell_base: VirtAddr,
         queue_doorbell_stride: u64,
-        frame_allocator: &mut LockCellGuard<WasabiFrameAllocator<'static, Size4KiB>, L1>,
-        page_allocator: &mut LockCellGuard<PageAllocator, L2>,
-    ) -> Result<Self, NVMEControllerError>
-    where
-        L1: LockCellInternal<WasabiFrameAllocator<'static, Size4KiB>>,
-        L2: LockCellInternal<PageAllocator>,
-    {
+        frame_allocator: &mut WasabiFrameAllocator<'static, Size4KiB>,
+        page_allocator: &mut PageAllocator,
+    ) -> Result<Self, NVMEControllerError> {
         if submission_queue_size < 2 {
             return Err(NVMEControllerError::InvalidQueueSize(submission_queue_size));
         }
@@ -256,7 +249,7 @@ impl CommandQueue {
                 Size4KiB,
                 queue_pt_flags,
                 sub_frame,
-                frame_allocator.as_mut()
+                frame_allocator
             )?;
 
             // Safety: we just mapped this region of memory
@@ -268,7 +261,7 @@ impl CommandQueue {
                 Size4KiB,
                 queue_pt_flags,
                 comp_frame,
-                frame_allocator.as_mut()
+                frame_allocator
             )?;
 
             // Safety: we just mapped this region of memory
