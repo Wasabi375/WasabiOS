@@ -241,7 +241,9 @@ mod test {
         PageSize, PageTableFlags, Size4KiB, Translate,
     };
 
-    use crate::mem::{page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE, VirtAddrExt};
+    use crate::mem::{
+        page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE, ptr::UntypedPtr,
+    };
 
     #[kernel_test]
     fn alloc_guarded_page() -> Result<(), KernelTestError> {
@@ -305,7 +307,9 @@ mod test {
             unsafe {
                 // Safety: addr is a valid addr in an mapped page, and
                 // any ptr is alliged for u8
-                let mut ptr = addr_in_page.as_volatile_mut::<u8>();
+                let mut ptr = UntypedPtr::new(addr_in_page)
+                    .unwrap()
+                    .as_volatile_mut::<u8>();
                 ptr.write(12);
                 t_assert_eq!(ptr.read(), 12);
             }

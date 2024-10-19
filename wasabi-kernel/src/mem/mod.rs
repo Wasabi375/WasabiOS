@@ -56,16 +56,9 @@ use bootloader_api::{
     info::{FrameBuffer, MemoryRegionKind},
     BootInfo,
 };
-use core::{
-    ops::{Deref, DerefMut},
-    ptr::NonNull,
-};
+use core::ptr::NonNull;
 use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use thiserror::Error;
-use volatile::{
-    access::{ReadOnly, Readable, Writable},
-    Volatile,
-};
 use x86_64::{
     registers::{control::Cr3, read_rip},
     structures::paging::{PageTable, RecursivePageTable, Translate},
@@ -442,83 +435,6 @@ macro_rules! frames_required_for {
     (size: $size:literal, $bytes:expr) => {
         crate::pages_required_for!($size, $bytes)
     };
-}
-
-/// Extensiont trait for [VirtAddr]
-// TODO delete
-//  None of those operations are valid on unmapped memory. We should use NonNull or UntypedPtr for
-//  this
-pub trait VirtAddrExt {
-    /// returns a [Volatile] that provides access to the value behind this address
-    ///
-    /// Safety: VirtAddr must be a valid reference
-    unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly>;
-
-    /// returns a [Volatile] that provides access to the value behind this address
-    ///
-    /// Safety: VirtAddr must be a valid *mut* reference
-    unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T>;
-
-    /// zeroes the memory at `self` for `bytes` size
-    ///
-    /// Safety: VirtAddr must be a valid *mut* byte slice of size `bytes`
-    unsafe fn zero_memory(self, bytes: usize);
-}
-
-#[allow(unsafe_op_in_unsafe_fn)]
-impl VirtAddrExt for VirtAddr {
-    unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly> {
-        trace!("new volatile at {self:p}");
-        let r: &T = &*self.as_ptr();
-        Volatile::new_read_only(r)
-    }
-
-    unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T> {
-        let r: &mut T = &mut *self.as_mut_ptr();
-        Volatile::new(r)
-    }
-
-    unsafe fn zero_memory(self, bytes: usize) {
-        let p: *mut u8 = self.as_mut_ptr();
-        core::ptr::write_bytes(p, 0, bytes);
-    }
-}
-
-/// extension trait for [Volatile]
-pub trait VolatileExt<R, T, A>
-where
-    R: Deref<Target = T>,
-    T: Copy,
-{
-    /// reads the value, calls the `update` function and wirtes back the result.
-    ///
-    /// This is the same as calling
-    /// ```no_run
-    /// let value = volatile.read();
-    /// volatile.write(update(value));
-    /// ```
-    fn update<F>(&mut self, update: F)
-    where
-        A: Writable + Readable,
-        R: DerefMut,
-        F: FnOnce(T) -> T;
-}
-
-impl<R, T, A> VolatileExt<R, T, A> for Volatile<R, A>
-where
-    R: Deref<Target = T>,
-    T: Copy,
-{
-    fn update<F>(&mut self, update: F)
-    where
-        A: Writable + Readable,
-        R: DerefMut,
-        F: FnOnce(T) -> T,
-    {
-        let value = self.read();
-        let updated = update(value);
-        self.write(updated);
-    }
 }
 
 /// prints out some random data about maped pages and phys frames
