@@ -46,8 +46,14 @@ impl UntypedPtr {
     ///
     /// # Safety
     ///
-    /// This relies on [NonNull::offset] and follows the same safety requirments
-    pub unsafe fn offset(self, bytes: isize) -> UntypedPtr {
+    /// The safety requirements to create/deref a UntypedPtr requires
+    /// the ptr to be mapped, thereby guaranteeing that the offset is
+    /// part of the same [allocated object](https://doc.rust-lang.org/core/ptr/index.html#allocated-object)
+    pub fn offset(self, bytes: isize) -> UntypedPtr {
+        // Safety:
+        // The safety requirements to create/deref a UntypedPtr requires
+        // the ptr to be mapped, thereby guaranteeing that the offset is
+        // part of the same [allocated object](https://doc.rust-lang.org/core/ptr/index.html#allocated-object)
         unsafe { UntypedPtr(self.0.offset(bytes)) }
     }
 
@@ -58,8 +64,10 @@ impl UntypedPtr {
     ///
     /// # Safety
     ///
-    /// This relies on [NonNull::add] and follows the same safety requirments
-    pub unsafe fn add(self, bytes: usize) -> UntypedPtr {
+    /// The safety requirements to create/deref a UntypedPtr requires
+    /// the ptr to be mapped, thereby guaranteeing that the offset is
+    /// part of the same [allocated object](https://doc.rust-lang.org/core/ptr/index.html#allocated-object)
+    pub fn add(self, bytes: usize) -> UntypedPtr {
         unsafe { UntypedPtr(self.0.add(bytes)) }
     }
 
