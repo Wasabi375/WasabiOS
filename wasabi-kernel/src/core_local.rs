@@ -392,10 +392,14 @@ impl CoreInfo for CoreInterruptState {
 }
 
 impl InterruptState for CoreInterruptState {
+    #[track_caller]
+    #[inline(always)]
     fn in_interrupt(&self) -> bool {
         locals!().in_interrupt()
     }
 
+    #[track_caller]
+    #[inline(always)]
     fn in_exception(&self) -> bool {
         locals!().in_exception()
     }

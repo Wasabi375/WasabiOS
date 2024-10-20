@@ -46,18 +46,26 @@ impl CoreInfo for TestInterruptState {
 }
 
 impl InterruptState for TestInterruptState {
+    #[track_caller]
+    #[inline(always)]
     fn in_interrupt(&self) -> bool {
         interrupt_state().in_interrupt()
     }
 
+    #[track_caller]
+    #[inline(always)]
     fn in_exception(&self) -> bool {
         interrupt_state().in_exception()
     }
 
+    #[track_caller]
+    #[inline(always)]
     unsafe fn enter_lock(&self, disable_interrupts: bool) {
         unsafe { interrupt_state().enter_lock(disable_interrupts) }
     }
 
+    #[track_caller]
+    #[inline(always)]
     unsafe fn exit_lock(&self, enable_interrupts: bool) {
         unsafe { interrupt_state().exit_lock(enable_interrupts) }
     }
