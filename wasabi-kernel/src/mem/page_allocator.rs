@@ -37,7 +37,7 @@ const MAX_VIRT_ADDR: u64 = 0x0000_ffff_ffff_ffff;
 /// was allready allocated by the bootloader, e.g. kerenel code, stack, etc
 pub fn init(page_table: &mut RecursivePageTable) {
     /// helper function to recursively iterate over l4, l3, l2 and l1 page tables
-    fn recurse_page_tables(
+    fn recurse_page_tables_remove_mapped(
         level: u8,
         page_table: &PageTable,
         level_indices: [PageTableIndex; 4],
@@ -119,7 +119,7 @@ pub fn init(page_table: &mut RecursivePageTable) {
                 // safety: entry_table_vaddr is a valid pointer to the next level page table
                 // in a recursive page table
                 let entry_table: &PageTable = unsafe { &*(entry_table_vaddr as *const PageTable) };
-                recurse_page_tables(level - 1, &entry_table, level_indices, vaddrs);
+                recurse_page_tables_remove_mapped(level - 1, &entry_table, level_indices, vaddrs);
             }
         }
     }
@@ -132,12 +132,30 @@ pub fn init(page_table: &mut RecursivePageTable) {
 
     info!("PageAllocator init from page table");
     let recursive_index = page_table.recursive_index();
-    recurse_page_tables(
+    recurse_page_tables_remove_mapped(
         4,
         page_table.level_4_table(),
         [recursive_index; 4],
         &mut vaddrs,
     );
+
+    // remove page table range from vaddrs
+    let zero_index = PageTableIndex::new(0);
+    let max_index = PageTableIndex::new(511);
+    let page_table_start = RecursivePageTable::vaddr_from_index(
+        recursive_index,
+        zero_index,
+        zero_index,
+        zero_index,
+        0,
+    );
+    let page_table_end_inclusive =
+        RecursivePageTable::vaddr_from_index(recursive_index, max_index, max_index, max_index, 0);
+
+    vaddrs.remove(Range {
+        start: page_table_start.as_u64(),
+        end: page_table_end_inclusive.as_u64(),
+    });
 
     let mut page_allocator = PageAllocator { vaddrs };
     reserve_pages(&mut page_allocator);
@@ -371,5 +389,61 @@ impl PageAllocator {
 impl Default for PageAllocator {
     fn default() -> Self {
         PageAllocator::new()
+    }
+}
+
+#[cfg(feature = "test")]
+mod test {
+    use core::assert_matches::assert_matches;
+
+    use shared::sync::lockcell::LockCell;
+    use testing::{kernel_test, KernelTestError};
+    use x86_64::structures::paging::{Page, PageTableIndex, RecursivePageTable, Size4KiB};
+
+    use crate::mem::{
+        page_table::{RecursivePageTableExt, KERNEL_PAGE_TABLE},
+        MemError,
+    };
+
+    use super::PageAllocator;
+
+    #[kernel_test]
+    fn test_cannot_alloc_page_table_page() -> Result<(), KernelTestError> {
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let recursive_index = page_table.recursive_index();
+        drop(page_table);
+
+        let some_index = PageTableIndex::new(42);
+
+        let l4_vaddr = RecursivePageTable::l4_table_vaddr(recursive_index);
+        let l3_vaddr = RecursivePageTable::l3_table_vaddr(recursive_index, some_index);
+        let l2_vaddr = RecursivePageTable::l2_table_vaddr(recursive_index, some_index, some_index);
+        let l1_vaddr =
+            RecursivePageTable::l1_table_vaddr(recursive_index, some_index, some_index, some_index);
+
+        let mut alloc = PageAllocator::get_kernel_allocator().lock();
+
+        assert_matches!(
+            alloc.try_allocate_page(Page::<Size4KiB>::from_start_address(l4_vaddr).unwrap()),
+            Err(MemError::PageInUse),
+            "Allocating l4 page table page should not be possible"
+        );
+        assert_matches!(
+            alloc.try_allocate_page(Page::<Size4KiB>::from_start_address(l3_vaddr).unwrap()),
+            Err(MemError::PageInUse),
+            "Allocating l3 page table page should not be possible"
+        );
+        assert_matches!(
+            alloc.try_allocate_page(Page::<Size4KiB>::from_start_address(l2_vaddr).unwrap()),
+            Err(MemError::PageInUse),
+            "Allocating l2 page table page should not be possible"
+        );
+        assert_matches!(
+            alloc.try_allocate_page(Page::<Size4KiB>::from_start_address(l1_vaddr).unwrap()),
+            Err(MemError::PageInUse),
+            "Allocating l1 page table page should not be possible"
+        );
+
+        Ok(())
     }
 }
