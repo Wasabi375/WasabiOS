@@ -656,6 +656,7 @@ impl NVMEController {
             }
         }
 
+        debug!("NVME Controller initizalized");
         Ok(this)
     }
 

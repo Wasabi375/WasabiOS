@@ -129,6 +129,17 @@ pub trait RecursivePageTableExt {
 
     /// get the recursive [PageTableIndex] of this page table
     fn recursive_index(&mut self) -> PageTableIndex;
+
+    /// Calculate a [VirtAddr] based on the page table indices.
+    ///
+    /// The max value for the offset is `0xfff` or `4095`.
+    fn vaddr_from_index(
+        l4: PageTableIndex,
+        l3: PageTableIndex,
+        l2: PageTableIndex,
+        l1: PageTableIndex,
+        offset: u64,
+    ) -> VirtAddr;
 }
 
 /// get the recursive [PageTableIndex] of the page table, provided by the bootloader.
@@ -195,6 +206,25 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
         let l2: u64 = l2_index.into();
 
         let vaddr = (r << 39) | (l4 << 30) | (l3 << 21) | (l2 << 12);
+
+        VirtAddr::new(vaddr)
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    fn vaddr_from_index(
+        l4: PageTableIndex,
+        l3: PageTableIndex,
+        l2: PageTableIndex,
+        l1: PageTableIndex,
+        offset: u64,
+    ) -> VirtAddr {
+        let l4: u64 = l4.into();
+        let l3: u64 = l3.into();
+        let l2: u64 = l2.into();
+        let l1: u64 = l1.into();
+
+        let vaddr = (l4 << 39) | (l3 << 30) | (l2 << 21) | (l1 << 12) | offset & 0xfff;
 
         VirtAddr::new(vaddr)
     }
