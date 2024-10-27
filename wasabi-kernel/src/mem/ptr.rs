@@ -2,13 +2,18 @@
 
 use core::{
     fmt::{Debug, Pointer},
+    isize,
+    ops::Add,
     ptr::NonNull,
+    usize,
 };
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use shared::math::IntoU64;
 use volatile::{access::ReadOnly, Volatile};
 use x86_64::{
+    align_down, align_up,
     structures::paging::{Page, PageSize},
     VirtAddr,
 };
@@ -31,6 +36,14 @@ impl UntypedPtr {
     /// The caller must guarantee that `ptr` is mapped in the current context
     pub unsafe fn new(vaddr: VirtAddr) -> Option<Self> {
         NonNull::new(vaddr.as_mut_ptr()).map(|ptr| ptr.into())
+    }
+
+    /// Constructs a new [UntypedPtr]
+    ///
+    /// # Safety:
+    /// The caller must guarantee that `ptr` is mapped in the current context and not null
+    pub unsafe fn new_unchecked(vaddr: VirtAddr) -> Self {
+        unsafe { NonNull::new_unchecked(vaddr.as_mut_ptr()).into() }
     }
 
     /// Constructs a new [UntypedPtr]
@@ -146,6 +159,46 @@ impl UntypedPtr {
     pub unsafe fn write_bytes(self, val: u8, count: usize) {
         unsafe { self.0.write_bytes(val, count) }
     }
+
+    /// Align ptr upwards
+    ///
+    /// Returns the smallets pointer `p` with alignment `align` so that `p >= self`
+    pub fn align_up<U: IntoU64>(self, align: U) -> Self {
+        unsafe {
+            // Safety: self is mapped properly therefor this is also save. See Self::add
+            Self::new(VirtAddr::new(align_up(
+                self.as_ptr::<u8>() as usize as u64,
+                align.into(),
+            )))
+            .expect("Align up can never return 0, because self is not 0")
+        }
+    }
+
+    /// Align ptr downwards
+    ///
+    /// Returns the greates pointer `p` with alignment `align` so that `p <= self`
+    ///
+    /// Returns None if the alignment causes the pointer to become `0`
+    pub fn align_down<U: IntoU64>(self, align: U) -> Option<Self> {
+        unsafe {
+            // Safety: self is mapped properly therefor this is also save. See Self::add
+            Self::new(VirtAddr::new(align_down(
+                self.as_ptr::<u8>() as usize as u64,
+                align.into(),
+            )))
+        }
+    }
+
+    /// Checks whether the pointer has the demanded alignment.
+    pub fn is_aligned<U>(self, align: U) -> bool
+    where
+        U: IntoU64,
+    {
+        // Reference impl in VirtAddr uses align_down
+        // self.align_down(align) == Some(self)
+        // align up should work the same and that way we can skip the option.is_some test
+        self.align_up(align) == self
+    }
 }
 
 impl<T: ?Sized> From<&T> for UntypedPtr {
@@ -169,5 +222,21 @@ impl Into<VirtAddr> for UntypedPtr {
 impl Pointer for UntypedPtr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Pointer::fmt(&self.0, f)
+    }
+}
+
+impl Add<usize> for UntypedPtr {
+    type Output = Self;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        self.add(rhs)
+    }
+}
+
+impl Add<isize> for UntypedPtr {
+    type Output = Self;
+
+    fn add(self, rhs: isize) -> Self::Output {
+        self.offset(rhs)
     }
 }
