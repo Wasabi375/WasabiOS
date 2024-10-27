@@ -1,24 +1,6 @@
 //! A logger that prints all messages with a simple, readable output format.
 //!
-//! ```rust
-//! simple_logger::StaticLogger::new().env().init().unwrap();
-//!
-//! log::warn!("This is an example message.");
-//! ```
-//!
-//! Some shortcuts are available for common use cases.
-//!
-//! Just initialize logging without any configuration:
-//!
-//! ```rust
-//! simple_logger::init().unwrap();
-//! ```
-//!
-//! Hardcode a default log level:
-//!
-//! ```rust
-//! simple_logger::init_with_level(log::Level::Warn).unwrap();
-//! ```
+//! From: `<https://github.com/borntyping/rust-simple_logger/blob/main/src/lib.rs>`
 //!
 //! From: `<https://github.com/borntyping/rust-simple_logger/blob/main/src/lib.rs>`
 //!
@@ -55,16 +37,6 @@ use staticvec::StaticVec;
 #[cfg(feature = "color")]
 use colored::Color;
 
-/// Implements [`Log`] and a set of simple builder methods for configuration.
-///
-// TODO RefLogger Docs are outdated
-//  they reflect API and functionality of the SimpleLogger this is based off
-///
-/// Use the various "builder" methods on this struct to configure the logger,
-/// then call [`init`](StaticLogger::init) to configure the [`log`] crate.
-///
-/// This logger does not use any heap allocations. All data is stored in place.
-/// It can only store [`LevelFilter`]s for `N` log targets/modules and `R` rename mappings
 pub struct RefLogger<'a, W, L, CI, const N: usize = 126, const R: usize = 126> {
     /// The default logging level
     default_level: LevelFilter,
@@ -98,18 +70,7 @@ impl<'a, W, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
 where
     W: fmt::Write,
 {
-    /// Initializes the global logger with a StaticLogger instance with
-    /// default log level set to `Level::Trace`.
-    ///
-    /// ```no_run
-    /// use simple_logger::StaticLogger;
-    /// StaticLogger::new().env().init().unwrap();
-    /// log::warn!("This is an example message.");
-    /// ```
-    ///
-    /// [`init`]: #method.init
-    // TODO fix must use message
-    #[must_use = "You must call init() to begin logging"]
+    #[must_use]
     pub fn new(writer: &'a L) -> Self {
         RefLogger {
             // default is trace, because level filtering is done in dispatch logger
@@ -127,12 +88,7 @@ where
     /// Set the 'default' log level.
     ///
     /// You can override the default level for specific modules and their sub-modules using [`with_module_level`]
-    ///
-    /// This must be called before [`env`]. If called after [`env`], it will override the value loaded from the environment.
-    ///
-    /// [`env`]: #method.env
-    /// [`with_module_level`]: #method.with_module_level
-    #[must_use = "You must call init() to begin logging"]
+    #[must_use]
     pub fn with_level(mut self, level: LevelFilter) -> Self {
         self.default_level = level;
         self
@@ -144,31 +100,7 @@ where
     /// When both the level for a parent module as well as a child module are set,
     /// the more specific value is taken. If the log level for the same module is
     /// specified twice, the resulting log level is implementation defined.
-    ///
-    /// # Examples
-    ///
-    /// Silence an overly verbose crate:
-    ///
-    /// ```no_run
-    /// use simple_logger::StaticLogger;
-    /// use log::LevelFilter;
-    ///
-    /// StaticLogger::new().with_module_level("chatty_dependency", LevelFilter::Warn).init().unwrap();
-    /// ```
-    ///
-    /// Disable logging for all dependencies:
-    ///
-    /// ```no_run
-    /// use simple_logger::StaticLogger;
-    /// use log::LevelFilter;
-    ///
-    /// StaticLogger::new()
-    ///     .with_level(LevelFilter::Off)
-    ///     .with_module_level("my_crate", LevelFilter::Info)
-    ///     .init()
-    ///     .unwrap();
-    /// ```
-    #[must_use = "You must call init() to begin logging"]
+    #[must_use]
     pub fn with_module_level(mut self, target: &'static str, level: LevelFilter) -> Self {
         self.module_levels.push((target, level));
 
@@ -182,7 +114,7 @@ where
 
     /// Overrides the log color used for the specified level.
     #[cfg(feature = "color")]
-    #[must_use = "You must call init() to begin logging"]
+    #[must_use]
     pub fn with_level_color(mut self, level: Level, color: Color) -> Self {
         self.level_colors[level as usize] = color;
 
