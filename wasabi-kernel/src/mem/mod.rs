@@ -28,11 +28,6 @@
 //!    the guard frame (if any exists).
 //! 3. Non-reference pointers into the page(s) should be of type [NonNull] and not [VirtAddr].
 //!
-//! ## TODO
-//!
-//! * mem
-//! * logger
-//!
 //! [UntypedPtr]: ptr::UntypedPtr
 
 pub mod frame_allocator;
@@ -46,6 +41,7 @@ pub mod structs;
 use log::Level;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use ptr::UntypedPtr;
 
 use crate::{
     kernel_info::KernelInfo,
@@ -56,7 +52,6 @@ use bootloader_api::{
     info::{FrameBuffer, MemoryRegionKind},
     BootInfo,
 };
-use core::ptr::NonNull;
 use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use thiserror::Error;
 use x86_64::{
@@ -82,15 +77,15 @@ pub enum MemError {
     #[error("Page already in use")]
     PageInUse,
     #[error("Allocation size({size:#x}) is invalid. Expected: {expected:#x}")]
-    InvalidAllocSize { size: u64, expected: u64 },
+    InvalidAllocSize { size: usize, expected: usize },
     #[error("Allocation alignment({align:#x}) is invalid. Expected: {expected:#x}")]
-    InvalidAllocAlign { align: u64, expected: u64 },
+    InvalidAllocAlign { align: usize, expected: usize },
     #[error("Zero size allocation")]
     ZeroSizeAllocation,
-    #[error("Pointer was not allocated by this allocator")]
-    PtrNotAllocated(NonNull<u8>),
-    #[error("Failed to free ptr")]
-    FreeFailed(NonNull<u8>),
+    #[error("Pointer({0:p}) was not allocated by this allocator")]
+    PtrNotAllocated(UntypedPtr),
+    #[error("Failed to free ptr: {0:p}")]
+    FreeFailed(UntypedPtr),
     #[error("Page Table map failed: {0:?}")]
     PageTableMap(PageTableMapError),
 }
