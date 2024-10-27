@@ -272,6 +272,13 @@ impl CoreLocals {
 /// this functon must only be called once per CPU core, at the start of the execution.
 /// Also [`locals!`] does not return a static ref before [`init`] finished.
 pub unsafe fn core_boot() -> CoreId {
+    unsafe {
+        // Safety:
+        // we are still setting up all interrupt handlers, locks, etc so
+        // we can disable this now until everything is set up.
+        cpu::disable_interrupts();
+    }
+
     let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::AcqRel).into();
 
     // Safety: This is only safe as long as we are the only core
@@ -279,13 +286,6 @@ pub unsafe fn core_boot() -> CoreId {
     // We must not use this other than to take th boot_lock.
     // Only when we have the boot_lock, this is save to use.
     let boot_core_locals = unsafe { &mut *addr_of_mut!(BOOT_CORE_LOCALS) };
-
-    unsafe {
-        // Safety:
-        // we are still setting up all interrupt handlers, locks, etc so
-        // we can disable this now until everything is set up.
-        cpu::disable_interrupts();
-    }
 
     // This is critical for the safe access to boot_core_locals
     while boot_core_locals.boot_lock.load(Ordering::SeqCst) != core_id.0 {

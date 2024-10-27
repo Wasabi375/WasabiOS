@@ -1,4 +1,7 @@
 //! provides [GlobalAlloc] for the kernel
+//!
+
+pub mod early_heap;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -16,6 +19,7 @@ use core::{
     mem::{align_of, size_of, MaybeUninit},
     ops::DerefMut,
     ptr::{null_mut, NonNull},
+    sync::atomic::AtomicBool,
 };
 use linked_list_allocator::Heap as LinkedHeap;
 use shared::{sync::lockcell::LockCellInternal, KiB};
@@ -40,6 +44,9 @@ static KERNEL_HEAP: UnwrapTicketLock<KernelHeap> = unsafe { UnwrapTicketLock::ne
 /// holds ZST for [global_allocator]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: KernelHeapGlobalAllocator = KernelHeapGlobalAllocator;
+
+/// true if the kernel heap is initiaized.
+static KERNEL_HEAP_INIT: AtomicBool = AtomicBool::new(false);
 
 // TODO I set the wrong parent table flags in map calls
 //      I currently use `map_to` which sets `USER_ACCESSIBLE` which is not actually true
@@ -87,7 +94,7 @@ pub fn init() {
         kernel_lock.write(KernelHeap::new(pages.into()));
     }
 
-    // Safety: we hold the unit_lock so accessing the heap is valid.
+    // Safety: we hold the uninit_lock so accessing the heap is valid.
     // we don't use the lock so we can get at the static lifetime
     let heap: &mut KernelHeap = unsafe { UnwrapTicketLock::get_mut(&KERNEL_HEAP) };
     if let Err(e) = heap.init() {
@@ -102,7 +109,17 @@ struct KernelHeapGlobalAllocator;
 
 unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if !KERNEL_HEAP_INIT.load(core::sync::atomic::Ordering::Acquire) {
+            unsafe {
+                // Safety: only called while main heap is not initialized
+                // and the main heap is initialized early during boot process
+                return early_heap::alloc(layout);
+            }
+        }
+
+        // only log if we are using the main heap, logging might not be initialized
         trace!(target: "GlobalAlloc", "allocate {layout:?}");
+
         match KernelHeap::get().alloc(layout) {
             Ok(mem) => unsafe {
                 trace!(target: "GlobalAlloc", "allocating at {:p}", mem);
@@ -118,7 +135,19 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        if !KERNEL_HEAP_INIT.load(core::sync::atomic::Ordering::Acquire) {
+            // main heap is not init so all frees are within the early_heap
+            early_heap::free(ptr, layout);
+            return;
+        }
+
+        // only log if we are using the main heap, logging might not be initialized
         trace!(target: "GlobalAlloc", "free {ptr:p} - {layout:?}");
+
+        if early_heap::is_in_heap(ptr) {
+            early_heap::free(ptr, layout);
+        }
+
         // Safety: see safety guarantees of [GlobalAlloc]
         if let Some(non_null) = unsafe { UntypedPtr::new_from_raw(ptr) } {
             // Safety: see safety guarantees of [GlobalAlloc]
@@ -139,7 +168,7 @@ const SLAB_ALLOCATOR_SIZES_BYTES: [usize; 5] = [2, 4, 8, 16, 32];
 const SLAB_BLOCK_SIZE: usize = KiB!(1);
 
 /// The allocator trait used by the kernel
-trait Allocator {
+pub trait Allocator {
     /// allocate [Layout] and return either a non null [u8] pointer or [MemError]
     fn alloc(&self, layout: Layout) -> Result<UntypedPtr>;
 
@@ -154,7 +183,7 @@ trait Allocator {
 }
 
 /// Same allocator trait as [Allocator] but requires mut access to `self`
-trait MutAllocator {
+pub trait MutAllocator {
     /// allocate [Layout] and return either a non null [u8] pointer or [MemError]
     fn alloc(&mut self, layout: Layout) -> Result<UntypedPtr>;
 
