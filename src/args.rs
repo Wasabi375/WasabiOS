@@ -226,7 +226,7 @@ pub struct BuildOptions {
     pub target: Target,
 
     /// build features
-    #[arg(long)]
+    #[arg(long, short = 'F')]
     pub features: Vec<Feature>,
 
     /// build with all features, overwrites [features]
