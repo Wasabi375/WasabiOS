@@ -202,6 +202,8 @@ impl<'a> WasabiFrameAllocator<'a> {
         WasabiFrameAllocator {
             phys_alloc: phys_allocator,
             // first_unused_frame: null_mut(),
+            #[cfg(feature = "mem-backed-guard-page")]
+            guard_frame: None,
         }
     }
 
@@ -263,12 +265,12 @@ impl<'a> WasabiFrameAllocator<'a> {
     pub unsafe fn guard_frame(&mut self) -> Result<PhysFrame<Size4KiB>> {
         #[cfg(feature = "mem-backed-guard-page")]
         {
-            if let Ok(frame) = self.guard_frame {
+            if let Some(frame) = self.guard_frame {
                 return Ok(frame);
             }
-            let frame = self.alloc();
-            self.guard_frame = frame;
-            frame
+            let frame = self.alloc()?;
+            self.guard_frame = Some(frame);
+            Ok(frame)
         }
         #[cfg(not(feature = "mem-backed-guard-page"))]
         unsafe {

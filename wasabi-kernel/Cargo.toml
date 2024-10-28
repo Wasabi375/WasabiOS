@@ -9,7 +9,7 @@ default = []
 no-color = ["logger/no-color"]  
 no-unicode-log = ["shared/no-unicode-log"]
 test = ["dep:testing", "shared/test"]
-mem-backed-guard-page = []  # TODO broken I think, add to test
+mem-backed-guard-page = []  
 
 
 [dependencies]

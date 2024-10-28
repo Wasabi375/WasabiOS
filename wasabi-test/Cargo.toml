@@ -6,6 +6,8 @@ edition.workspace = true
 [features]
 no-color = ["wasabi-kernel/no-color"]
 test-tests = []
+mem-backed-guard-page = ["wasabi-kernel/mem-backed-guard-page"]
+
 default = []
 
 [dependencies]
