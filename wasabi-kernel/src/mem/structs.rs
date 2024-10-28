@@ -80,7 +80,7 @@ pub struct GuardedPages<S: PageSize> {
 impl GuardedPages<Size4KiB> {
     /// allocates [PhysFrames] and maps `self` to the allocated frames.
     pub fn alloc_and_map(self) -> Result<GuardedPages<Size4KiB>, MemError> {
-        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
 
         for page in self.iter() {
             let frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
@@ -139,7 +139,7 @@ impl GuardedPages<Size4KiB> {
     /// Safety:
     /// The caller must ensure that the pages are no longer used
     pub unsafe fn unmap_and_free(self) -> Result<GuardedPages<Size4KiB>, UnmapError> {
-        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         trace!("unmap guarded pages");

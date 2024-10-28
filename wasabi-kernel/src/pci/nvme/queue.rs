@@ -198,7 +198,7 @@ impl CommandQueue {
         completion_queue_size: u16,
         doorbell_base: UntypedPtr,
         queue_doorbell_stride: isize,
-        frame_allocator: &mut WasabiFrameAllocator<'static, Size4KiB>,
+        frame_allocator: &mut WasabiFrameAllocator<'static>,
         page_allocator: &mut PageAllocator,
     ) -> Result<Self, NVMEControllerError> {
         if submission_queue_size < 2 {
@@ -649,7 +649,7 @@ impl Drop for CommandQueue {
         let comp_frame = PhysFrame::<Size4KiB>::from_start_address(self.completion_queue_paddr)
             .expect("completion_queue_paddr should be a frame start");
 
-        let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
         let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 

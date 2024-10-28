@@ -214,7 +214,7 @@ impl NVMEController {
             (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE as u64) as u16;
         let admin_queue = unsafe {
             let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
-            let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+            let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
 
             // Safety: we just mapped the doorbell memory as part of properties.
             // We only create 1 queue with index 0 (admin) right here.
@@ -930,7 +930,7 @@ impl NVMEController {
             (0..count).map(|ident_offset| self.next_unused_io_queue_ident + ident_offset);
 
         let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut frame_alloc = WasabiFrameAllocator::get_for_kernel().lock();
 
         let mut error = None;
         let queues: Vec<_> = queue_idents
@@ -1226,7 +1226,7 @@ pub fn experiment_nvme_device() {
     assert_eq!(page_count, 1, "TODO multipage not implemented");
 
     let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-    let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+    let mut frame_alloc = WasabiFrameAllocator::get_for_kernel().lock();
 
     let pages = page_alloc.allocate_pages(page_count).unwrap();
     // TODO I don't think I need consecutive frames. PRP lists should support separate frames
@@ -1456,7 +1456,7 @@ mod test {
         assert_eq!(page_count, 1, "TODO multipage not implemented");
 
         let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut frame_alloc = WasabiFrameAllocator::get_for_kernel().lock();
 
         let pages = page_alloc.allocate_pages(page_count).unwrap();
         // TODO I don't think I need consecutive frames. PRP lists should support separate frames

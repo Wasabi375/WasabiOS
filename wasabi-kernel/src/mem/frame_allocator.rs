@@ -5,7 +5,6 @@ use log::{debug, error, info, trace, warn};
 
 use crate::prelude::{LockCell, UnwrapTicketLock};
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
-use core::marker::PhantomData;
 use shared::rangeset::{Range, RangeSet, RegionRequest};
 use x86_64::{
     structures::paging::{
@@ -15,23 +14,14 @@ use x86_64::{
     PhysAddr,
 };
 
-/// a typealias for [UnwrapTicketLock] around a [PhysAllocator]
-type LockedPhysAlloc = UnwrapTicketLock<PhysAllocator>;
-
 /// The global kernel phys allocator. This is used by the frame allocators to create frames
 // Safetey: this is initailized by [init] before it is used
-static GLOBAL_PHYS_ALLOCATOR: LockedPhysAlloc = unsafe { UnwrapTicketLock::new_uninit() };
+static GLOBAL_PHYS_ALLOCATOR: UnwrapTicketLock<PhysAllocator> =
+    unsafe { UnwrapTicketLock::new_uninit() };
+
 /// A [WasabiFrameAllocator] for 4KiB pages
 // Safetey: this is initailized by [init] before it is used
-static KERNEL_FRAME_ALLOCATOR_4K: UnwrapTicketLock<WasabiFrameAllocator<Size4KiB>> =
-    unsafe { UnwrapTicketLock::new_uninit() };
-/// A [WasabiFrameAllocator] for 2MiB pages
-// Safetey: this is initailized by [init] before it is used
-static KERNEL_FRAME_ALLOCATOR_2M: UnwrapTicketLock<WasabiFrameAllocator<Size2MiB>> =
-    unsafe { UnwrapTicketLock::new_uninit() };
-/// A [WasabiFrameAllocator] for 1GiB pages
-// Safetey: this is initailized by [init] before it is used
-static KERNEL_FRAME_ALLOCATOR_1G: UnwrapTicketLock<WasabiFrameAllocator<Size1GiB>> =
+static KERNEL_FRAME_ALLOCATOR: UnwrapTicketLock<WasabiFrameAllocator> =
     unsafe { UnwrapTicketLock::new_uninit() };
 
 /// initializes the frame allocators
@@ -96,13 +86,7 @@ pub fn init(regions: &MemoryRegions) {
         ranges.sum().expect("No physical memory found")
     );
 
-    KERNEL_FRAME_ALLOCATOR_4K
-        .lock_uninit()
-        .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
-    KERNEL_FRAME_ALLOCATOR_2M
-        .lock_uninit()
-        .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
-    KERNEL_FRAME_ALLOCATOR_1G
+    KERNEL_FRAME_ALLOCATOR
         .lock_uninit()
         .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
 }
@@ -191,64 +175,37 @@ struct UnusedFrame {
 }
 
 /// A PhysFrame Allocator
-pub struct WasabiFrameAllocator<'a, S> {
+pub struct WasabiFrameAllocator<'a> {
     /// the phys mem allocator used to allocate new frames, if we run out
-    phys_alloc: &'a LockedPhysAlloc,
+    phys_alloc: &'a UnwrapTicketLock<PhysAllocator>,
 
-    /// the size of frames this allocator uses
-    size: PhantomData<S>,
     // TODO implement free list
     // /// a free list of unused frames
     // first_unused_frame: *mut UnusedFrame,
     /// memory to back gurad pages
     #[cfg(feature = "mem-backed-guard-page")]
-    guard_frame: Option<PhysFrame<S>>,
+    guard_frame: Option<PhysFrame<Size4KiB>>,
 }
 
-impl WasabiFrameAllocator<'_, Size4KiB> {
+impl WasabiFrameAllocator<'_> {
     /// Get the 4KiB frame allocator
     pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
-        &KERNEL_FRAME_ALLOCATOR_4K
+        &KERNEL_FRAME_ALLOCATOR
     }
 }
 
-impl WasabiFrameAllocator<'_, Size2MiB> {
-    /// Get the 2MiB frame allocator
-    pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
-        &KERNEL_FRAME_ALLOCATOR_2M
-    }
-}
-
-impl WasabiFrameAllocator<'_, Size1GiB> {
-    /// Get the 1GiB frame allocator
-    pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
-        &KERNEL_FRAME_ALLOCATOR_1G
-    }
-}
-
-impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
+impl<'a> WasabiFrameAllocator<'a> {
     /// create a new allocator
-    fn new(phys_allocator: &'a LockedPhysAlloc) -> Self {
+    fn new(phys_allocator: &'a UnwrapTicketLock<PhysAllocator>) -> Self {
         WasabiFrameAllocator {
             phys_alloc: phys_allocator,
             // first_unused_frame: null_mut(),
-            size: PhantomData::default(),
         }
-    }
-
-    /// the page size in bytes
-    pub const fn page_size() -> u64 {
-        S::SIZE
-    }
-
-    /// the debug name of the page size
-    pub const fn page_size_debug_name() -> &'static str {
-        S::DEBUG_STR
     }
 
     /// allocate a new frame
     // TODO return Result<_, MemError>
-    pub fn alloc(&mut self) -> Option<PhysFrame<S>> {
+    pub fn alloc<S: PageSize>(&mut self) -> Option<PhysFrame<S>> {
         // if self.first_unused_frame.is_null() {
         return self.phys_alloc.lock().alloc();
         // }
@@ -257,7 +214,7 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
     }
 
     /// allocate a range of contigous frames
-    pub fn alloc_range(&mut self, count: u64) -> Option<PhysFrameRangeInclusive<S>> {
+    pub fn alloc_range<S: PageSize>(&mut self, count: u64) -> Option<PhysFrameRangeInclusive<S>> {
         return self.phys_alloc.lock().alloc_range(count);
     }
 
@@ -267,7 +224,7 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
     ///
     /// The caller must ensure that the passed frame is unused and not the
     /// [guard_frame]
-    pub unsafe fn free(&mut self, frame: PhysFrame<S>) {
+    pub unsafe fn free<S: PageSize>(&mut self, frame: PhysFrame<S>) {
         // TODO store unused frames in free list
 
         self.phys_alloc.lock().free(frame);
@@ -283,7 +240,7 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
     ///
     /// The Frame should only be used for guard pages and is not guaranteed to be a valid
     /// phyisical address
-    pub unsafe fn guard_frame(&mut self) -> Option<PhysFrame<S>> {
+    pub unsafe fn guard_frame<S: PageSize>(&mut self) -> Option<PhysFrame<S>> {
         #[cfg(feature = "mem-backed-guard-page")]
         {
             if let Some(frame) = self.guard_frame {
@@ -302,14 +259,42 @@ impl<'a, S: PageSize> WasabiFrameAllocator<'a, S> {
 
 // Safety: all frame allocations go through range-set which ensures that we
 // only return unique frames
-unsafe impl<S: PageSize> FrameAllocator<S> for WasabiFrameAllocator<'_, S> {
-    fn allocate_frame(&mut self) -> Option<PhysFrame<S>> {
+unsafe impl FrameAllocator<Size4KiB> for WasabiFrameAllocator<'_> {
+    fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
         self.alloc()
     }
 }
 
-impl<S: PageSize> FrameDeallocator<S> for WasabiFrameAllocator<'_, S> {
-    unsafe fn deallocate_frame(&mut self, frame: PhysFrame<S>) {
+impl FrameDeallocator<Size4KiB> for WasabiFrameAllocator<'_> {
+    unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
+        unsafe { self.free(frame) }
+    }
+}
+
+// Safety: all frame allocations go through range-set which ensures that we
+// only return unique frames
+unsafe impl FrameAllocator<Size2MiB> for WasabiFrameAllocator<'_> {
+    fn allocate_frame(&mut self) -> Option<PhysFrame<Size2MiB>> {
+        self.alloc()
+    }
+}
+
+impl FrameDeallocator<Size2MiB> for WasabiFrameAllocator<'_> {
+    unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size2MiB>) {
+        unsafe { self.free(frame) }
+    }
+}
+
+// Safety: all frame allocations go through range-set which ensures that we
+// only return unique frames
+unsafe impl FrameAllocator<Size1GiB> for WasabiFrameAllocator<'_> {
+    fn allocate_frame(&mut self) -> Option<PhysFrame<Size1GiB>> {
+        self.alloc()
+    }
+}
+
+impl FrameDeallocator<Size1GiB> for WasabiFrameAllocator<'_> {
+    unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size1GiB>) {
         unsafe { self.free(frame) }
     }
 }

@@ -68,8 +68,7 @@ pub fn init() {
         let mut page_table = KERNEL_PAGE_TABLE.lock();
         trace!("page table lock aquired");
 
-        let mut frame_allocator =
-            WasabiFrameAllocator::<KernelHeapPageSize>::get_for_kernel().lock();
+        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
         trace!("frame alloc lock aquired");
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 

@@ -189,9 +189,9 @@ macro_rules! map_frame {
     }};
     ($size: ident, $flags: expr) => {{
         let frame: Option<x86_64::structures::paging::PhysFrame<$size>> =
-            $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
+            $crate::mem::frame_allocator::WasabiFrameAllocator::get_for_kernel()
                 .lock()
-                .alloc();
+                .alloc::<$size>();
         match frame {
             // Safety: we allocated both the frame and page
             Some(frame) => unsafe { map_frame!($size, $flags, frame) }.map(|page| (page, frame)),
@@ -250,10 +250,10 @@ macro_rules! map_page {
     }};
 
     ($page: expr, $size: ident, $flags: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
-                .lock();
-        let frame: Option<x86_64::structures::paging::PhysFrame<$size>> = frame_alloc.alloc();
+        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator =
+            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::get_for_kernel().lock();
+        let frame: Option<x86_64::structures::paging::PhysFrame<$size>> =
+            frame_alloc.alloc::<$size>();
 
         frame
             .ok_or_else(|| $crate::mem::page_table::PageTableMapError::FrameAllocationFailed)
@@ -262,9 +262,8 @@ macro_rules! map_page {
     }};
 
     ($page: expr, $size: ident, $flags: expr, $frame: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
-                .lock();
+        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator =
+            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::get_for_kernel().lock();
         map_page!($page, $size, $flags, $frame, frame_alloc)
     }};
 
@@ -370,10 +369,9 @@ macro_rules! free_page {
 #[macro_export]
 macro_rules! free_frame {
     ($size:ident, $frame: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
-                .lock();
-        frame_alloc.free($frame);
+        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator =
+            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::get_for_kernel().lock();
+        frame_alloc.free::<$size>($frame);
     }};
 }
 

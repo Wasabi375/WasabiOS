@@ -257,8 +257,8 @@ mod test {
             .lock()
             .allocate_page::<Size4KiB>()
             .tunwrap()?;
-        let frame_alloc: &mut WasabiFrameAllocator<Size4KiB> =
-            &mut WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let frame_alloc: &mut WasabiFrameAllocator =
+            &mut WasabiFrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
@@ -292,8 +292,8 @@ mod test {
             .lock()
             .allocate_page::<Size4KiB>()
             .tunwrap()?;
-        let frame_alloc: &mut WasabiFrameAllocator<Size4KiB> =
-            &mut WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let frame_alloc: &mut WasabiFrameAllocator =
+            &mut WasabiFrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
         unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
             .map(|flusher| flusher.flush())
@@ -384,7 +384,7 @@ mod test {
         let mut pages: [Option<Page<Size4KiB>>; PAGE_COUNT] = [None; PAGE_COUNT];
 
         let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut frame_alloc = WasabiFrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         for (idx, p) in pages.iter_mut().enumerate() {
