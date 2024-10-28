@@ -33,7 +33,7 @@ use shared::sync::{lockcell::LockCell, CoreInfo};
 use staticvec::StaticVec;
 
 #[cfg(feature = "color")]
-use colored::Color;
+use crate::color::Color;
 
 pub struct OwnLogger<W, L, CI, const N: usize = 126, const R: usize = 126> {
     /// The default logging level

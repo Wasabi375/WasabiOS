@@ -5,23 +5,20 @@
     maybe_uninit_uninit_array,
     maybe_uninit_slice,
     let_chains,
-    downcast_unchecked
+    downcast_unchecked,
+    box_into_inner
 )]
-#![cfg_attr(feature = "alloc", feature(box_into_inner))]
 #![warn(missing_docs)]
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
+pub mod alloc_ext;
 pub mod cpu;
 pub mod math;
 pub mod primitive_enum;
 pub mod rangeset;
 pub mod sync;
 pub mod types;
-
-#[cfg(feature = "alloc")]
-pub mod alloc_ext;
 
 /// Calculat the number of bytes in n kilo bytes
 #[macro_export]

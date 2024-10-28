@@ -278,7 +278,6 @@ pub enum WorkspacePackage {
     Shared,
     Logger,
     Staticvec,
-    Colored,
     InterruptFnBuilder,
     Testing,
     Testing_Derive,

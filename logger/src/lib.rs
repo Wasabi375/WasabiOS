@@ -1,8 +1,9 @@
 #![no_std]
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "color")]
+pub mod color;
 pub mod dispatch;
 mod own_logger;
 mod ref_logger;
@@ -10,14 +11,13 @@ mod ref_logger;
 use core::{fmt::Write, marker::PhantomData};
 
 #[cfg(feature = "color")]
-use colored::{Color, ColoredString, Colorize};
+use color::{write_ansi_fg_color, Color, ANSI_RESET};
 
 pub use dispatch::DispatchLogger;
 use log::Record;
 pub use own_logger::OwnLogger;
 pub use ref_logger::RefLogger;
 use shared::sync::CoreInfo;
-use staticvec::StaticString;
 
 pub struct FlushError {}
 
@@ -114,15 +114,8 @@ fn write_log_level<W: Write, CI>(
     let level = record.level();
     if cfg!(feature = "color") {
         let color = opts.level_colors[level as usize];
-        let mut level_str: StaticString<6> = StaticString::new();
-        write!(level_str, "{:<5}", level.as_str())
-            .expect("StaticString of size 6 should be enough for the level");
-        let level: ColoredString<50> = level_str
-            .as_str()
-            .color(color)
-            .expect("StaticString of size 50 should be enough for the level + color");
-
-        writer.write_fmt(format_args!("{}", level))?;
+        write_ansi_fg_color(writer, color)?;
+        writer.write_fmt(format_args!("{:<5}{}", level, ANSI_RESET))?;
     } else {
         writer.write_fmt(format_args!("{:<5}", level))?;
     };

@@ -22,7 +22,6 @@ ureq = "2.10.1"
 
 [workspace]
 members = [
-    "colored",
     "interrupt-fn-builder",
     "logger",
     "shared",
