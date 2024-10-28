@@ -90,3 +90,15 @@ pub fn used() -> usize {
 pub fn unused() -> usize {
     EARLY_HEAP_SIZE - used()
 }
+
+/// REturns the number of bytes freed in the early boot allocator
+pub fn freed() -> usize {
+    EARLY_HEAP_FREED.load(Ordering::Acquire)
+}
+
+/// The number of bytes allcoated oin the early boot allocator
+///
+/// This differs from [used], because this does not count alignment
+pub fn allocated() -> usize {
+    EARLY_HEAP_ALLOCATED.load(Ordering::Acquire)
+}

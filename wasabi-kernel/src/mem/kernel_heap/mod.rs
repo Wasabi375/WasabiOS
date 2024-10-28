@@ -19,7 +19,7 @@ use core::{
     mem::{align_of, size_of, MaybeUninit},
     ops::DerefMut,
     ptr::{null_mut, NonNull},
-    sync::atomic::AtomicBool,
+    sync::atomic::{AtomicBool, Ordering},
 };
 use linked_list_allocator::Heap as LinkedHeap;
 use shared::{sync::lockcell::LockCellInternal, KiB};
@@ -101,6 +101,17 @@ pub fn init() {
         panic!("KernelHeap::new(): {e:?}")
     };
 
+    KERNEL_HEAP_INIT.store(true, Ordering::SeqCst);
+    debug!(
+        "early kernel heap memory stats: {} used of {} total. {}({}%) freed",
+        early_heap::used(),
+        early_heap::EARLY_HEAP_SIZE,
+        early_heap::freed(),
+        early_heap::freed() as f32 / early_heap::allocated() as f32
+    );
+    if early_heap::used() > 0 {
+        warn!("Early heap used. Ensure this was intentional and update this check");
+    }
     trace!("kernel init done");
 }
 
@@ -109,7 +120,7 @@ struct KernelHeapGlobalAllocator;
 
 unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if !KERNEL_HEAP_INIT.load(core::sync::atomic::Ordering::Acquire) {
+        if !KERNEL_HEAP_INIT.load(Ordering::Acquire) {
             unsafe {
                 // Safety: only called while main heap is not initialized
                 // and the main heap is initialized early during boot process
@@ -135,7 +146,7 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if !KERNEL_HEAP_INIT.load(core::sync::atomic::Ordering::Acquire) {
+        if !KERNEL_HEAP_INIT.load(Ordering::Acquire) {
             // main heap is not init so all frees are within the early_heap
             early_heap::free(ptr, layout);
             return;
