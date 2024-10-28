@@ -29,6 +29,13 @@ pub trait PageTableKernelFlags {
         flags = flags.union(PageTableFlags::GUARD);
         flags
     };
+
+    /// The flags used for the page table pages
+    const KERNEL_TABLE_FLAGS: PageTableFlags = {
+        let mut flags = PageTableFlags::PRESENT;
+        flags = flags.union(PageTableFlags::WRITABLE);
+        flags
+    };
 }
 
 impl PageTableKernelFlags for PageTableFlags {}
@@ -232,10 +239,7 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
 
 #[cfg(feature = "test")]
 mod test {
-    use crate::{
-        map_page,
-        mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator},
-    };
+    use crate::mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator};
     use shared::sync::lockcell::LockCell;
     use testing::{
         kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
@@ -341,6 +345,10 @@ mod test {
         ];
         let mut pages: [Option<Page<Size4KiB>>; START_ADDRS.len()] = [None; START_ADDRS.len()];
 
+        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
+
         for (i, p) in &mut pages.iter_mut().enumerate() {
             t_assert_eq!(&None, p);
 
@@ -349,13 +357,23 @@ mod test {
                 .map_err_debug_display()
                 .tunwrap()?;
 
-            PageAllocator::get_kernel_allocator()
-                .lock()
-                .try_allocate_page(page)
-                .tunwrap()?;
+            page_allocator.try_allocate_page(page).tunwrap()?;
 
             debug!("Map page {:?}", page);
-            unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap()?;
+            let frame = frame_allocator.alloc_4k().tunwrap()?;
+            unsafe {
+                page_table
+                    .map_to_with_table_flags(
+                        page,
+                        frame,
+                        PageTableFlags::PRESENT,
+                        PageTableFlags::KERNEL_TABLE_FLAGS,
+                        frame_allocator.as_mut(),
+                    )
+                    .map_err_debug_display()
+                    .tunwrap()?
+                    .flush();
+            }
 
             *p = Some(page);
         }
@@ -366,13 +384,9 @@ mod test {
             };
             trace!("unmap page {:?}", page);
 
-            let (_, _, flush) = KERNEL_PAGE_TABLE
-                .lock()
-                .unmap(page)
-                .map_err_debug_display()
-                .tunwrap()?;
+            let (_, _, flush) = page_table.unmap(page).map_err_debug_display().tunwrap()?;
             flush.flush();
-            PageAllocator::get_kernel_allocator().lock().free_page(page);
+            page_allocator.free_page(page);
         }
 
         Ok(())

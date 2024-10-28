@@ -11,16 +11,18 @@ use shared::{math::WrappingValue, sync::lockcell::LockCell};
 use thiserror::Error;
 use volatile::{access::WriteOnly, Volatile};
 use x86_64::{
-    structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
+    structures::paging::{
+        Mapper, Page, PageSize, PageTableFlags, PhysFrame, RecursivePageTable, Size4KiB,
+    },
     PhysAddr,
 };
 
-use crate::{
-    map_page,
-    mem::{
-        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
-        page_table::KERNEL_PAGE_TABLE, ptr::UntypedPtr, MemError,
-    },
+use crate::mem::{
+    frame_allocator::WasabiFrameAllocator,
+    page_allocator::PageAllocator,
+    page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+    ptr::UntypedPtr,
+    MemError,
 };
 
 use super::{
@@ -200,6 +202,7 @@ impl CommandQueue {
         queue_doorbell_stride: isize,
         frame_allocator: &mut WasabiFrameAllocator<'static>,
         page_allocator: &mut PageAllocator,
+        page_table: &mut RecursivePageTable,
     ) -> Result<Self, NVMEControllerError> {
         if submission_queue_size < 2 {
             return Err(NVMEControllerError::InvalidQueueSize(submission_queue_size));
@@ -228,10 +231,10 @@ impl CommandQueue {
             return Err(NVMEControllerError::InvalidQueueSize(completion_queue_size));
         }
 
-        let sub_frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
+        let sub_frame = frame_allocator.alloc()?;
         let sub_page = page_allocator.allocate_page_4k()?;
         let submission_queue_paddr = sub_frame.start_address();
-        let comp_frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
+        let comp_frame = frame_allocator.alloc()?;
         let comp_page = page_allocator.allocate_page_4k()?;
         let completion_queue_paddr = comp_frame.start_address();
 
@@ -245,22 +248,27 @@ impl CommandQueue {
 
         unsafe {
             // Safety: we just allocated page and frame
-            map_page!(
-                sub_page,
-                Size4KiB,
-                queue_pt_flags,
-                sub_frame,
-                frame_allocator
-            )?;
-
+            page_table
+                .map_to_with_table_flags(
+                    sub_page,
+                    sub_frame,
+                    queue_pt_flags,
+                    PageTableFlags::KERNEL_TABLE_FLAGS,
+                    frame_allocator,
+                )
+                .map_err(MemError::from)?
+                .flush();
             // Safety: we just allocated page and frame
-            map_page!(
-                comp_page,
-                Size4KiB,
-                queue_pt_flags,
-                comp_frame,
-                frame_allocator
-            )?;
+            page_table
+                .map_to_with_table_flags(
+                    comp_page,
+                    comp_frame,
+                    queue_pt_flags,
+                    PageTableFlags::KERNEL_TABLE_FLAGS,
+                    frame_allocator,
+                )
+                .map_err(MemError::from)?
+                .flush();
 
             // Safety: we just mapped the page
             submission_queue_ptr = UntypedPtr::new_from_page(sub_page)
@@ -655,11 +663,11 @@ impl Drop for CommandQueue {
 
         let (_, _, flush) = page_table
             .unmap(sub_page)
-            .expect("failed to unmap submission queue page");
+            .expect("Failed to unmap submission queue page");
         flush.flush();
         let (_, _, flush) = page_table
             .unmap(comp_page)
-            .expect("failed to unmap submission queue page");
+            .expect("failed to unmap completion queue page");
         flush.flush();
 
         unsafe {

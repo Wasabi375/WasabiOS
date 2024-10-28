@@ -27,10 +27,13 @@ use log::{debug, error, info, trace, warn};
 use crate::{
     core_local::{get_ready_core_count, get_started_core_count},
     cpu::apic::ipi::{self, Ipi},
-    enter_kernel_main, locals, map_page,
+    enter_kernel_main, locals,
     mem::{
-        frame_allocator::PhysAllocator, page_allocator::PageAllocator,
-        page_table::KERNEL_PAGE_TABLE, structs::GuardedPages, MemError,
+        frame_allocator::{PhysAllocator, WasabiFrameAllocator},
+        page_allocator::PageAllocator,
+        page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+        structs::GuardedPages,
+        MemError,
     },
     processor_init,
     time::{sleep_tsc, time_since_tsc},
@@ -417,16 +420,23 @@ impl SipiPayload<Ready> {
             .expect("identity mapping for AP_START_VECTOR must be valid");
 
         unsafe {
+            let mut page_table = KERNEL_PAGE_TABLE.lock();
+            let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+
             // Safety:
             //  both frame and page were reserved for this
-            map_page!(
-                page,
-                Size4KiB,
-                PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                frame
-            )
+            let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+            page_table
+                .map_to_with_table_flags(
+                    page,
+                    frame,
+                    flags,
+                    PageTableFlags::KERNEL_TABLE_FLAGS,
+                    frame_allocator.as_mut(),
+                )
+                .expect("failed to identity map ap trampoline")
+                .flush();
         }
-        .expect("failed to identity map ap trampoline");
 
         trace!("Identity mapped ap trampoline {:p}", phys);
 

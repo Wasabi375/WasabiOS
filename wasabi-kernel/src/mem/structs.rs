@@ -13,8 +13,6 @@ use x86_64::{
     VirtAddr,
 };
 
-use crate::map_page;
-
 use super::{
     frame_allocator::WasabiFrameAllocator,
     page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
@@ -81,20 +79,22 @@ impl GuardedPages<Size4KiB> {
     /// allocates [PhysFrames] and maps `self` to the allocated frames.
     pub fn alloc_and_map(self) -> Result<GuardedPages<Size4KiB>, MemError> {
         let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
 
+        let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE;
         for page in self.iter() {
-            let frame = frame_allocator.alloc().ok_or(MemError::OutOfMemory)?;
+            let frame = frame_allocator.alloc()?;
             unsafe {
                 // page is unmapped
-                // TODO map_page should optionally take the page table to avoid
-                //      locking and unlocking in a loop
-                map_page!(
-                    page,
-                    Size4KiB,
-                    PageTableFlags::WRITABLE | PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE,
-                    frame,
-                    frame_allocator.as_mut()
-                )?;
+                page_table
+                    .map_to_with_table_flags(
+                        page,
+                        frame,
+                        flags,
+                        PageTableFlags::KERNEL_TABLE_FLAGS,
+                        frame_allocator.as_mut(),
+                    )?
+                    .flush();
             }
         }
 
@@ -104,27 +104,31 @@ impl GuardedPages<Size4KiB> {
 
         unsafe {
             // Safety: frame used for guard pages
-            let guard_frame = frame_allocator.guard_frame().ok_or(MemError::OutOfMemory)?;
+            let guard_frame = frame_allocator.guard_frame()?;
 
             if let Some(head_guard) = self.head_guard {
                 // head_guard is unmapped and we are mapping to the guard_frame
-                map_page!(
-                    head_guard,
-                    Size4KiB,
-                    PageTableFlags::GUARD,
-                    guard_frame,
-                    frame_allocator.as_mut()
-                )?;
+                page_table
+                    .map_to_with_table_flags(
+                        head_guard,
+                        guard_frame,
+                        PageTableFlags::GUARD,
+                        PageTableFlags::KERNEL_TABLE_FLAGS,
+                        frame_allocator.as_mut(),
+                    )?
+                    .flush();
             }
             if let Some(tail_guard) = self.tail_guard {
                 // tail_guard is unmapped and we are mapping to the guard_frame
-                map_page!(
-                    tail_guard,
-                    Size4KiB,
-                    PageTableFlags::GUARD,
-                    guard_frame,
-                    frame_allocator.as_mut()
-                )?;
+                page_table
+                    .map_to_with_table_flags(
+                        tail_guard,
+                        guard_frame,
+                        PageTableFlags::GUARD,
+                        PageTableFlags::KERNEL_TABLE_FLAGS,
+                        frame_allocator.as_mut(),
+                    )?
+                    .flush();
             }
         }
 

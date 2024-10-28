@@ -14,6 +14,8 @@ use x86_64::{
     PhysAddr,
 };
 
+use super::{MemError, Result};
+
 /// The global kernel phys allocator. This is used by the frame allocators to create frames
 // Safetey: this is initailized by [init] before it is used
 static GLOBAL_PHYS_ALLOCATOR: UnwrapTicketLock<PhysAllocator> =
@@ -204,18 +206,36 @@ impl<'a> WasabiFrameAllocator<'a> {
     }
 
     /// allocate a new frame
-    // TODO return Result<_, MemError>
-    pub fn alloc<S: PageSize>(&mut self) -> Option<PhysFrame<S>> {
+    pub fn alloc<S: PageSize>(&mut self) -> Result<PhysFrame<S>> {
         // if self.first_unused_frame.is_null() {
-        return self.phys_alloc.lock().alloc();
+        return self.phys_alloc.lock().alloc().ok_or(MemError::OutOfMemory);
         // }
 
         // todo!()
     }
 
+    /// allocate a new frame
+    pub fn alloc_4k(&mut self) -> Result<PhysFrame<Size4KiB>> {
+        self.alloc()
+    }
+
+    /// allocate a new frame
+    pub fn alloc_2m(&mut self) -> Result<PhysFrame<Size2MiB>> {
+        self.alloc()
+    }
+
+    /// allocate a new frame
+    pub fn alloc_1g(&mut self) -> Result<PhysFrame<Size1GiB>> {
+        self.alloc()
+    }
+
     /// allocate a range of contigous frames
-    pub fn alloc_range<S: PageSize>(&mut self, count: u64) -> Option<PhysFrameRangeInclusive<S>> {
-        return self.phys_alloc.lock().alloc_range(count);
+    pub fn alloc_range<S: PageSize>(&mut self, count: u64) -> Result<PhysFrameRangeInclusive<S>> {
+        return self
+            .phys_alloc
+            .lock()
+            .alloc_range(count)
+            .ok_or(MemError::OutOfMemory);
     }
 
     /// Frees a phys frame
@@ -240,11 +260,11 @@ impl<'a> WasabiFrameAllocator<'a> {
     ///
     /// The Frame should only be used for guard pages and is not guaranteed to be a valid
     /// phyisical address
-    pub unsafe fn guard_frame<S: PageSize>(&mut self) -> Option<PhysFrame<S>> {
+    pub unsafe fn guard_frame<S: PageSize>(&mut self) -> Result<PhysFrame<S>> {
         #[cfg(feature = "mem-backed-guard-page")]
         {
-            if let Some(frame) = self.guard_frame {
-                return Some(frame);
+            if let Ok(frame) = self.guard_frame {
+                return Ok(frame);
             }
             let frame = self.alloc();
             self.guard_frame = frame;
@@ -252,7 +272,7 @@ impl<'a> WasabiFrameAllocator<'a> {
         }
         #[cfg(not(feature = "mem-backed-guard-page"))]
         unsafe {
-            Some(PhysFrame::from_start_address_unchecked(PhysAddr::zero()))
+            Ok(PhysFrame::from_start_address_unchecked(PhysAddr::zero()))
         }
     }
 }
@@ -261,7 +281,7 @@ impl<'a> WasabiFrameAllocator<'a> {
 // only return unique frames
 unsafe impl FrameAllocator<Size4KiB> for WasabiFrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        self.alloc()
+        self.alloc().ok()
     }
 }
 
@@ -275,7 +295,7 @@ impl FrameDeallocator<Size4KiB> for WasabiFrameAllocator<'_> {
 // only return unique frames
 unsafe impl FrameAllocator<Size2MiB> for WasabiFrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size2MiB>> {
-        self.alloc()
+        self.alloc().ok()
     }
 }
 
@@ -289,7 +309,7 @@ impl FrameDeallocator<Size2MiB> for WasabiFrameAllocator<'_> {
 // only return unique frames
 unsafe impl FrameAllocator<Size1GiB> for WasabiFrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size1GiB>> {
-        self.alloc()
+        self.alloc().ok()
     }
 }
 

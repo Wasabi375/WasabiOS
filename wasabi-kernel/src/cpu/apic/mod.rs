@@ -4,8 +4,14 @@ use core::sync::atomic::Ordering;
 
 use crate::{
     cpu::{cpuid::cpuid, interrupts::register_interrupt_handler},
-    locals, map_frame,
-    mem::{ptr::UntypedPtr, MemError},
+    locals,
+    mem::{
+        frame_allocator::WasabiFrameAllocator,
+        page_allocator::PageAllocator,
+        page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+        ptr::UntypedPtr,
+        MemError,
+    },
     prelude::TicketLock,
     todo_warn,
 };
@@ -21,7 +27,7 @@ use x86_64::{
     registers::model_specific::Msr,
     structures::{
         idt::InterruptStackFrame,
-        paging::{PageTableFlags, PhysFrame, Size4KiB},
+        paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB},
     },
     PhysAddr,
 };
@@ -146,9 +152,23 @@ impl Apic {
             | PageTableFlags::NO_EXECUTE
             | PageTableFlags::NO_CACHE;
 
-        let page = unsafe {
+        let page = PageAllocator::get_kernel_allocator()
+            .lock()
+            .allocate_page_4k()
+            .map_err(MemError::from)?;
+        unsafe {
             // Safety: new page with apic frame (only used here) and is therefor safe
-            map_frame!(Size4KiB, apic_table_flags, phys_frame)?
+            KERNEL_PAGE_TABLE
+                .lock()
+                .map_to_with_table_flags(
+                    page,
+                    phys_frame,
+                    apic_table_flags,
+                    PageTableFlags::KERNEL_TABLE_FLAGS,
+                    WasabiFrameAllocator::get_for_kernel().lock().as_mut(),
+                )
+                .map_err(MemError::from)?
+                .flush();
         };
 
         let base_ptr = unsafe {

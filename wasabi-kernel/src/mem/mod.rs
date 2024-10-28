@@ -56,7 +56,10 @@ use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use thiserror::Error;
 use x86_64::{
     registers::{control::Cr3, read_rip},
-    structures::paging::{PageTable, RecursivePageTable, Translate},
+    structures::paging::{
+        mapper::{MapToError, UnmapError},
+        PageTable, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB, Translate,
+    },
     PhysAddr, VirtAddr,
 };
 /// Result type with [MemError]
@@ -87,12 +90,30 @@ pub enum MemError {
     #[error("Failed to free ptr: {0:p}")]
     FreeFailed(UntypedPtr),
     #[error("Page Table map failed: {0:?}")]
-    PageTableMap(PageTableMapError),
+    PageTableMap(#[from] PageTableMapError),
 }
 
-impl From<PageTableMapError> for MemError {
-    fn from(value: PageTableMapError) -> Self {
-        Self::PageTableMap(value)
+impl From<MapToError<Size4KiB>> for MemError {
+    fn from(value: MapToError<Size4KiB>) -> Self {
+        PageTableMapError::from(value).into()
+    }
+}
+
+impl From<MapToError<Size2MiB>> for MemError {
+    fn from(value: MapToError<Size2MiB>) -> Self {
+        PageTableMapError::from(value).into()
+    }
+}
+
+impl From<MapToError<Size1GiB>> for MemError {
+    fn from(value: MapToError<Size1GiB>) -> Self {
+        PageTableMapError::from(value).into()
+    }
+}
+
+impl From<UnmapError> for MemError {
+    fn from(value: UnmapError) -> Self {
+        PageTableMapError::from(value).into()
     }
 }
 
@@ -150,229 +171,6 @@ pub unsafe fn init() {
 
     kernel_heap::init();
     info!("mem init done!");
-}
-
-/// Macro to map a frame
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// # use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// # let phys_frame: PhysFrame<Size4KiB> = todo!();
-///
-/// let page = map_frame!(Size4KiB, PageTableFlags::WRITABLE | PAGE_TABLE_FLAGS::PRESENT, phys_frame)?;
-/// let (page, frame) = map_frame!(Size4KiB, PageTableFlags::WRITABLE | PAGE_TABLE_FLAGS::PRESENT)?;
-/// # }
-/// ```
-///
-/// TODO Safety
-#[macro_export]
-macro_rules! map_frame {
-    ($size: ident, $flags: expr, $frame: expr) => {{
-        #[allow(unused_imports)]
-        use $crate::map_page;
-
-        let page: Result<x86_64::structures::paging::Page<$size>, $crate::mem::MemError> =
-            $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
-                .lock() // TODO call lock via full path
-                .allocate_page::<$size>();
-
-        let frame: x86_64::structures::paging::PhysFrame<$size> = $frame;
-
-        match page {
-            Ok(page) => match map_page!(page, $size, $flags, frame) {
-                Ok(_) => Ok(page),
-                Err(err) => Err($crate::mem::MemError::PageTableMap(err)),
-            },
-            Err(err) => Err(err),
-        }
-    }};
-    ($size: ident, $flags: expr) => {{
-        let frame: Option<x86_64::structures::paging::PhysFrame<$size>> =
-            $crate::mem::frame_allocator::WasabiFrameAllocator::get_for_kernel()
-                .lock()
-                .alloc::<$size>();
-        match frame {
-            // Safety: we allocated both the frame and page
-            Some(frame) => unsafe { map_frame!($size, $flags, frame) }.map(|page| (page, frame)),
-            None => Err($crate::mem::MemError::OutOfMemory),
-        }
-    }};
-}
-
-/// Macro to map a page. Returns `Result<Page, PageTableMapError>`
-///
-/// # Example
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let page: Page<Size4KiB> = todo!();
-/// let phys_frame: PhysFrame<Size4KiB> = todo!();
-/// let frame_allocator: &mut WasabiFrameAllocator<Size4KiB> = todo!();
-///
-// TODO document return types
-//
-/// let page = map_page!(Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT)?;
-/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT)?;
-/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame)?;
-/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame, frame_allocator)?;
-/// let page = map_page!(Size4KiB, PageTableFlags::WRITABLE | PageTbaleFlags::PRESENT, phys_frame)?;
-/// # }
-/// ```
-///
-/// TODO Safety
-///
-/// # See
-///
-/// [Page](x86_64::structures::paging::Page), [PageTableMapError],
-/// [PageSize](x86_64::structures::paging::PageSize),
-/// [PageTableFlags], [PageTableKernelFlags], [PageAllocator],
-/// [WasabiFrameAllocator]
-#[macro_export]
-macro_rules! map_page {
-    ($size: ident, $flags: expr) => {{
-        let page = $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
-            .lock()
-            .allocate_page::<$size>();
-        match page {
-            Ok(page) => unsafe {
-                // Safety: we are mapping a new unused page to a new unused frame,
-                // so the mapping is save
-                match map_page!(page, $size, $flags) {
-                    Ok(_) => Ok(page),
-                    Err(err) => Err($crate::mem::MemError::PageTableMap(err)),
-                }
-            },
-            Err(err) => Err(err),
-        }
-    }};
-
-    ($page: expr, $size: ident, $flags: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::get_for_kernel().lock();
-        let frame: Option<x86_64::structures::paging::PhysFrame<$size>> =
-            frame_alloc.alloc::<$size>();
-
-        frame
-            .ok_or_else(|| $crate::mem::page_table::PageTableMapError::FrameAllocationFailed)
-            .map(|frame| map_page!($page, $size, $flags, frame, frame_alloc))
-            .flatten()
-    }};
-
-    ($page: expr, $size: ident, $flags: expr, $frame: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::get_for_kernel().lock();
-        map_page!($page, $size, $flags, $frame, frame_alloc)
-    }};
-
-    ($page: expr, $size: ident, $flags: expr, $frame: expr, $frame_alloc: expr) => {{
-        let kernel_page_table: &mut x86_64::structures::paging::mapper::RecursivePageTable<
-            'static,
-        > = &mut $crate::mem::page_table::KERNEL_PAGE_TABLE.lock();
-
-        let page: x86_64::structures::paging::Page<$size> = $page;
-        let frame: x86_64::structures::paging::PhysFrame<$size> = $frame;
-
-        let table_flags: x86_64::structures::paging::page_table::PageTableFlags =
-            x86_64::structures::paging::page_table::PageTableFlags::PRESENT
-                | x86_64::structures::paging::page_table::PageTableFlags::WRITABLE;
-
-        x86_64::structures::paging::Mapper::map_to_with_table_flags(
-            kernel_page_table,
-            page,
-            frame,
-            $flags,
-            table_flags,
-            $frame_alloc,
-        )
-        .map_err(|e| $crate::mem::page_table::PageTableMapError::from(e))
-        .map(|flusher| flusher.flush())
-    }};
-}
-
-/// Macro to map a page. Returns `Result<(PhysFrame, PageTableFlags), PageTableMapError>`
-///
-/// # Example
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let page: Page<Size4KiB> = todo!();
-///
-// TODO document return types
-//
-/// let result: Result<(phys_frame, flags), PageTableMapError> = unmap_page!(page);
-/// # }
-/// ```
-#[macro_export]
-macro_rules! unmap_page {
-    ($page: expr) => {{
-        let kernel_page_table: &mut x86_64::structures::paging::mapper::RecursivePageTable<
-            'static,
-        > = &mut $crate::mem::page_table::KERNEL_PAGE_TABLE.lock();
-
-        x86_64::structures::paging::Mapper::unmap(kernel_page_table, $page)
-            .map_err(|err| {
-                <$crate::mem::page_table::PageTableMapError as From<
-                    x86_64::structures::paging::mapper::UnmapError,
-                >>::from(err)
-            })
-            .map(|(frame, flags, flush)| {
-                flush.flush();
-                (frame, flags)
-            })
-    }};
-}
-
-/// Macro to free a page.
-///
-/// # Example
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let frame: PhysFrame<Size4KiB> = todo!();
-///
-// TODO Saftey
-//
-/// free_frame!(frame);
-/// # }
-/// ```
-#[macro_export]
-macro_rules! free_page {
-    ($page: expr) => {{
-        $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
-            .lock()
-            .free_page($page);
-    }};
-}
-
-/// Macro to free a frame.
-///
-/// # Example
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let frame: PhysFrame<Size4KiB> = todo!();
-///
-// TODO Saftey
-//
-/// free_frame!(frame);
-/// # }
-/// ```
-#[macro_export]
-macro_rules! free_frame {
-    ($size:ident, $frame: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::get_for_kernel().lock();
-        frame_alloc.free::<$size>($frame);
-    }};
 }
 
 /// Calculate the number of pages required for `bytes` memory.

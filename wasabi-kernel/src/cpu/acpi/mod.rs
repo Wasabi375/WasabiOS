@@ -7,9 +7,10 @@ mod structs;
 use core::str::from_utf8;
 
 use hashbrown::HashMap;
+use shared::sync::lockcell::LockCell;
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Page, PageTableFlags, PhysFrame, Size4KiB},
+    structures::paging::{Mapper, Page, PageTableFlags, PhysFrame},
     PhysAddr,
 };
 
@@ -18,8 +19,13 @@ use log::{debug, error, info, trace, warn};
 
 use crate::{
     cpu::acpi::structs::{Header, RsdpV1, XSDT},
-    map_frame,
-    mem::{ptr::UntypedPtr, MemError},
+    mem::{
+        frame_allocator::WasabiFrameAllocator,
+        page_allocator::PageAllocator,
+        page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+        ptr::UntypedPtr,
+        MemError,
+    },
     utils::log_hex_dump,
 };
 
@@ -53,16 +59,26 @@ impl ACPI {
         let frame = PhysFrame::containing_address(rsdp_paddr);
         let offset = rsdp_paddr - frame.start_address();
 
-        let page = unsafe {
-            // TODO this should be done in the macro
-            use shared::sync::lockcell::LockCell;
+        let page = PageAllocator::get_kernel_allocator()
+            .lock()
+            .allocate_page_4k()?;
+        unsafe {
+            let mut page_table = KERNEL_PAGE_TABLE.lock();
+            let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+            let flags =
+                PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
             // Safety: we are the only code mapping this frame
-            map_frame!(
-                Size4KiB,
-                PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE,
-                frame
-            )
-        }?;
+            page_table
+                .map_to_with_table_flags(
+                    page,
+                    frame,
+                    flags,
+                    PageTableFlags::KERNEL_TABLE_FLAGS,
+                    frame_allocator.as_mut(),
+                )
+                .map_err(MemError::from)?
+                .flush();
+        }
 
         let vaddr = page.start_address() + offset;
 
@@ -153,16 +169,25 @@ impl ACPI {
         let page: Page<_> = if let Some(page) = self.mappings.get(&frame) {
             *page
         } else {
+            let flags =
+                PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
+            let page = PageAllocator::get_kernel_allocator()
+                .lock()
+                .allocate_page_4k()?;
             unsafe {
-                // TODO this should be done in the macro
-                use shared::sync::lockcell::LockCell;
                 // Safety: we are the only code mapping this frame
-                map_frame!(
-                    Size4KiB,
-                    PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE,
-                    frame
-                )
-            }?
+                KERNEL_PAGE_TABLE
+                    .lock()
+                    .map_to_with_table_flags(
+                        page,
+                        frame,
+                        flags,
+                        PageTableFlags::KERNEL_TABLE_FLAGS,
+                        WasabiFrameAllocator::get_for_kernel().lock().as_mut(),
+                    )?
+                    .flush();
+            }
+            page
         };
         let offset = paddr - frame.start_address();
         let ptr = unsafe {
