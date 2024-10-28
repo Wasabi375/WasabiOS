@@ -38,6 +38,8 @@ pub mod page_table_debug_ext;
 pub mod ptr;
 pub mod structs;
 
+use core::alloc::AllocError;
+
 use log::Level;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -91,6 +93,14 @@ pub enum MemError {
     FreeFailed(UntypedPtr),
     #[error("Page Table map failed: {0:?}")]
     PageTableMap(#[from] PageTableMapError),
+    #[error("Heap allocation failed")]
+    AllocError,
+}
+
+impl From<AllocError> for MemError {
+    fn from(_value: AllocError) -> Self {
+        MemError::AllocError
+    }
 }
 
 impl From<MapToError<Size4KiB>> for MemError {

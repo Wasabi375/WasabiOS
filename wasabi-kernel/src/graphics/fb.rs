@@ -3,15 +3,9 @@
 
 use core::ptr::NonNull;
 
-use crate::{
-    graphics::Color,
-    mem::{page_allocator::PageAllocator, structs::GuardedPages, MemError},
-    pages_required_for,
-    prelude::TicketLock,
-};
+use crate::{graphics::Color, mem::MemError, prelude::TicketLock};
+use alloc::boxed::Box;
 use bootloader_api::info::{FrameBuffer as BootFrameBuffer, FrameBufferInfo, PixelFormat};
-use shared::sync::lockcell::LockCell;
-use x86_64::structures::paging::Size4KiB;
 
 use super::canvas::Canvas;
 
@@ -25,23 +19,7 @@ enum FramebufferSource {
     /// framebuffer is backed by the hardware buffer
     HardwareBuffer,
     /// framebuffer is backed by normal mapped memory
-    Owned(GuardedPages<Size4KiB>),
-    /// framebuffer is dropped
-    Dropped,
-}
-
-impl FramebufferSource {
-    fn drop(&mut self) -> Option<GuardedPages<Size4KiB>> {
-        match self {
-            FramebufferSource::HardwareBuffer => None,
-            FramebufferSource::Owned(pages) => {
-                let pages = *pages;
-                *self = FramebufferSource::Dropped;
-                Some(pages)
-            }
-            FramebufferSource::Dropped => None,
-        }
-    }
+    Owned(#[allow(unused)] Box<[u8]>),
 }
 
 #[derive(Debug)]
@@ -51,7 +29,8 @@ pub struct Framebuffer {
     pub(super) buffer: NonNull<[u8]>,
 
     /// the source of the fb memory
-    source: FramebufferSource,
+    // This may be unused but is necessary to ensure the ownership over [buffer]
+    _source: FramebufferSource,
 
     /// info about the framebuffer memory layout
     pub info: FrameBufferInfo,
@@ -63,24 +42,17 @@ unsafe impl Sync for Framebuffer {}
 impl Framebuffer {
     /// Allocates a new memory backed framebuffer
     pub fn alloc_new(info: FrameBufferInfo) -> Result<Self, MemError> {
-        let page_count = pages_required_for!(Size4KiB, info.byte_len as u64);
+        let source_buffer = unsafe {
+            // Safety: 0 is a valid byte
+            Box::try_new_zeroed_slice(info.byte_len)?.assume_init()
+        };
 
-        let pages = PageAllocator::get_kernel_allocator()
-            .lock()
-            .allocate_guarded_pages(page_count, true, true)?;
-
-        let mapped_pages = pages.alloc_and_map()?;
-        let buffer = NonNull::slice_from_raw_parts(
-            NonNull::new(mapped_pages.start_addr().as_mut_ptr())
-                .expect("Allocated page should never be at 0"),
-            info.byte_len,
-        );
-
-        let source = FramebufferSource::Owned(mapped_pages);
+        let buffer = NonNull::from(source_buffer.as_ref());
+        let source = FramebufferSource::Owned(source_buffer);
 
         Ok(Framebuffer {
             buffer,
-            source,
+            _source: source,
             info,
         })
     }
@@ -94,7 +66,7 @@ impl Framebuffer {
     pub unsafe fn new_hardware(buffer: NonNull<[u8]>, info: FrameBufferInfo) -> Self {
         Framebuffer {
             buffer,
-            source: FramebufferSource::HardwareBuffer,
+            _source: FramebufferSource::HardwareBuffer,
             info,
         }
     }
@@ -116,19 +88,6 @@ impl From<BootFrameBuffer> for Framebuffer {
         // Safety: start points to valid FB memory,
         // since we got it from the bootloader framebuffer
         unsafe { Self::new_hardware(value.buffer().into(), value.info()) }
-    }
-}
-
-impl Drop for Framebuffer {
-    fn drop(&mut self) {
-        if let Some(pages) = self.source.drop() {
-            unsafe {
-                // Safety: after drop, there are no ways to access the fb memory
-                pages
-                    .unmap_and_free()
-                    .expect("failed to deallco framebuffer");
-            }
-        }
     }
 }
 
