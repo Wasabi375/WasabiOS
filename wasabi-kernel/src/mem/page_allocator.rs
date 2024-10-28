@@ -354,14 +354,11 @@ impl PageAllocator {
         self.allocate_page()
     }
 
-    // FIXME: free should be unsafe, right??
-    // it is fine for unmap to be safe, because worst case we create a page fault
-    // there, but free means we can reuse this page so it needs to be unsafe or
-    // we can create unintended aliases
-
     /// frees a page
-    // TODO unsafe?
-    pub fn free_page<S: PageSize>(&mut self, page: Page<S>) {
+    ///
+    /// # Safety:
+    /// Call must guarantee that there are no pointers into the page.
+    pub unsafe fn free_page<S: PageSize>(&mut self, page: Page<S>) {
         if self.vaddrs.len() as usize == self.vaddrs.capacity() {
             // TODO this warning also aplies to try_allocate_page
             warn!("trying to free page({page:?}) when range set is at max len. This can panic unexpectedly");
@@ -373,20 +370,30 @@ impl PageAllocator {
     }
 
     /// frees multiple pages
-    pub fn free_pages<S: PageSize>(&mut self, pages: Pages<S>) {
+    ///
+    /// # Safety:
+    /// Call must guarantee that there are no pointers into the pages.
+    pub unsafe fn free_pages<S: PageSize>(&mut self, pages: Pages<S>) {
         for p in pages.iter() {
-            self.free_page(p);
+            unsafe {
+                self.free_page(p);
+            }
         }
     }
 
     /// frees multiple pages
-    pub fn free_guarded_pages<S: PageSize>(&mut self, pages: GuardedPages<S>) {
-        self.free_pages(pages.pages);
-        if let Some(guard) = pages.head_guard {
-            self.free_page(guard);
-        }
-        if let Some(guard) = pages.tail_guard {
-            self.free_page(guard);
+    ///
+    /// # Safety:
+    /// Call must guarantee that there are no pointers into the pages.
+    pub unsafe fn free_guarded_pages<S: PageSize>(&mut self, pages: GuardedPages<S>) {
+        unsafe {
+            self.free_pages(pages.pages);
+            if let Some(guard) = pages.head_guard {
+                self.free_page(guard);
+            }
+            if let Some(guard) = pages.tail_guard {
+                self.free_page(guard);
+            }
         }
     }
 }

@@ -327,9 +327,14 @@ impl ApStack {
         match unmapped {
             Ok(unmapped) => {
                 trace!("free unused stack pages");
-                PageAllocator::get_kernel_allocator()
-                    .lock()
-                    .free_guarded_pages(unmapped);
+                unsafe {
+                    // Safety:
+                    //  we never gave await the address to this memory and we
+                    //  can't use it, so it's safe to free
+                    PageAllocator::get_kernel_allocator()
+                        .lock()
+                        .free_guarded_pages(unmapped);
+                }
             }
             Err(err) => error!("Failed to unmap unsued ap stack. Leaking memory: {err:?}"),
         }
@@ -588,16 +593,19 @@ use x86_64::structures::paging::mapper::Mapper;
 
 impl<S: SipiPayloadState> Drop for SipiPayload<S> {
     fn drop(&mut self) {
-        // FIXME: freeing this can lead to tripple fault if AP starts after
+        // TODO: freeing this can lead to tripple fault if AP starts after
         //  the drop. Do I care? I mean they should all have started at this time.
         let mut table = KERNEL_PAGE_TABLE.lock();
         let (_frame, _flags, flush) = table
             .unmap(self.page)
             .expect("Failed to unmap ap trampoline during drop");
         flush.flush();
-        PageAllocator::get_kernel_allocator()
-            .lock()
-            .free_page(self.page);
+        unsafe {
+            PageAllocator::get_kernel_allocator()
+                .lock()
+                // Safety: All aps are started and therefor won't access this page anymore
+                .free_page(self.page);
+        }
         debug!("ap trampoline unmapped and freed");
         AP_FRAME_ALLOCATED.store(false, Ordering::Release);
         AP_PAGE_ALLOCATED.store(false, Ordering::Release);

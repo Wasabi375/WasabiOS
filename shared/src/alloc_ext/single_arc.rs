@@ -186,13 +186,13 @@ impl<T: ?Sized> Unpin for SingleArc<T> {}
 impl<T: ?Sized> WeakSingleArc<T> {
     fn atomic_strong_ref(&self) -> &AtomicBool {
         // Safetey: data is a valid ptr, since we still have a weak ref to it.
-        // FIXME: am I allowed to call as_ref? This violates aliasing for data
+        // TODO: am I allowed to call as_ref? This violates aliasing for data
         unsafe { &self.inner.as_ref().strong_ref }
     }
 
     fn atomic_ref_count(&self) -> &AtomicUsize {
         // Safetey: data is a valid ptr, since we still have a weak ref to it.
-        // FIXME: am I allowed to call as_ref? This violates aliasing for data
+        // TODO: am I allowed to call as_ref? This violates aliasing for data
         unsafe { &self.inner.as_ref().ref_count }
     }
 

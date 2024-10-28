@@ -384,9 +384,13 @@ mod test {
             };
             trace!("unmap page {:?}", page);
 
-            let (_, _, flush) = page_table.unmap(page).map_err_debug_display().tunwrap()?;
+            let (frame, _, flush) = page_table.unmap(page).map_err_debug_display().tunwrap()?;
             flush.flush();
-            page_allocator.free_page(page);
+            unsafe {
+                // Safety: page and frame unmapped and no longer accessible
+                page_allocator.free_page(page);
+                frame_allocator.free(frame);
+            }
         }
 
         Ok(())

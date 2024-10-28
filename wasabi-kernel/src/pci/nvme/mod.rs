@@ -410,9 +410,9 @@ impl NVMEController {
 
             let (frame, _pt_flags, flush) = page_table.unmap(page).map_err(MemError::from)?;
             flush.flush();
-            page_allocator.free_page(page);
             unsafe {
-                // frame is unmapped and no longer used
+                // frame and page is unmapped and no longer used
+                page_allocator.free_page(page);
                 frame_allocator.free(frame)
             }
         }
@@ -492,9 +492,9 @@ impl NVMEController {
 
             let (frame, _pt_flags, flush) = page_table.unmap(page).map_err(MemError::from)?;
             flush.flush();
-            page_allocator.free_page(page);
             unsafe {
-                // frame is unmapped and no longer used
+                // page and frame is unmapped and no longer used
+                page_allocator.free_page(page);
                 frame_allocator.free(frame)
             }
 
@@ -719,9 +719,9 @@ impl NVMEController {
 
             let (frame, _pt_flags, flush) = page_table.unmap(page).map_err(MemError::from)?;
             flush.flush();
-            page_allocator.free_page(page);
             unsafe {
-                // frame is unmapped and no longer used
+                // page and frame is unmapped and no longer used
+                page_allocator.free_page(page);
                 frame_allocator.free(frame)
             }
         }

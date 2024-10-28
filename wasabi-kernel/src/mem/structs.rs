@@ -134,10 +134,7 @@ impl GuardedPages<Size4KiB> {
 
         Ok(self)
     }
-}
 
-// FIXME: rework api
-impl GuardedPages<Size4KiB> {
     /// unmaps `self` and deallocates the corresponding [PhysFrames]
     ///
     /// Safety:
