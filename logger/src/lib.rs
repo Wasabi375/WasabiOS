@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-#[cfg(feature = "color")]
+#[cfg(not(feature = "no-color"))]
 pub mod color;
 pub mod dispatch;
 mod own_logger;
@@ -10,7 +10,7 @@ mod ref_logger;
 
 use core::{fmt::Write, marker::PhantomData};
 
-#[cfg(feature = "color")]
+#[cfg(not(feature = "no-color"))]
 use color::{write_ansi_fg_color, Color, ANSI_RESET};
 
 pub use dispatch::DispatchLogger;
@@ -37,6 +37,7 @@ pub trait LogSetup {
 ///
 /// Indexed by `level as usize`: Text, Error, Warn, Info, Debug, Trace
 /// See [log::Level]
+#[cfg(not(feature = "no-color"))]
 pub const fn default_colors() -> [Color; 6] {
     [
         Color::White,
@@ -49,7 +50,7 @@ pub const fn default_colors() -> [Color; 6] {
 }
 
 struct WriteOpts<'a, CI> {
-    #[cfg(feature = "color")]
+    #[cfg(not(feature = "no-color"))]
     level_colors: &'a [Color; 6],
 
     module_rename_mapping: &'a [(&'a str, &'a str)],
@@ -106,18 +107,26 @@ fn write_target<W: Write, CI>(
     })
 }
 
+#[cfg(not(feature = "no-color"))]
 fn write_log_level<W: Write, CI>(
     record: &Record<'_>,
     opts: &WriteOpts<'_, CI>,
     writer: &mut W,
 ) -> Result<(), core::fmt::Error> {
     let level = record.level();
-    if cfg!(feature = "color") {
-        let color = opts.level_colors[level as usize];
-        write_ansi_fg_color(writer, color)?;
-        writer.write_fmt(format_args!("{:<5}{}", level, ANSI_RESET))?;
-    } else {
-        writer.write_fmt(format_args!("{:<5}", level))?;
-    };
+    let color = opts.level_colors[level as usize];
+    write_ansi_fg_color(writer, color)?;
+    writer.write_fmt(format_args!("{:<5}{}", level, ANSI_RESET))?;
+    Ok(())
+}
+
+#[cfg(feature = "no-color")]
+fn write_log_level<W: Write, CI>(
+    record: &Record<'_>,
+    _opts: &WriteOpts<'_, CI>,
+    writer: &mut W,
+) -> Result<(), core::fmt::Error> {
+    let level = record.level();
+    writer.write_fmt(format_args!("{:<5}", level))?;
     Ok(())
 }

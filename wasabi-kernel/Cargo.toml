@@ -6,7 +6,7 @@ edition.workspace = true
 [features]
 default = []
 
-no-color = []   # TODO this is broken I think
+no-color = ["logger/no-color"]  
 no-unicode-log = ["shared/no-unicode-log"]
 test = ["dep:testing", "shared/test"]
 mem-backed-guard-page = []  # TODO broken I think, add to test

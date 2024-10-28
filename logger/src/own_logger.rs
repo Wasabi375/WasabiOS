@@ -23,7 +23,7 @@
 //! OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 //! USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::{default_colors, write_record, LogSetup, TryLog, WriteOpts};
+use crate::{write_record, LogSetup, TryLog, WriteOpts};
 use core::{
     fmt::{self, Error, Write},
     marker::PhantomData,
@@ -32,8 +32,8 @@ use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use shared::sync::{lockcell::LockCell, CoreInfo};
 use staticvec::StaticVec;
 
-#[cfg(feature = "color")]
-use crate::color::Color;
+#[cfg(not(feature = "no-color"))]
+use crate::{color::Color, default_colors};
 
 pub struct OwnLogger<W, L, CI, const N: usize = 126, const R: usize = 126> {
     /// The default logging level
@@ -56,7 +56,7 @@ pub struct OwnLogger<W, L, CI, const N: usize = 126, const R: usize = 126> {
 
     _phantom_core_info: PhantomData<CI>,
 
-    #[cfg(feature = "color")]
+    #[cfg(not(feature = "no-color"))]
     level_colors: [Color; 6],
 }
 
@@ -79,7 +79,7 @@ where
             writer,
             _phantom_writer: PhantomData,
             _phantom_core_info: PhantomData,
-            #[cfg(feature = "color")]
+            #[cfg(not(feature = "no-color"))]
             level_colors: default_colors(),
         }
     }
@@ -113,7 +113,7 @@ where
     }
 
     /// Overrides the log color used for the specified level.
-    #[cfg(feature = "color")]
+    #[cfg(not(feature = "no-color"))]
     #[must_use]
     pub fn with_level_color(mut self, level: Level, color: Color) -> Self {
         self.level_colors[level as usize] = color;
@@ -162,6 +162,7 @@ impl<W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
         }
 
         let opts = WriteOpts::<'_, CI> {
+            #[cfg(not(feature = "no-color"))]
             level_colors: &self.level_colors,
             module_rename_mapping: &self.module_rename_mapping,
             _core_info: PhantomData,
