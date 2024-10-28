@@ -260,7 +260,7 @@ impl<'a> WasabiFrameAllocator<'a> {
     ///
     /// The Frame should only be used for guard pages and is not guaranteed to be a valid
     /// phyisical address
-    pub unsafe fn guard_frame<S: PageSize>(&mut self) -> Result<PhysFrame<S>> {
+    pub unsafe fn guard_frame(&mut self) -> Result<PhysFrame<Size4KiB>> {
         #[cfg(feature = "mem-backed-guard-page")]
         {
             if let Ok(frame) = self.guard_frame {

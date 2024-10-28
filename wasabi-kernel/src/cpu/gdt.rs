@@ -127,6 +127,6 @@ impl GDTInfo {
         let pages = PageAllocator::get_kernel_allocator()
             .lock()
             .allocate_guarded_pages(page_count, true, false)?;
-        pages.alloc_and_map()
+        pages.map()
     }
 }

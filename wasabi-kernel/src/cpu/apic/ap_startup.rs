@@ -278,7 +278,7 @@ impl ApStack {
             .lock()
             .allocate_guarded_pages(DEFAULT_STACK_PAGE_COUNT, true, true)
             .map_err(ApStackError::from)?;
-        let pages = pages.alloc_and_map().map_err(ApStackError::from)?;
+        let pages = pages.map().map_err(ApStackError::from)?;
 
         assert_eq!(pages.size(), DEFAULT_STACK_SIZE);
 
@@ -322,7 +322,7 @@ impl ApStack {
             //  we never gave await the address to this memory and we
             //  can't use it, so it's safe to free
             trace!("unmap and free");
-            pages.unmap_and_free()
+            pages.unmap()
         };
         match unmapped {
             Ok(unmapped) => {

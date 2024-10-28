@@ -4,7 +4,8 @@ use core::assert_matches::assert_matches;
 use core::ops::{Deref, DerefMut};
 use log::trace;
 use shared::sync::lockcell::LockCell;
-use x86_64::structures::paging::PageTableFlags;
+use x86_64::structures::paging::mapper::MapToError;
+use x86_64::structures::paging::{PageTableFlags, PhysFrame, RecursivePageTable};
 use x86_64::{
     structures::paging::{
         mapper::{UnmapError, UnmappedFrame},
@@ -72,18 +73,21 @@ pub struct GuardedPages<S: PageSize> {
     pub pages: Pages<S>,
 }
 
-// TODO this should be generic over page size, but WasabiFrameAllocator::get_for_kernel
-//      only works if this is specified
-// FIXME: rework this api
-impl GuardedPages<Size4KiB> {
+impl<S> GuardedPages<S>
+where
+    S: PageSize,
+    for<'a> RecursivePageTable<'a>: Mapper<Size4KiB>,
+    for<'a> RecursivePageTable<'a>: Mapper<S>,
+    MemError: From<MapToError<S>>,
+{
     /// allocates [PhysFrames] and maps `self` to the allocated frames.
-    pub fn alloc_and_map(self) -> Result<GuardedPages<Size4KiB>, MemError> {
+    pub fn map(self) -> Result<GuardedPages<S>, MemError> {
         let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE;
         for page in self.iter() {
-            let frame = frame_allocator.alloc()?;
+            let frame = frame_allocator.alloc::<S>()?;
             unsafe {
                 // page is unmapped
                 page_table
@@ -104,7 +108,7 @@ impl GuardedPages<Size4KiB> {
 
         unsafe {
             // Safety: frame used for guard pages
-            let guard_frame = frame_allocator.guard_frame()?;
+            let guard_frame: PhysFrame<Size4KiB> = frame_allocator.guard_frame()?;
 
             if let Some(head_guard) = self.head_guard {
                 // head_guard is unmapped and we are mapping to the guard_frame
@@ -139,7 +143,7 @@ impl GuardedPages<Size4KiB> {
     ///
     /// Safety:
     /// The caller must ensure that the pages are no longer used
-    pub unsafe fn unmap_and_free(self) -> Result<GuardedPages<Size4KiB>, UnmapError> {
+    pub unsafe fn unmap(self) -> Result<GuardedPages<S>, UnmapError> {
         let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
@@ -270,9 +274,7 @@ mod test {
             .allocate_guarded_pages::<Size4KiB>(1, true, true)
             .texpect("failed to allocate guarded page")?;
 
-        let mapped = pages
-            .alloc_and_map()
-            .texpect("failed to map guarded page")?;
+        let mapped = pages.map().texpect("failed to map guarded page")?;
 
         {
             // lock page table for asserts.
@@ -319,10 +321,11 @@ mod test {
         unsafe {
             // Safety: we don't access any memory in the page. We only
             // allocated it to test that allocation is possible
-            mapped
-                .unmap_and_free()
+            let pages = mapped
+                .unmap()
                 .map_err_debug_display()
                 .texpect("failed to unmap guarded page")?;
+            allocator.free_guarded_pages(pages)
         }
 
         {
