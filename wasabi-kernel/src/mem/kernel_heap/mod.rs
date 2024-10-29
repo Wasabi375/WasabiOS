@@ -2,6 +2,8 @@
 //!
 
 pub mod early_heap;
+#[cfg(feature = "mem-stats")]
+pub mod stats;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -54,7 +56,10 @@ static KERNEL_HEAP_INIT: AtomicBool = AtomicBool::new(false);
 
 /// initializes the kernel heap
 pub fn init() {
-    info!("init kernel heap");
+    info!(
+        "init kernel heap: {} bytes, {} pages",
+        KERNEL_HEAP_SIZE, KERNEL_HEAP_PAGE_COUNT
+    );
 
     let pages = PageAllocator::get_kernel_allocator()
         .lock()
@@ -82,7 +87,6 @@ pub fn init() {
                     Ok(flusher) => flusher.flush(),
                     Err(e) => panic!("Failed to map page {page:?} to frame {frame:?}: {e:?}"),
                 }
-                trace!("Page {page:?} mapped to {frame:?}");
             }
         }
     }
@@ -99,6 +103,7 @@ pub fn init() {
     if let Err(e) = heap.init() {
         panic!("KernelHeap::new(): {e:?}")
     };
+    drop(kernel_lock);
 
     KERNEL_HEAP_INIT.store(true, Ordering::SeqCst);
     debug!(
@@ -111,6 +116,10 @@ pub fn init() {
     if early_heap::used() > 0 {
         warn!("Early heap used. Ensure this was intentional and update this check");
     }
+
+    #[cfg(feature = "mem-stats")]
+    KernelHeap::init_stats(KernelHeap::get());
+
     trace!("kernel init done");
 }
 
@@ -172,7 +181,7 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
 }
 
 /// the sizes of the [SlabAllocator]s used by the kernel heap
-const SLAB_ALLOCATOR_SIZES_BYTES: [usize; 5] = [2, 4, 8, 16, 32];
+const SLAB_ALLOCATOR_SIZES_BYTES: &'static [usize] = &[4, 64, 256];
 
 /// block size for the [SlabAllocator]
 const SLAB_BLOCK_SIZE: usize = KiB!(1);
@@ -219,6 +228,9 @@ pub struct KernelHeap {
     /// a linked list allocator for allocations that can't be provided by the [SlabAllocator]s.
     /// also used to allocate the [SlabBlock]s
     linked_heap: LockedAllocator<LinkedHeap>,
+
+    #[cfg(feature = "mem-stats")]
+    stats: Option<stats::HeapStats>,
 }
 
 unsafe impl Send for KernelHeap {}
@@ -228,6 +240,14 @@ impl KernelHeap {
     /// returns a static ref to the [KernelHeap] lock.
     pub fn get() -> &'static UnwrapTicketLock<KernelHeap> {
         &KERNEL_HEAP
+    }
+
+    /// returns stats about the heap.
+    ///
+    /// This panics if [Self::init_stats] was not called
+    #[cfg(feature = "mem-stats")]
+    pub fn stats(&self) -> &stats::HeapStats {
+        self.stats.as_ref().unwrap()
     }
 }
 
@@ -256,6 +276,7 @@ impl KernelHeap {
                 .init(pages.start_addr().as_mut_ptr(), pages.size() as usize);
         }
 
+        trace!("create slab allocators...");
         let mut slabs: [MaybeUninit<_>; SLAB_ALLOCATOR_SIZES_BYTES.len()] =
             MaybeUninit::uninit_array();
         for (slab, size) in slabs.iter_mut().zip(SLAB_ALLOCATOR_SIZES_BYTES.iter()) {
@@ -273,11 +294,14 @@ impl KernelHeap {
             let start = UntypedPtr::new_from_page(pages.first_page).expect("Expected non 0 page");
             let end = UntypedPtr::new(pages.end_addr()).expect("End vaddr should never be 0");
 
+            trace!("construct heap data structure");
             Self {
                 start,
                 end,
                 slab_allocators,
                 linked_heap: heap,
+                #[cfg(feature = "mem-stats")]
+                stats: None,
             }
         }
     }
@@ -290,17 +314,37 @@ impl KernelHeap {
         }
         Ok(())
     }
+
+    #[cfg(feature = "mem-stats")]
+    fn init_stats<L: LockCell<Self>>(locked_heap: &L) {
+        debug!("init heap stats");
+        let stats = stats::HeapStats::default();
+        locked_heap.lock().stats = Some(stats);
+        trace!("init heap stats allocated");
+    }
 }
 
 impl MutAllocator for KernelHeap {
     fn alloc(&mut self, layout: Layout) -> Result<UntypedPtr> {
+        trace!("alloc {}", layout.size());
         if layout.size() == 0 {
             return Err(MemError::ZeroSizeAllocation);
         }
+
+        #[cfg(feature = "mem-stats")]
+        if let Some(stats) = self.stats.as_mut() {
+            stats.register_alloc(layout.size());
+        }
+
         for slab in &mut self.slab_allocators {
             if slab.size >= layout.size() {
                 return slab.alloc(layout);
             }
+        }
+
+        #[cfg(feature = "mem-stats")]
+        if let Some(stats) = self.stats.as_mut() {
+            stats.register_slab_miss();
         }
 
         self.linked_heap.alloc(layout)
@@ -309,6 +353,11 @@ impl MutAllocator for KernelHeap {
     unsafe fn free(&mut self, ptr: UntypedPtr, layout: Layout) -> Result<()> {
         if ptr < self.start || ptr + layout.size() > self.end {
             return Err(MemError::PtrNotAllocated(ptr));
+        }
+
+        #[cfg(feature = "mem-stats")]
+        if let Some(stats) = self.stats.as_mut() {
+            stats.register_free(layout.size());
         }
 
         for slab in &mut self.slab_allocators {

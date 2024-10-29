@@ -18,7 +18,8 @@
     ptr_alignment_type,
     result_flattening,
     stmt_expr_attributes,
-    strict_overflow_ops
+    strict_overflow_ops,
+    new_zeroed_alloc
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![allow(rustdoc::private_intra_doc_links)]

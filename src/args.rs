@@ -342,6 +342,7 @@ pub enum Feature {
     Test,
     TestTests,
     MemBackedGuardPage,
+    MemStats,
 }
 
 impl Feature {
@@ -352,14 +353,15 @@ impl Feature {
             Feature::Test => OsStr::new("test"),
             Feature::TestTests => OsStr::new("test-tests"),
             Feature::MemBackedGuardPage => OsStr::new("mem-backed-guard-page"),
+            Feature::MemStats => OsStr::new("mem-stats"),
         }
     }
 
     pub fn used_in(&self, binary: &KernelBinary) -> bool {
         use Feature::*;
         let valid_flags: &[Feature] = match binary {
-            KernelBinary::Wasabi => &[NoUnicodeLog, NoColor, Test, MemBackedGuardPage],
-            KernelBinary::Test => &[NoColor, TestTests, MemBackedGuardPage],
+            KernelBinary::Wasabi => &[NoUnicodeLog, NoColor, Test, MemBackedGuardPage, MemStats],
+            KernelBinary::Test => &[NoColor, TestTests, MemBackedGuardPage, MemStats],
         };
         valid_flags.contains(self)
     }

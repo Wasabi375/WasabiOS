@@ -52,7 +52,10 @@ pub(super) unsafe fn alloc(layout: Layout) -> *mut u8 {
     let aligned_offset = align_up(offset as u64, layout.align() as u64) as usize;
 
     let end = aligned_offset + (layout.size() - 1);
-    assert!(end <= EARLY_HEAP_SIZE, "EARLY HEAP OOM");
+    assert!(
+        end <= EARLY_HEAP_SIZE,
+        "EARLY HEAP OOM! Required: {end} bytes"
+    );
 
     EARLY_HEAP_NEXT_OFFSET.store(aligned_offset + layout.size(), Ordering::Release);
     EARLY_HEAP_ALLOCATED.fetch_add(layout.size(), Ordering::AcqRel);

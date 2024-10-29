@@ -4,15 +4,17 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = []
+default = ["mem-stats"]
 
 no-color = ["logger/no-color"]  
 no-unicode-log = ["shared/no-unicode-log"]
+mem-stats = [ "dep:histogram" ]
 test = ["dep:testing", "shared/test"]
 mem-backed-guard-page = []  
 
 
 [dependencies]
+histogram = { path = "../histogram", optional = true }
 shared = { path = "../shared" }
 shared-derive = { path = "../shared-derive" }
 logger = { path = "../logger" }
