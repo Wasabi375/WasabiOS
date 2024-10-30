@@ -1,4 +1,4 @@
-//! Stats about heap allocations
+//! Stats about memory usage
 
 use alloc::boxed::Box;
 use histogram::{Config, Histogram};

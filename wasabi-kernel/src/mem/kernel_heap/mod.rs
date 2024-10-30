@@ -2,12 +2,14 @@
 //!
 
 pub mod early_heap;
-#[cfg(feature = "mem-stats")]
-pub mod stats;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
+#[cfg(feature = "mem-stats")]
+use super::stats::HeapStats;
+
+use super::{ptr::UntypedPtr, structs::Pages};
 use crate::{
     mem::{
         frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
@@ -26,8 +28,6 @@ use core::{
 use linked_list_allocator::Heap as LinkedHeap;
 use shared::{sync::lockcell::LockCellInternal, KiB};
 use x86_64::structures::paging::{Mapper, PageSize, PageTableFlags, Size4KiB};
-
-use super::{ptr::UntypedPtr, structs::Pages};
 
 /// the size of the kernel heap in bytes
 pub const KERNEL_HEAP_SIZE: usize =
@@ -230,7 +230,7 @@ pub struct KernelHeap {
     linked_heap: LockedAllocator<LinkedHeap>,
 
     #[cfg(feature = "mem-stats")]
-    stats: Option<stats::HeapStats>,
+    stats: Option<HeapStats>,
 }
 
 unsafe impl Send for KernelHeap {}
@@ -246,7 +246,7 @@ impl KernelHeap {
     ///
     /// This panics if [Self::init_stats] was not called
     #[cfg(feature = "mem-stats")]
-    pub fn stats(&self) -> &stats::HeapStats {
+    pub fn stats(&self) -> &HeapStats {
         self.stats.as_ref().unwrap()
     }
 }
@@ -318,7 +318,7 @@ impl KernelHeap {
     #[cfg(feature = "mem-stats")]
     fn init_stats<L: LockCell<Self>>(locked_heap: &L) {
         debug!("init heap stats");
-        let stats = stats::HeapStats::default();
+        let stats = HeapStats::default();
         locked_heap.lock().stats = Some(stats);
         trace!("init heap stats allocated");
     }

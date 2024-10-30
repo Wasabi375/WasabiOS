@@ -30,6 +30,9 @@
 //!
 //! [UntypedPtr]: ptr::UntypedPtr
 
+#[cfg(feature = "mem-stats")]
+pub mod stats;
+
 pub mod frame_allocator;
 pub mod kernel_heap;
 pub mod page_allocator;
