@@ -11,6 +11,9 @@ pub struct Args {
     pub focus: bool,
     pub ignore: bool,
     pub multiprocessor: bool,
+    pub allow_frame_leak: bool,
+    pub allow_page_leak: bool,
+    pub allow_heap_leak: bool,
 }
 
 impl Parse for Args {
@@ -20,6 +23,9 @@ impl Parse for Args {
         let mut focus = false;
         let mut ignore = false;
         let mut multiprocessor = false;
+        let mut allow_frame_leak = false;
+        let mut allow_page_leak = false;
+        let mut allow_heap_leak = false;
 
         while !input.is_empty() {
             let lookahead = input.lookahead1();
@@ -67,6 +73,36 @@ impl Parse for Args {
                             ));
                         }
                     }
+                    "allow_frame_leak" => {
+                        if !allow_frame_leak {
+                            allow_frame_leak = true;
+                        } else {
+                            return Err(Error::new_spanned(
+                                ident,
+                                "\"allow_frame_leak\" can only be set once",
+                            ));
+                        }
+                    }
+                    "allow_page_leak" => {
+                        if !allow_page_leak {
+                            allow_page_leak = true;
+                        } else {
+                            return Err(Error::new_spanned(
+                                ident,
+                                "\"allow_page_leak\" can only be set once",
+                            ));
+                        }
+                    }
+                    "allow_heap_leak" => {
+                        if !allow_heap_leak {
+                            allow_heap_leak = true;
+                        } else {
+                            return Err(Error::new_spanned(
+                                ident,
+                                "\"allow_heap_leak\" can only be set once",
+                            ));
+                        }
+                    }
                     _ => {
                         return Err(Error::new_spanned(
                             ident,
@@ -99,6 +135,9 @@ impl Parse for Args {
             focus,
             ignore,
             multiprocessor,
+            allow_frame_leak,
+            allow_page_leak,
+            allow_heap_leak,
         })
     }
 }

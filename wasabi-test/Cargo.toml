@@ -9,7 +9,7 @@ test-tests = []
 mem-backed-guard-page = ["wasabi-kernel/mem-backed-guard-page"]
 mem-stats = ["wasabi-kernel/mem-stats"]
 
-default = []
+default = ["mem-stats"]
 
 [dependencies]
 shared = { path = "../shared" }

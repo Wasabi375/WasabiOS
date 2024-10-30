@@ -90,6 +90,13 @@ pub struct KernelTestDescription {
     /// other than [TestExitState::Succeed] it is sufficent if one processor exits
     /// with the expected exit. In that case all other processors must exit with `Ok`.
     pub multiprocessor: bool,
+
+    /// If set, this test will not fail if a kernel heap memory leak is detected
+    pub allow_heap_leak: bool,
+    /// If set, this test will not fail if a page leak is detected
+    pub allow_page_leak: bool,
+    /// If set, this test will not fail if a frame leak is detected
+    pub allow_frame_leak: bool,
 }
 
 /// The distributed slice, collecting all kernel testss marked with `#[kernel_test]`

@@ -50,6 +50,9 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
     let focus = args.focus;
     let ignore = args.ignore;
     let multiprocessor = args.multiprocessor;
+    let allow_heap_leak = args.allow_heap_leak;
+    let allow_page_leak = args.allow_page_leak;
+    let allow_frame_leak = args.allow_frame_leak;
 
     quote! {
         #test_fn
@@ -63,7 +66,10 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
             test_location: #test_location,
             focus: #focus,
             ignore: #ignore,
-            multiprocessor: #multiprocessor
+            multiprocessor: #multiprocessor,
+            allow_heap_leak: #allow_heap_leak,
+            allow_frame_leak: #allow_frame_leak,
+            allow_page_leak: #allow_page_leak,
         };
     }
 }

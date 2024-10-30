@@ -318,6 +318,14 @@ impl<T: Send, I: InterruptState> DataBarrier<T, I> {
 
         self.enter_with_timeout(timeout)
     }
+
+    /// Takes the data out of the barrier if any exists.
+    ///
+    /// This will block until all [DataBarrierGuard] associated with this
+    /// barrier are dropped.
+    pub fn take_data(&self) -> Option<T> {
+        self.data.write().take()
+    }
 }
 
 impl<'l, T, I: InterruptState> DataBarrierGuard<'l, T, I> {

@@ -114,6 +114,7 @@ use uart_16550::SerialPort;
 use wasabi_kernel::{
     bootloader_config_common,
     core_local::{get_ready_core_count, CoreInterruptState},
+    mem::kernel_heap::KernelHeap,
     serial::SERIAL2,
     testing::{panic::use_custom_panic_handler, qemu},
     KernelConfig,
@@ -537,6 +538,9 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
             .expect("sharing data should never fail");
     }
 
+    #[cfg(feature = "mem-stats")]
+    let mem_usage_befor = KernelHeap::get().lock().stats().snapshot();
+
     let mut success = if panicing {
         trace!("run panic-expected test");
         run_panicing_test(test);
@@ -558,6 +562,23 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
         }
 
         TEST_MP_SUCCESS.store(true, Ordering::SeqCst);
+    }
+
+    TEST_USER_DATA_BARRIER.take_data();
+
+    #[cfg(feature = "mem-stats")]
+    {
+        let mem_usage_after = KernelHeap::get().lock().stats().snapshot();
+        if mem_usage_befor != mem_usage_after {
+            let leaked = mem_usage_after.used as i128 - mem_usage_befor.used as i128;
+
+            if test.allow_heap_leak {
+                warn!("Memory leak detected! {leaked} bytes");
+            } else {
+                error!("Memory leak detected! {leaked} bytes");
+                return false;
+            }
+        }
     }
 
     if panicing {
@@ -611,7 +632,6 @@ fn run_test_no_panic(test: &KernelTestDescription) -> bool {
                 }
             }
         },
-
         TestExitState::Panic => unreachable!(),
     };
 }
@@ -658,6 +678,13 @@ mod test_tests {
     #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]
     fn test_tfail() -> Result<(), KernelTestError> {
         tfail!()
+    }
+
+    #[kernel_test(allow_heap_leak)]
+    fn test_kernel_heap_mem_leak() -> Result<(), KernelTestError> {
+        let b = Box::new(5);
+        core::mem::forget(b);
+        Ok(())
     }
 
     #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]

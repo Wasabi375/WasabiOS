@@ -6,7 +6,7 @@ use log::{trace, warn};
 use shared::math::IntoU64;
 
 /// Statistics about the heap usage
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct HeapStats {
     /// number of times there was no slab allocator for an allocation
     pub slab_misses: u64,
@@ -26,6 +26,17 @@ pub struct HeapStats {
     pub free_count: u64,
     /// histogram of the free sizes
     pub free_sizes: Histogram,
+}
+
+/// Statistics about the heap usage that is comparable
+///
+/// This only tracks current usage and does not include total counts
+#[derive(Clone, PartialEq, Eq)]
+pub struct HeapStatSnapshot {
+    /// number of bytes used within the heap
+    pub used: u64,
+    /// number of allocations that have not been freed
+    pub frees_outstanding: u64,
 }
 
 impl Default for HeapStats {
@@ -102,6 +113,14 @@ impl HeapStats {
         match self.free_sizes.increment(bytes) {
             Ok(_) => {}
             Err(e) => warn!("Failed to register heap free size {e}"),
+        }
+    }
+
+    /// Creates a snapshot from the current stats
+    pub fn snapshot(&self) -> HeapStatSnapshot {
+        HeapStatSnapshot {
+            used: self.used,
+            frees_outstanding: self.alloc_count - self.free_count,
         }
     }
 
