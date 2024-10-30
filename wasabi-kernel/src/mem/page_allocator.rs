@@ -179,8 +179,6 @@ pub struct PageAllocator {
     vaddrs: RangeSet<256>,
 }
 
-// TODO convert errors from MemError to PageTableError
-// TODO do I want to always return/require Mapped/Unmapped?
 impl PageAllocator {
     /// create a new [PageAllocator]
     pub fn new() -> Self {
