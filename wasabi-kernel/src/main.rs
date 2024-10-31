@@ -16,12 +16,14 @@ use wasabi_kernel::{
     bootloader_config_common,
     cpu::{self, apic::timer::TimerConfig, interrupts::InterruptVector},
     kernel_info::KernelInfo,
-    mem::{
-        frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
-    },
     pci, time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
+
+#[cfg(feature = "mem-stats")]
+use wasabi_kernel::mem::{
+    frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
+};
 
 fn timer_int_handler(_vec: InterruptVector, _isf: InterruptStackFrame) -> Result<(), ()> {
     info!(target: "Timer", "tick");
@@ -47,6 +49,7 @@ fn kernel_main() -> ! {
     //sleep_tsc(Duration::Seconds(5));
     //stop_timer();
 
+    #[cfg(feature = "mem-stats")]
     if locals!().is_bsp() {
         let level = log::Level::Info;
         KernelHeap::get().lock().stats().log(level);

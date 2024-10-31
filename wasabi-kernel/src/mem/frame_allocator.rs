@@ -218,16 +218,19 @@ impl<'a> FrameAllocator<'a> {
 
     /// allocate a new frame
     pub fn alloc<S: PageSize>(&mut self) -> Result<PhysFrame<S>> {
+        self.alloc_no_stats().inspect(|_| {
+            #[cfg(feature = "mem-stats")]
+            self.stats.register_alloc::<S>(1);
+        })
+    }
+
+    /// allocate a new frame but do not recore the allocation in stats
+    ///
+    /// We do this, because we don't want page table frame allocations to
+    /// be recorded
+    fn alloc_no_stats<S: PageSize>(&mut self) -> Result<PhysFrame<S>> {
         // if self.first_unused_frame.is_null() {
-        return self
-            .phys_alloc
-            .lock()
-            .alloc()
-            .ok_or(MemError::OutOfMemory)
-            .inspect(|_| {
-                #[cfg(feature = "mem-stats")]
-                self.stats.register_alloc::<S>(1);
-            });
+        return self.phys_alloc.lock().alloc().ok_or(MemError::OutOfMemory);
         // }
 
         // todo!()
@@ -268,12 +271,25 @@ impl<'a> FrameAllocator<'a> {
     /// The caller must ensure that the passed frame is unused and not the
     /// [guard_frame]
     pub unsafe fn free<S: PageSize>(&mut self, frame: PhysFrame<S>) {
-        // TODO store unused frames in free list
-
-        self.phys_alloc.lock().free(frame);
+        unsafe {
+            // Safety: same as function
+            self.free_no_stats(frame);
+        }
 
         #[cfg(feature = "mem-stats")]
         self.stats.register_free::<S>(1);
+    }
+
+    /// Frees a phys frame but do not recore the free in stats
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure that the passed frame is unused and not the
+    /// [guard_frame]
+    pub unsafe fn free_no_stats<S: PageSize>(&mut self, frame: PhysFrame<S>) {
+        // TODO store unused frames in free list
+
+        self.phys_alloc.lock().free(frame);
     }
 
     /// returns the [PhysFrame] used for guard pages.
@@ -292,7 +308,7 @@ impl<'a> FrameAllocator<'a> {
             if let Some(frame) = self.guard_frame {
                 return Ok(frame);
             }
-            let frame = self.alloc()?;
+            let frame = self.alloc_no_stats()?;
             self.guard_frame = Some(frame);
             Ok(frame)
         }
@@ -313,13 +329,13 @@ impl<'a> FrameAllocator<'a> {
 // only return unique frames
 unsafe impl X86FrameAllocator<Size4KiB> for FrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        self.alloc().ok()
+        self.alloc_no_stats().ok()
     }
 }
 
 impl FrameDeallocator<Size4KiB> for FrameAllocator<'_> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
-        unsafe { self.free(frame) }
+        unsafe { self.free_no_stats(frame) }
     }
 }
 
@@ -327,13 +343,13 @@ impl FrameDeallocator<Size4KiB> for FrameAllocator<'_> {
 // only return unique frames
 unsafe impl X86FrameAllocator<Size2MiB> for FrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size2MiB>> {
-        self.alloc().ok()
+        self.alloc_no_stats().ok()
     }
 }
 
 impl FrameDeallocator<Size2MiB> for FrameAllocator<'_> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size2MiB>) {
-        unsafe { self.free(frame) }
+        unsafe { self.free_no_stats(frame) }
     }
 }
 
@@ -341,12 +357,12 @@ impl FrameDeallocator<Size2MiB> for FrameAllocator<'_> {
 // only return unique frames
 unsafe impl X86FrameAllocator<Size1GiB> for FrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size1GiB>> {
-        self.alloc().ok()
+        self.alloc_no_stats().ok()
     }
 }
 
 impl FrameDeallocator<Size1GiB> for FrameAllocator<'_> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size1GiB>) {
-        unsafe { self.free(frame) }
+        unsafe { self.free_no_stats(frame) }
     }
 }

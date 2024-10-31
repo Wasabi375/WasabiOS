@@ -283,6 +283,11 @@ mod test {
             TranslateResult::NotMapped,
         );
 
+        unsafe {
+            // Safety: page no longer used
+            PageAllocator::get_for_kernel().lock().free_page(page);
+        }
+
         Ok(())
     }
 
@@ -329,6 +334,11 @@ mod test {
 
         t_assert_eq!(freed_entry.addr(), fake_frame.start_address());
         t_assert_eq!(freed_entry.flags(), PageTableFlags::BIT_10);
+
+        unsafe {
+            // Safety: page no longer used
+            PageAllocator::get_for_kernel().lock().free_page(page);
+        }
 
         Ok(())
     }

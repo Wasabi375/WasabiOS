@@ -263,6 +263,11 @@ mod test {
         t_assert!(pages.head_guard.is_some());
         t_assert!(pages.tail_guard.is_some());
 
+        unsafe {
+            // Safety: pages no longer used
+            allocator.free_guarded_pages(pages);
+        }
+
         Ok(())
     }
 

@@ -1252,6 +1252,35 @@ impl Drop for NVMEController {
             }
         }
         trace!("all io queues deleted");
+
+        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
+
+        match page_table.unmap(self.controller_page) {
+            Ok((_, _, flush)) => {
+                flush.flush();
+                unsafe {
+                    // Safety: pages are no longer used or accessible after drop
+                    page_allocator.free_page(self.controller_page);
+                }
+            }
+            Err(e) => {
+                error!("Failed to unmap controller page on drop: {e:#?}");
+            }
+        }
+
+        match page_table.unmap(self.doorbell_page) {
+            Ok((_, _, flush)) => {
+                flush.flush();
+                unsafe {
+                    // Safety: pages are no longer used or accessible after drop
+                    page_allocator.free_page(self.doorbell_page);
+                }
+            }
+            Err(e) => {
+                error!("Failed to unmap doorbell page on drop: {e:#?}");
+            }
+        }
     }
 }
 
@@ -1516,7 +1545,7 @@ mod test {
         Ok(())
     }
 
-    #[kernel_test]
+    #[kernel_test(allow_page_leak, allow_frame_leak)]
     pub fn test_nvme_read_data() -> Result<(), KernelTestError> {
         let mut nvme_controller =
             unsafe { create_test_controller() }.texpect("failed to create controller")?;
@@ -1548,11 +1577,9 @@ mod test {
         let frames = frame_alloc.alloc_range(page_count).tunwrap()?;
 
         drop(page_alloc);
-        drop(frame_alloc);
 
         for (page, frame) in pages.iter().zip(frames) {
             unsafe {
-                let frame_alloc = &mut FrameAllocator::get_for_kernel().lock();
                 let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
                 let kernel_page_table = &mut KERNEL_PAGE_TABLE.lock();
                 let table_flags = PageTableFlags::KERNEL_TABLE_FLAGS;
@@ -1565,7 +1592,9 @@ mod test {
             }
         }
 
-        todo_warn!("Memory leak {page_count} pages for nvme read test");
+        drop(frame_alloc);
+
+        todo_warn!("Memory leak {page_count} pages and frames for nvme read test");
 
         let command = io_commands::create_read_command(
             frames.start,

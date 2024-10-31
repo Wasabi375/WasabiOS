@@ -218,6 +218,8 @@ impl PageAllocator {
             start: page.start_address().as_u64(),
             end: page.start_address().as_u64() + (S::SIZE - 1),
         }) {
+            #[cfg(feature = "mem-stats")]
+            self.stats.register_alloc::<S>(1);
             Ok(())
         } else {
             Err(MemError::PageInUse)
@@ -320,6 +322,18 @@ impl PageAllocator {
             .map(|s| VirtAddr::new(s as u64))
             .ok_or(MemError::OutOfPages)?;
 
+        #[cfg(feature = "mem-stats")]
+        {
+            self.stats.register_alloc::<S>(count);
+            if head_guard {
+                self.stats.register_alloc::<Size4KiB>(count);
+            }
+
+            if tail_guard {
+                self.stats.register_alloc::<Size4KiB>(count);
+            }
+        }
+
         let head_guard = if head_guard {
             let guard = Page::from_start_address(start).expect("head_gurad should be aligned");
             start += Size4KiB::SIZE;
@@ -387,8 +401,6 @@ impl PageAllocator {
                 self.free_page(p);
             }
         }
-        #[cfg(feature = "mem-stats")]
-        self.stats.register_free::<S>(pages.count);
     }
 
     /// frees multiple pages

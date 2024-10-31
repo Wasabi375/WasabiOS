@@ -101,6 +101,7 @@ use bootloader_api::BootInfo;
 use core::{
     any::Any,
     fmt::Debug,
+    i128,
     str::{from_utf8, FromStr},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -114,7 +115,9 @@ use uart_16550::SerialPort;
 use wasabi_kernel::{
     bootloader_config_common,
     core_local::{get_ready_core_count, CoreInterruptState},
-    mem::kernel_heap::KernelHeap,
+    mem::{
+        frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
+    },
     serial::SERIAL2,
     testing::{panic::use_custom_panic_handler, qemu},
     KernelConfig,
@@ -195,6 +198,16 @@ fn kernel_test_main() -> ! {
     unsafe {
         locals!().disable_interrupts();
     }
+
+    // Access guard frame. This ensures the guard frame allocation won't mess
+    // with memory leak testing
+    assert!(unsafe {
+        // Safety: we just assert that we can access a guard frame
+        FrameAllocator::get_for_kernel()
+            .lock()
+            .guard_frame()
+            .is_ok()
+    });
 
     init_mp();
 
@@ -539,7 +552,11 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
     }
 
     #[cfg(feature = "mem-stats")]
-    let mem_usage_befor = KernelHeap::get().lock().stats().snapshot();
+    let heap_usage_befor = KernelHeap::get().lock().stats().snapshot();
+    #[cfg(feature = "mem-stats")]
+    let page_usage_before = PageAllocator::get_for_kernel().lock().stats().snapshot();
+    #[cfg(feature = "mem-stats")]
+    let frame_usage_before = FrameAllocator::get_for_kernel().lock().stats().snapshot();
 
     let mut success = if panicing {
         trace!("run panic-expected test");
@@ -568,16 +585,52 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
 
     #[cfg(feature = "mem-stats")]
     {
-        let mem_usage_after = KernelHeap::get().lock().stats().snapshot();
-        if mem_usage_befor != mem_usage_after {
-            let leaked = mem_usage_after.used as i128 - mem_usage_befor.used as i128;
+        let mut mem_failure = false;
+        let heap_usage_after = KernelHeap::get().lock().stats().snapshot();
+        if heap_usage_befor != heap_usage_after {
+            let leaked = heap_usage_after.used as i128 - heap_usage_befor.used as i128;
 
             if test.allow_heap_leak {
-                warn!("Memory leak detected! {leaked} bytes");
+                warn!("Memory leak detected in heap! {leaked} bytes");
             } else {
-                error!("Memory leak detected! {leaked} bytes");
-                return false;
+                error!("Memory leak detected in heap! {leaked} bytes");
+                mem_failure = true;
             }
+        }
+
+        let page_usage_after = PageAllocator::get_for_kernel().lock().stats().snapshot();
+        if page_usage_after != page_usage_before {
+            let leaked_4k = page_usage_after.count_4k as i128 - page_usage_before.count_4k as i128;
+            let leaked_2m = page_usage_after.count_2m as i128 - page_usage_before.count_2m as i128;
+            let leaked_1g = page_usage_after.count_1g as i128 - page_usage_before.count_1g as i128;
+
+            if test.allow_page_leak {
+                warn!("Memory leak detected in pages! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+            } else {
+                error!("Memory leak detected in pages! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                mem_failure = true;
+            }
+        }
+
+        let frame_usage_after = FrameAllocator::get_for_kernel().lock().stats().snapshot();
+        if frame_usage_after != frame_usage_before {
+            let leaked_4k =
+                frame_usage_after.count_4k as i128 - frame_usage_before.count_4k as i128;
+            let leaked_2m =
+                frame_usage_after.count_2m as i128 - frame_usage_before.count_2m as i128;
+            let leaked_1g =
+                frame_usage_after.count_1g as i128 - frame_usage_before.count_1g as i128;
+
+            if test.allow_frame_leak {
+                warn!("Memory leak detected in frames! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+            } else {
+                error!("Memory leak detected in frames! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                mem_failure = true;
+            }
+        }
+
+        if mem_failure {
+            return false;
         }
     }
 
