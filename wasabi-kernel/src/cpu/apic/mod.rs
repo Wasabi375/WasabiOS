@@ -152,7 +152,7 @@ impl Apic {
             | PageTableFlags::NO_EXECUTE
             | PageTableFlags::NO_CACHE;
 
-        let page = PageAllocator::get_kernel_allocator()
+        let page = PageAllocator::get_for_kernel()
             .lock()
             .allocate_page_4k()
             .map_err(MemError::from)?;

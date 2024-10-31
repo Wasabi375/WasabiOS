@@ -170,7 +170,7 @@ impl HeapStats {
 
 /// Statistics about page allocations
 #[derive(Clone, Default, Debug)]
-pub struct PageAllocStats {
+pub struct PageFrameAllocStats {
     /// Count of allocated 4k sized pages
     pub alloc_4k_count: u64,
     /// Count of allocated 2m allocd pages
@@ -199,7 +199,7 @@ pub struct PageAllocStatSnapshot {
     pub count_1g: u64,
 }
 
-impl PageAllocStats {
+impl PageFrameAllocStats {
     /// Register an allocation
     pub fn register_alloc<P: PageSize>(&mut self, count: u64) {
         match P::SIZE {
@@ -242,7 +242,11 @@ impl PageAllocStats {
     }
 
     /// Log the stats
-    pub fn log(&self, level: log::Level) {
-        log::log!(level, "{:#?}", self);
+    pub fn log(&self, level: log::Level, msg: Option<&str>) {
+        if let Some(msg) = msg {
+            log::log!(level, "{msg}: {:#?}", self);
+        } else {
+            log::log!(level, "{:#?}", self);
+        }
     }
 }

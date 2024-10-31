@@ -59,9 +59,7 @@ impl ACPI {
         let frame = PhysFrame::containing_address(rsdp_paddr);
         let offset = rsdp_paddr - frame.start_address();
 
-        let page = PageAllocator::get_kernel_allocator()
-            .lock()
-            .allocate_page_4k()?;
+        let page = PageAllocator::get_for_kernel().lock().allocate_page_4k()?;
         unsafe {
             let mut page_table = KERNEL_PAGE_TABLE.lock();
             let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
@@ -171,9 +169,7 @@ impl ACPI {
         } else {
             let flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
-            let page = PageAllocator::get_kernel_allocator()
-                .lock()
-                .allocate_page_4k()?;
+            let page = PageAllocator::get_for_kernel().lock().allocate_page_4k()?;
             unsafe {
                 // Safety: we are the only code mapping this frame
                 KERNEL_PAGE_TABLE

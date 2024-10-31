@@ -124,7 +124,7 @@ impl GDTInfo {
     }
 
     fn allocate_stack(page_count: u64) -> Result<GuardedPages<Size4KiB>, MemError> {
-        let pages = PageAllocator::get_kernel_allocator()
+        let pages = PageAllocator::get_for_kernel()
             .lock()
             .allocate_guarded_pages(page_count, true, false)?;
         pages.map()

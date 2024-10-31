@@ -252,7 +252,7 @@ mod test {
 
     #[kernel_test]
     fn alloc_guarded_page() -> Result<(), KernelTestError> {
-        let mut allocator = PageAllocator::get_kernel_allocator().lock();
+        let mut allocator = PageAllocator::get_for_kernel().lock();
 
         let pages = allocator
             .allocate_guarded_pages::<Size4KiB>(1, true, true)
@@ -268,7 +268,7 @@ mod test {
 
     #[kernel_test]
     fn map_unmap_guarded_page() -> Result<(), KernelTestError> {
-        let mut allocator = PageAllocator::get_kernel_allocator().lock();
+        let mut allocator = PageAllocator::get_for_kernel().lock();
 
         let pages = allocator
             .allocate_guarded_pages::<Size4KiB>(1, true, true)

@@ -274,7 +274,7 @@ impl ApStack {
 
     fn alloc() -> Result<Self, ApStackError> {
         trace!("Allocate ap stack");
-        let pages = PageAllocator::get_kernel_allocator()
+        let pages = PageAllocator::get_for_kernel()
             .lock()
             .allocate_guarded_pages(DEFAULT_STACK_PAGE_COUNT, true, true)
             .map_err(ApStackError::from)?;
@@ -331,7 +331,7 @@ impl ApStack {
                     // Safety:
                     //  we never gave await the address to this memory and we
                     //  can't use it, so it's safe to free
-                    PageAllocator::get_kernel_allocator()
+                    PageAllocator::get_for_kernel()
                         .lock()
                         .free_guarded_pages(unmapped);
                 }
@@ -601,7 +601,7 @@ impl<S: SipiPayloadState> Drop for SipiPayload<S> {
             .expect("Failed to unmap ap trampoline during drop");
         flush.flush();
         unsafe {
-            PageAllocator::get_kernel_allocator()
+            PageAllocator::get_for_kernel()
                 .lock()
                 // Safety: All aps are started and therefor won't access this page anymore
                 .free_page(self.page);

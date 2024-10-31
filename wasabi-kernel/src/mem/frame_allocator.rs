@@ -3,7 +3,9 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
+use super::{MemError, Result};
 use crate::prelude::{LockCell, UnwrapTicketLock};
+
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use shared::rangeset::{Range, RangeSet, RegionRequest};
 use x86_64::{
@@ -14,7 +16,8 @@ use x86_64::{
     PhysAddr,
 };
 
-use super::{MemError, Result};
+#[cfg(feature = "mem-stats")]
+use super::stats::PageFrameAllocStats;
 
 /// The global kernel phys allocator. This is used by the frame allocators to create frames
 // Safetey: this is initailized by [init] before it is used
@@ -187,6 +190,9 @@ pub struct FrameAllocator<'a> {
     /// memory to back gurad pages
     #[cfg(feature = "mem-backed-guard-page")]
     guard_frame: Option<PhysFrame<Size4KiB>>,
+
+    #[cfg(feature = "mem-stats")]
+    stats: PageFrameAllocStats,
 }
 
 impl FrameAllocator<'_> {
@@ -204,13 +210,24 @@ impl<'a> FrameAllocator<'a> {
             // first_unused_frame: null_mut(),
             #[cfg(feature = "mem-backed-guard-page")]
             guard_frame: None,
+
+            #[cfg(feature = "mem-stats")]
+            stats: Default::default(),
         }
     }
 
     /// allocate a new frame
     pub fn alloc<S: PageSize>(&mut self) -> Result<PhysFrame<S>> {
         // if self.first_unused_frame.is_null() {
-        return self.phys_alloc.lock().alloc().ok_or(MemError::OutOfMemory);
+        return self
+            .phys_alloc
+            .lock()
+            .alloc()
+            .ok_or(MemError::OutOfMemory)
+            .inspect(|_| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_alloc::<S>(1);
+            });
         // }
 
         // todo!()
@@ -237,7 +254,11 @@ impl<'a> FrameAllocator<'a> {
             .phys_alloc
             .lock()
             .alloc_range(count)
-            .ok_or(MemError::OutOfMemory);
+            .ok_or(MemError::OutOfMemory)
+            .inspect(|_| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_alloc::<S>(count);
+            });
     }
 
     /// Frees a phys frame
@@ -250,6 +271,9 @@ impl<'a> FrameAllocator<'a> {
         // TODO store unused frames in free list
 
         self.phys_alloc.lock().free(frame);
+
+        #[cfg(feature = "mem-stats")]
+        self.stats.register_free::<S>(1);
     }
 
     /// returns the [PhysFrame] used for guard pages.
@@ -276,6 +300,12 @@ impl<'a> FrameAllocator<'a> {
         unsafe {
             Ok(PhysFrame::from_start_address_unchecked(PhysAddr::zero()))
         }
+    }
+
+    /// Access to [PageFrameAllocStats]
+    #[cfg(feature = "mem-stats")]
+    pub fn stats(&self) -> &PageFrameAllocStats {
+        &self.stats
     }
 }
 

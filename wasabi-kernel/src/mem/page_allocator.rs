@@ -21,7 +21,7 @@ use x86_64::{
 };
 
 #[cfg(feature = "mem-stats")]
-use super::stats::PageAllocStats;
+use super::stats::PageFrameAllocStats;
 
 /// the kernel page allocator
 // safety: not accessed before it is initialized in [init]
@@ -170,7 +170,7 @@ pub fn init(page_table: &mut RecursivePageTable) {
     let mut page_allocator = PageAllocator {
         vaddrs,
         #[cfg(feature = "mem-stats")]
-        stats: PageAllocStats::default(),
+        stats: PageFrameAllocStats::default(),
     };
     reserve_pages(&mut page_allocator);
     KERNEL_PAGE_ALLOCATOR.lock_uninit().write(page_allocator);
@@ -186,12 +186,12 @@ pub struct PageAllocator {
     vaddrs: RangeSet<256>,
 
     #[cfg(feature = "mem-stats")]
-    stats: PageAllocStats,
+    stats: PageFrameAllocStats,
 }
 
 impl PageAllocator {
     /// get access to the kernel's [PageAllocator]
-    pub fn get_kernel_allocator() -> &'static UnwrapTicketLock<Self> {
+    pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
         &KERNEL_PAGE_ALLOCATOR
     }
 
@@ -409,7 +409,7 @@ impl PageAllocator {
 
     /// Access to [PageAllocStats]
     #[cfg(feature = "mem-stats")]
-    pub fn stats(&self) -> &PageAllocStats {
+    pub fn stats(&self) -> &PageFrameAllocStats {
         &self.stats
     }
 }
@@ -443,7 +443,7 @@ mod test {
         let l1_vaddr =
             RecursivePageTable::l1_table_vaddr(recursive_index, some_index, some_index, some_index);
 
-        let mut alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut alloc = PageAllocator::get_for_kernel().lock();
 
         assert_matches!(
             alloc.try_allocate_page(Page::<Size4KiB>::from_start_address(l4_vaddr).unwrap()),

@@ -658,7 +658,7 @@ impl Drop for CommandQueue {
             .expect("completion_queue_paddr should be a frame start");
 
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
-        let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         let (_, _, flush) = page_table

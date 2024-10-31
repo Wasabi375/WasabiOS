@@ -163,7 +163,7 @@ impl NVMEController {
             todo_warn!("support multi function nvme controllers not implemented!");
         }
 
-        let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
@@ -999,7 +999,7 @@ impl NVMEController {
         let queue_idents =
             (0..count).map(|ident_offset| self.next_unused_io_queue_ident + ident_offset);
 
-        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut page_alloc = PageAllocator::get_for_kernel().lock();
         let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
@@ -1301,7 +1301,7 @@ pub fn experiment_nvme_device() {
     let pages;
     let frames;
     {
-        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut page_alloc = PageAllocator::get_for_kernel().lock();
         let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
 
         pages = page_alloc.allocate_pages(page_count).unwrap();
@@ -1538,7 +1538,7 @@ mod test {
         let page_count = pages_required_for!(Size4KiB, bytes);
         assert_eq!(page_count, 1, "TODO multipage not implemented");
 
-        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut page_alloc = PageAllocator::get_for_kernel().lock();
         let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
 
         let pages = page_alloc

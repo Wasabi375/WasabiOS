@@ -257,7 +257,7 @@ mod test {
         let fake_frame = PhysFrame::from_start_address(PhysAddr::new(0))
             .map_err_debug_display()
             .tunwrap()?;
-        let page: Page<Size4KiB> = PageAllocator::get_kernel_allocator()
+        let page: Page<Size4KiB> = PageAllocator::get_for_kernel()
             .lock()
             .allocate_page::<Size4KiB>()
             .tunwrap()?;
@@ -291,7 +291,7 @@ mod test {
         let fake_frame = PhysFrame::from_start_address(PhysAddr::new(0))
             .map_err_debug_display()
             .tunwrap()?;
-        let page: Page<Size4KiB> = PageAllocator::get_kernel_allocator()
+        let page: Page<Size4KiB> = PageAllocator::get_for_kernel()
             .lock()
             .allocate_page::<Size4KiB>()
             .tunwrap()?;
@@ -344,7 +344,7 @@ mod test {
         let mut pages: [Option<Page<Size4KiB>>; START_ADDRS.len()] = [None; START_ADDRS.len()];
 
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
-        let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         for (i, p) in &mut pages.iter_mut().enumerate() {
@@ -399,7 +399,7 @@ mod test {
         const PAGE_COUNT: usize = 1000;
         let mut pages: [Option<Page<Size4KiB>>; PAGE_COUNT] = [None; PAGE_COUNT];
 
-        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut page_alloc = PageAllocator::get_for_kernel().lock();
         let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 

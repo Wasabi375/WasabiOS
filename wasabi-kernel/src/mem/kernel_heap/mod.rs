@@ -61,7 +61,7 @@ pub fn init() {
         KERNEL_HEAP_SIZE, KERNEL_HEAP_PAGE_COUNT
     );
 
-    let pages = PageAllocator::get_kernel_allocator()
+    let pages = PageAllocator::get_for_kernel()
         .lock()
         .also(|_| {
             trace!("page alloc lock aquired");
