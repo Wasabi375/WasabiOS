@@ -16,7 +16,7 @@ use wasabi_kernel::{
     bootloader_config_common,
     cpu::{self, apic::timer::TimerConfig, interrupts::InterruptVector},
     kernel_info::KernelInfo,
-    mem::kernel_heap::KernelHeap,
+    mem::{kernel_heap::KernelHeap, page_allocator::PageAllocator},
     pci, time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
@@ -46,7 +46,12 @@ fn kernel_main() -> ! {
     //stop_timer();
 
     if locals!().is_bsp() {
-        KernelHeap::get().lock().stats().log(log::Level::Info);
+        let level = log::Level::Info;
+        KernelHeap::get().lock().stats().log(level);
+        PageAllocator::get_kernel_allocator()
+            .lock()
+            .stats()
+            .log(level);
     }
 
     info!("OS Done!\tcpu::halt()");

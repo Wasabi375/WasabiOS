@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use histogram::{Config, Histogram};
 use log::{trace, warn};
 use shared::math::IntoU64;
+use x86_64::structures::paging::{PageSize, Size1GiB, Size2MiB, Size4KiB};
 
 /// Statistics about the heap usage
 #[derive(Clone)]
@@ -164,5 +165,84 @@ impl HeapStats {
                 bucket.count()
             );
         }
+    }
+}
+
+/// Statistics about page allocations
+#[derive(Clone, Default, Debug)]
+pub struct PageAllocStats {
+    /// Count of allocated 4k sized pages
+    pub alloc_4k_count: u64,
+    /// Count of allocated 2m allocd pages
+    pub alloc_2m_count: u64,
+    /// Count of allocated 1g allocd pages
+    pub alloc_1g_count: u64,
+
+    /// Count of freed 4k sized pages
+    pub free_4k_count: u64,
+    /// Count of freed 2m allocd pages
+    pub free_2m_count: u64,
+    /// Count of freed 1g allocd pages
+    pub free_1g_count: u64,
+}
+
+/// Statistics about the page allocations that is comparable
+///
+/// This only tracks current usage and does not include total counts
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PageAllocStatSnapshot {
+    /// number of currently allocated pages with size 4k
+    pub count_4k: u64,
+    /// number of currently allocated pages with size 2m
+    pub count_2m: u64,
+    /// number of currently allocated pages with size 1g
+    pub count_1g: u64,
+}
+
+impl PageAllocStats {
+    /// Register an allocation
+    pub fn register_alloc<P: PageSize>(&mut self, count: u64) {
+        match P::SIZE {
+            Size4KiB::SIZE => {
+                self.alloc_4k_count += count;
+            }
+            Size2MiB::SIZE => {
+                self.alloc_2m_count += count;
+            }
+            Size1GiB::SIZE => {
+                self.alloc_1g_count += count;
+            }
+            _ => unreachable!("Page::SIZE not supported"),
+        }
+    }
+
+    /// Register a free
+    pub fn register_free<P: PageSize>(&mut self, count: u64) {
+        match P::SIZE {
+            Size4KiB::SIZE => {
+                self.free_4k_count += count;
+            }
+            Size2MiB::SIZE => {
+                self.free_2m_count += count;
+            }
+            Size1GiB::SIZE => {
+                self.free_1g_count += count;
+            }
+            _ => unreachable!("Page::SIZE not supported"),
+        }
+    }
+
+    /// Creates a snapshot from the current stats
+    pub fn snapshot(&self) -> PageAllocStatSnapshot {
+        PageAllocStatSnapshot {
+            count_4k: self.alloc_4k_count - self.free_4k_count,
+            count_2m: self.alloc_2m_count - self.free_2m_count,
+            count_1g: self.alloc_1g_count - self.free_1g_count,
+        }
+    }
+
+    /// Log the stats
+    pub fn log(&self, level: log::Level) {
+        log::log!(level, "{:#?}", self);
     }
 }

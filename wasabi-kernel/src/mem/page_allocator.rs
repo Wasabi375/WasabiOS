@@ -20,6 +20,9 @@ use x86_64::{
     VirtAddr,
 };
 
+#[cfg(feature = "mem-stats")]
+use super::stats::PageAllocStats;
+
 /// the kernel page allocator
 // safety: not accessed before it is initialized in [init]
 static KERNEL_PAGE_ALLOCATOR: UnwrapTicketLock<PageAllocator> =
@@ -164,7 +167,11 @@ pub fn init(page_table: &mut RecursivePageTable) {
         end: page_table_end_inclusive.as_u64(),
     });
 
-    let mut page_allocator = PageAllocator { vaddrs };
+    let mut page_allocator = PageAllocator {
+        vaddrs,
+        #[cfg(feature = "mem-stats")]
+        stats: PageAllocStats::default(),
+    };
     reserve_pages(&mut page_allocator);
     KERNEL_PAGE_ALLOCATOR.lock_uninit().write(page_allocator);
 }
@@ -177,19 +184,12 @@ fn reserve_pages(page_allocator: &mut PageAllocator) {
 pub struct PageAllocator {
     /// rangeset used by the allocator to keep track of used virt mem
     vaddrs: RangeSet<256>,
+
+    #[cfg(feature = "mem-stats")]
+    stats: PageAllocStats,
 }
 
 impl PageAllocator {
-    /// create a new [PageAllocator]
-    pub fn new() -> Self {
-        let mut vaddrs = RangeSet::new();
-        vaddrs.insert(Range {
-            start: 2 * Size4KiB::SIZE,
-            end: MAX_VIRT_ADDR,
-        });
-        Self { vaddrs }
-    }
-
     /// get access to the kernel's [PageAllocator]
     pub fn get_kernel_allocator() -> &'static UnwrapTicketLock<Self> {
         &KERNEL_PAGE_ALLOCATOR
@@ -237,6 +237,10 @@ impl PageAllocator {
                     .expect("RangeSet should provide properly aligned addresses")
             })
             .ok_or(MemError::OutOfPages)
+            .inspect(|_| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_alloc::<S>(1);
+            })
     }
 
     /// allocates multiple consecutive pages of virtual memory.
@@ -256,6 +260,10 @@ impl PageAllocator {
                 count,
             })
             .ok_or(MemError::OutOfPages)
+            .inspect(|_| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_alloc::<S>(count);
+            })
     }
 
     /// allocate multiple consecutive pages, with additional guard pages.
@@ -365,6 +373,8 @@ impl PageAllocator {
             start: page.start_address().as_u64(),
             end: page.start_address().as_u64() + (S::SIZE - 1),
         });
+        #[cfg(feature = "mem-stats")]
+        self.stats.register_free::<S>(1);
     }
 
     /// frees multiple pages
@@ -377,6 +387,8 @@ impl PageAllocator {
                 self.free_page(p);
             }
         }
+        #[cfg(feature = "mem-stats")]
+        self.stats.register_free::<S>(pages.count);
     }
 
     /// frees multiple pages
@@ -394,11 +406,11 @@ impl PageAllocator {
             }
         }
     }
-}
 
-impl Default for PageAllocator {
-    fn default() -> Self {
-        PageAllocator::new()
+    /// Access to [PageAllocStats]
+    #[cfg(feature = "mem-stats")]
+    pub fn stats(&self) -> &PageAllocStats {
+        &self.stats
     }
 }
 
