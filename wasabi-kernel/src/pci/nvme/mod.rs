@@ -16,7 +16,7 @@ use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
     locals,
     mem::{
-        frame_allocator::WasabiFrameAllocator,
+        frame_allocator::FrameAllocator,
         page_allocator::PageAllocator,
         page_table::{PageTableKernelFlags, PageTableMapError, KERNEL_PAGE_TABLE},
         ptr::UntypedPtr,
@@ -164,7 +164,7 @@ impl NVMEController {
         }
 
         let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         let properties_base_paddr = get_controller_properties_address(pci, pci_dev, 0);
@@ -1000,7 +1000,7 @@ impl NVMEController {
             (0..count).map(|ident_offset| self.next_unused_io_queue_ident + ident_offset);
 
         let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         let mut error = None;
@@ -1302,7 +1302,7 @@ pub fn experiment_nvme_device() {
     let frames;
     {
         let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
 
         pages = page_alloc.allocate_pages(page_count).unwrap();
         // TODO I don't think I need consecutive frames. PRP lists should support separate frames
@@ -1423,7 +1423,7 @@ mod test {
 
     use crate::{
         mem::{
-            frame_allocator::WasabiFrameAllocator,
+            frame_allocator::FrameAllocator,
             page_allocator::PageAllocator,
             page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
             MemError,
@@ -1539,7 +1539,7 @@ mod test {
         assert_eq!(page_count, 1, "TODO multipage not implemented");
 
         let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
 
         let pages = page_alloc
             .allocate_pages::<Size4KiB>(page_count)
@@ -1552,7 +1552,7 @@ mod test {
 
         for (page, frame) in pages.iter().zip(frames) {
             unsafe {
-                let frame_alloc = &mut WasabiFrameAllocator::get_for_kernel().lock();
+                let frame_alloc = &mut FrameAllocator::get_for_kernel().lock();
                 let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
                 let kernel_page_table = &mut KERNEL_PAGE_TABLE.lock();
                 let table_flags = PageTableFlags::KERNEL_TABLE_FLAGS;

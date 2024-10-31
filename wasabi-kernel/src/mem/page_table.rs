@@ -239,7 +239,7 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
 
 #[cfg(feature = "test")]
 mod test {
-    use crate::mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator};
+    use crate::mem::{frame_allocator::FrameAllocator, page_allocator::PageAllocator};
     use shared::sync::lockcell::LockCell;
     use testing::{
         kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
@@ -261,8 +261,7 @@ mod test {
             .lock()
             .allocate_page::<Size4KiB>()
             .tunwrap()?;
-        let frame_alloc: &mut WasabiFrameAllocator =
-            &mut WasabiFrameAllocator::get_for_kernel().lock();
+        let frame_alloc: &mut FrameAllocator = &mut FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
@@ -296,8 +295,7 @@ mod test {
             .lock()
             .allocate_page::<Size4KiB>()
             .tunwrap()?;
-        let frame_alloc: &mut WasabiFrameAllocator =
-            &mut WasabiFrameAllocator::get_for_kernel().lock();
+        let frame_alloc: &mut FrameAllocator = &mut FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
         unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
             .map(|flusher| flusher.flush())
@@ -345,7 +343,7 @@ mod test {
         ];
         let mut pages: [Option<Page<Size4KiB>>; START_ADDRS.len()] = [None; START_ADDRS.len()];
 
-        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
@@ -402,7 +400,7 @@ mod test {
         let mut pages: [Option<Page<Size4KiB>>; PAGE_COUNT] = [None; PAGE_COUNT];
 
         let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         for (idx, p) in pages.iter_mut().enumerate() {

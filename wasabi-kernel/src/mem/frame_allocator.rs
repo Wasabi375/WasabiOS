@@ -8,8 +8,8 @@ use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use shared::rangeset::{Range, RangeSet, RegionRequest};
 use x86_64::{
     structures::paging::{
-        frame::PhysFrameRangeInclusive, FrameAllocator, FrameDeallocator, PageSize, PhysFrame,
-        Size1GiB, Size2MiB, Size4KiB,
+        frame::PhysFrameRangeInclusive, FrameAllocator as X86FrameAllocator, FrameDeallocator,
+        PageSize, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
     },
     PhysAddr,
 };
@@ -21,9 +21,9 @@ use super::{MemError, Result};
 static GLOBAL_PHYS_ALLOCATOR: UnwrapTicketLock<PhysAllocator> =
     unsafe { UnwrapTicketLock::new_uninit() };
 
-/// A [WasabiFrameAllocator] for 4KiB pages
+/// A [FrameAllocator] for 4KiB pages
 // Safetey: this is initailized by [init] before it is used
-static KERNEL_FRAME_ALLOCATOR: UnwrapTicketLock<WasabiFrameAllocator> =
+static KERNEL_FRAME_ALLOCATOR: UnwrapTicketLock<FrameAllocator> =
     unsafe { UnwrapTicketLock::new_uninit() };
 
 /// initializes the frame allocators
@@ -90,7 +90,7 @@ pub fn init(regions: &MemoryRegions) {
 
     KERNEL_FRAME_ALLOCATOR
         .lock_uninit()
-        .write(WasabiFrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
+        .write(FrameAllocator::new(&GLOBAL_PHYS_ALLOCATOR));
 }
 
 fn reserve_phys_frames(allocator: &mut PhysAllocator) {
@@ -177,7 +177,7 @@ struct UnusedFrame {
 }
 
 /// A PhysFrame Allocator
-pub struct WasabiFrameAllocator<'a> {
+pub struct FrameAllocator<'a> {
     /// the phys mem allocator used to allocate new frames, if we run out
     phys_alloc: &'a UnwrapTicketLock<PhysAllocator>,
 
@@ -189,17 +189,17 @@ pub struct WasabiFrameAllocator<'a> {
     guard_frame: Option<PhysFrame<Size4KiB>>,
 }
 
-impl WasabiFrameAllocator<'_> {
+impl FrameAllocator<'_> {
     /// Get the 4KiB frame allocator
     pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
         &KERNEL_FRAME_ALLOCATOR
     }
 }
 
-impl<'a> WasabiFrameAllocator<'a> {
+impl<'a> FrameAllocator<'a> {
     /// create a new allocator
     fn new(phys_allocator: &'a UnwrapTicketLock<PhysAllocator>) -> Self {
-        WasabiFrameAllocator {
+        FrameAllocator {
             phys_alloc: phys_allocator,
             // first_unused_frame: null_mut(),
             #[cfg(feature = "mem-backed-guard-page")]
@@ -281,13 +281,13 @@ impl<'a> WasabiFrameAllocator<'a> {
 
 // Safety: all frame allocations go through range-set which ensures that we
 // only return unique frames
-unsafe impl FrameAllocator<Size4KiB> for WasabiFrameAllocator<'_> {
+unsafe impl X86FrameAllocator<Size4KiB> for FrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
         self.alloc().ok()
     }
 }
 
-impl FrameDeallocator<Size4KiB> for WasabiFrameAllocator<'_> {
+impl FrameDeallocator<Size4KiB> for FrameAllocator<'_> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
         unsafe { self.free(frame) }
     }
@@ -295,13 +295,13 @@ impl FrameDeallocator<Size4KiB> for WasabiFrameAllocator<'_> {
 
 // Safety: all frame allocations go through range-set which ensures that we
 // only return unique frames
-unsafe impl FrameAllocator<Size2MiB> for WasabiFrameAllocator<'_> {
+unsafe impl X86FrameAllocator<Size2MiB> for FrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size2MiB>> {
         self.alloc().ok()
     }
 }
 
-impl FrameDeallocator<Size2MiB> for WasabiFrameAllocator<'_> {
+impl FrameDeallocator<Size2MiB> for FrameAllocator<'_> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size2MiB>) {
         unsafe { self.free(frame) }
     }
@@ -309,13 +309,13 @@ impl FrameDeallocator<Size2MiB> for WasabiFrameAllocator<'_> {
 
 // Safety: all frame allocations go through range-set which ensures that we
 // only return unique frames
-unsafe impl FrameAllocator<Size1GiB> for WasabiFrameAllocator<'_> {
+unsafe impl X86FrameAllocator<Size1GiB> for FrameAllocator<'_> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size1GiB>> {
         self.alloc().ok()
     }
 }
 
-impl FrameDeallocator<Size1GiB> for WasabiFrameAllocator<'_> {
+impl FrameDeallocator<Size1GiB> for FrameAllocator<'_> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size1GiB>) {
         unsafe { self.free(frame) }
     }

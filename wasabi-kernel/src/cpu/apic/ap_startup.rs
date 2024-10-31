@@ -29,7 +29,7 @@ use crate::{
     cpu::apic::ipi::{self, Ipi},
     enter_kernel_main, locals,
     mem::{
-        frame_allocator::{PhysAllocator, WasabiFrameAllocator},
+        frame_allocator::{FrameAllocator, PhysAllocator},
         page_allocator::PageAllocator,
         page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
         structs::GuardedPages,
@@ -426,7 +426,7 @@ impl SipiPayload<Ready> {
 
         unsafe {
             let mut page_table = KERNEL_PAGE_TABLE.lock();
-            let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+            let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
 
             // Safety:
             //  both frame and page were reserved for this

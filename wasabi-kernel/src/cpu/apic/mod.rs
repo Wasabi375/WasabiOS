@@ -6,7 +6,7 @@ use crate::{
     cpu::{cpuid::cpuid, interrupts::register_interrupt_handler},
     locals,
     mem::{
-        frame_allocator::WasabiFrameAllocator,
+        frame_allocator::FrameAllocator,
         page_allocator::PageAllocator,
         page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
         ptr::UntypedPtr,
@@ -165,7 +165,7 @@ impl Apic {
                     phys_frame,
                     apic_table_flags,
                     PageTableFlags::KERNEL_TABLE_FLAGS,
-                    WasabiFrameAllocator::get_for_kernel().lock().as_mut(),
+                    FrameAllocator::get_for_kernel().lock().as_mut(),
                 )
                 .map_err(MemError::from)?
                 .flush();

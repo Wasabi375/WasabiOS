@@ -18,7 +18,7 @@ use x86_64::{
 };
 
 use crate::mem::{
-    frame_allocator::WasabiFrameAllocator,
+    frame_allocator::FrameAllocator,
     page_allocator::PageAllocator,
     page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
     ptr::UntypedPtr,
@@ -200,7 +200,7 @@ impl CommandQueue {
         completion_queue_size: u16,
         doorbell_base: UntypedPtr,
         queue_doorbell_stride: isize,
-        frame_allocator: &mut WasabiFrameAllocator<'static>,
+        frame_allocator: &mut FrameAllocator<'static>,
         page_allocator: &mut PageAllocator,
         page_table: &mut RecursivePageTable,
     ) -> Result<Self, NVMEControllerError> {
@@ -657,7 +657,7 @@ impl Drop for CommandQueue {
         let comp_frame = PhysFrame::<Size4KiB>::from_start_address(self.completion_queue_paddr)
             .expect("completion_queue_paddr should be a frame start");
 
-        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 

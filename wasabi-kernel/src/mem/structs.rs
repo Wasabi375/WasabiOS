@@ -15,7 +15,7 @@ use x86_64::{
 };
 
 use super::{
-    frame_allocator::WasabiFrameAllocator,
+    frame_allocator::FrameAllocator,
     page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
     MemError,
 };
@@ -82,7 +82,7 @@ where
 {
     /// allocates [PhysFrames] and maps `self` to the allocated frames.
     pub fn map(self) -> Result<GuardedPages<S>, MemError> {
-        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE;
@@ -144,7 +144,7 @@ where
     /// Safety:
     /// The caller must ensure that the pages are no longer used
     pub unsafe fn unmap(self) -> Result<GuardedPages<S>, UnmapError> {
-        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_table = KERNEL_PAGE_TABLE.lock();
 
         trace!("unmap guarded pages");

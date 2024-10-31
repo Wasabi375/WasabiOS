@@ -12,7 +12,7 @@ use super::stats::HeapStats;
 use super::{ptr::UntypedPtr, structs::Pages};
 use crate::{
     mem::{
-        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
+        frame_allocator::FrameAllocator, page_allocator::PageAllocator,
         page_table::KERNEL_PAGE_TABLE, MemError, Result,
     },
     prelude::{LockCell, TicketLock, UnwrapTicketLock},
@@ -73,7 +73,7 @@ pub fn init() {
         let mut page_table = KERNEL_PAGE_TABLE.lock();
         trace!("page table lock aquired");
 
-        let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         trace!("frame alloc lock aquired");
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 

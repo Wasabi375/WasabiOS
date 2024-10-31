@@ -20,7 +20,7 @@ use log::{debug, error, info, trace, warn};
 use crate::{
     cpu::acpi::structs::{Header, RsdpV1, XSDT},
     mem::{
-        frame_allocator::WasabiFrameAllocator,
+        frame_allocator::FrameAllocator,
         page_allocator::PageAllocator,
         page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
         ptr::UntypedPtr,
@@ -64,7 +64,7 @@ impl ACPI {
             .allocate_page_4k()?;
         unsafe {
             let mut page_table = KERNEL_PAGE_TABLE.lock();
-            let mut frame_allocator = WasabiFrameAllocator::get_for_kernel().lock();
+            let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
             let flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
             // Safety: we are the only code mapping this frame
@@ -183,7 +183,7 @@ impl ACPI {
                         frame,
                         flags,
                         PageTableFlags::KERNEL_TABLE_FLAGS,
-                        WasabiFrameAllocator::get_for_kernel().lock().as_mut(),
+                        FrameAllocator::get_for_kernel().lock().as_mut(),
                     )?
                     .flush();
             }
