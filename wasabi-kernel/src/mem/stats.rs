@@ -254,7 +254,7 @@ impl PageFrameAllocStats {
 }
 
 /// Statistics about mappings within a page table
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct PageTableStats {
     /// the total number of 4k pages mapped
     pub total_mapped_4k: u64,
@@ -281,8 +281,26 @@ pub struct PageTableStats {
     pub total_mapped_without_present: u64,
 
     /// total count of pages mapped by [PageTableFlags] based on
-    /// the iter order: `PageTableFlags::all().iter_names()`
-    pub total_mapping_by_flag: [u64; 25],
+    /// the bit offset going low to high
+    pub total_mapping_by_flag: [u64; 64],
+}
+
+impl Default for PageTableStats {
+    fn default() -> Self {
+        Self {
+            total_mapped_4k: 0,
+            total_mapped_2m: 0,
+            total_mapped_1g: 0,
+            total_unmapped_4k: 0,
+            total_unmapped_2m: 0,
+            total_unmapped_1g: 0,
+            total_remapped_4k: 0,
+            total_remapped_2m: 0,
+            total_remapped_1g: 0,
+            total_mapped_without_present: 0,
+            total_mapping_by_flag: [0; 64],
+        }
+    }
 }
 
 impl PageTableStats {
@@ -292,8 +310,12 @@ impl PageTableStats {
             self.total_mapped_without_present += 1;
         }
 
-        for (i, (_, flag)) in PageTableFlags::all().iter_names().enumerate() {
-            if flags.contains(flag) {
+        for i in 0..64 {
+            let bit = 1 << i;
+            let Some(f) = PageTableFlags::from_bits(bit) else {
+                continue;
+            };
+            if flags.contains(f) {
                 self.total_mapping_by_flag[i] += 1;
             }
         }
@@ -365,15 +387,13 @@ impl PageTableStats {
             self.total_unmapped_4k, self.total_unmapped_2m, self.total_unmapped_1g,
             self.total_remapped_4k, self.total_remapped_2m, self.total_remapped_1g,
             self.total_mapped_without_present);
-        for (i, (name, flag)) in PageTableFlags::all().iter_names().enumerate() {
+        for i in 0..64 {
+            let Some(flag) = PageTableFlags::from_bits(1 << i) else {
+                continue;
+            };
             let count = self.total_mapping_by_flag[i];
             if count != 0 {
-                let name = if name.starts_with("BIT_") {
-                    flag.get_name()
-                } else {
-                    name
-                };
-                log::log!(level, "{} count: {}", name, count);
+                log::log!(level, "{} count: {}", flag.get_name(), count);
             }
         }
     }
