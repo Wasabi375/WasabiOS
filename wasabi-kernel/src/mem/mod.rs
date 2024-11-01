@@ -1,5 +1,18 @@
 //! # Memory and Type usage in the kernel
 //!
+//! ## Locks
+//!
+//! There are 4 locks that are used for kernel memory managment.
+//!  1. Page Allocator
+//!  2. Frame Allocator
+//!  3. Page Table
+//!  4. Kernel Heap
+//!
+//! Generally it should never be necessary to hold the kernel heap lock.
+//! Any rust allocation will automatically lock the heap when necessary.
+//! The other 3 locks should be held only for as long as necessary and
+//! when possible be locked in the above order to prevent deadlocks.
+//!
 //! ## Pointer Types
 //!
 //! * **Memory Mapped Pointers**:
