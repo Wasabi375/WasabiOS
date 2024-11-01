@@ -5,6 +5,7 @@ use core::fmt::Write;
 use core::mem::size_of;
 use x86_64::VirtAddr;
 
+use crate::mem::ptr::UntypedPtr;
 use crate::serial_print;
 
 const INVISIBLE_CHAR: char = '.';
@@ -21,7 +22,7 @@ pub unsafe fn log_hex_dump<M: AsRef<str>>(
     message: M,
     level: log::Level,
     target: &str,
-    start: VirtAddr,
+    start: UntypedPtr,
     length: usize,
 ) {
     let line_count = (length / HEX_DUMP_LOG_BYTE_WIDTH) + 1;
@@ -42,10 +43,10 @@ pub fn log_hex_dump_buf<M: AsRef<str>, T>(
     target: &str,
     buffer: &[T],
 ) {
-    let vaddr = VirtAddr::from_ptr(buffer);
+    let ptr = UntypedPtr::from(buffer);
     unsafe {
         // Safety: vaddr points to valid slice
-        log_hex_dump(message, level, target, vaddr, buffer.len() * size_of::<T>());
+        log_hex_dump(message, level, target, ptr, buffer.len() * size_of::<T>());
     }
 }
 
@@ -56,10 +57,10 @@ pub fn log_hex_dump_struct<M: AsRef<str>, T>(
     target: &str,
     data: &T,
 ) {
-    let vaddr = VirtAddr::from_ptr(data);
+    let ptr = UntypedPtr::from(data);
     unsafe {
         // Safety: vaddr points to valid reference
-        log_hex_dump(message, level, target, vaddr, size_of::<T>());
+        log_hex_dump(message, level, target, ptr, size_of::<T>());
     }
 }
 
@@ -68,7 +69,7 @@ pub fn log_hex_dump_struct<M: AsRef<str>, T>(
 /// # Safety:
 ///
 /// `start` up to `start + length - 1` must be valid pointers
-pub unsafe fn serial_hex_dump<M: AsRef<str>>(start: VirtAddr, length: usize) {
+pub unsafe fn serial_hex_dump<M: AsRef<str>>(start: UntypedPtr, length: usize) {
     // Safety: see function definition
     for line in unsafe { hex_dump_iter(start, length, HEX_DUMP_SERIAL_BYTE_WIDTH) } {
         serial_print!("{}", line);
@@ -79,11 +80,12 @@ pub unsafe fn serial_hex_dump<M: AsRef<str>>(start: VirtAddr, length: usize) {
 ///
 /// `start` must be a valid ptr for the next `length` bytes
 unsafe fn hex_dump_iter(
-    start: VirtAddr,
+    start: UntypedPtr,
     length: usize,
     width: usize,
 ) -> impl Iterator<Item = String> {
     assert!(length > 0);
+    let start: VirtAddr = start.into();
     let end_inclusive = start + (length - 1) as u64;
 
     (start..=end_inclusive)

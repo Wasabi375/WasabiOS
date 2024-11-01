@@ -22,7 +22,7 @@ ureq = "2.10.1"
 
 [workspace]
 members = [
-    "colored",
+    "histogram",
     "interrupt-fn-builder",
     "logger",
     "shared",
@@ -63,6 +63,7 @@ walkdir = "2.5"
 x86_64 = { version = "0.15", git = "https://github.com/Wasabi375/x86_64", branch = "patched" }
 hashbrown = "0.14.5"
 derive-where = "1.2.7"
+libm = "0.2.11"
 
 # latin-1-suplement is required for german Umlauts. unicode-specials contains the replacement character �
 noto-sans-mono-bitmap = { version = "0.2.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}

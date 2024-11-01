@@ -333,7 +333,7 @@ impl<C: Canvas> CanvasWriter<C> {
     /// `chars` should be the rest of the ansi control sequence fater the `ESC(0x1b)`.
     ///
     /// A sequence looks like `ESC[(0-9){1,3}(;(0-9){1,3})*m`
-    /// https://chrisyeh96.github.io/2020/03/28/terminal-colors.html
+    /// <https://chrisyeh96.github.io/2020/03/28/terminal-colors.html>
     fn handle_ansi_ctrl_seq(
         &mut self,
         chars: &mut impl Iterator<Item = char>,

@@ -6,7 +6,7 @@ use log::{debug, error, info, trace, warn};
 use crate::{
     mem::{
         page_table::RecursivePageTableExt,
-        structs::{GuardedPages, Pages, Unmapped},
+        structs::{GuardedPages, Pages},
         MemError, Result,
     },
     prelude::UnwrapTicketLock,
@@ -20,6 +20,9 @@ use x86_64::{
     VirtAddr,
 };
 
+#[cfg(feature = "mem-stats")]
+use super::stats::PageFrameAllocStats;
+
 /// the kernel page allocator
 // safety: not accessed before it is initialized in [init]
 static KERNEL_PAGE_ALLOCATOR: UnwrapTicketLock<PageAllocator> =
@@ -30,6 +33,13 @@ static KERNEL_PAGE_ALLOCATOR: UnwrapTicketLock<PageAllocator> =
 /// this is not a canonical virt addr, but instead the largest value
 /// that a virt addr can point to.
 const MAX_VIRT_ADDR: u64 = 0x0000_ffff_ffff_ffff;
+
+/// the index of the first page that can be allocated by
+/// the kernel [PageAllocator].
+///
+/// It might be possible to allocate pages before this, but the allocator
+/// will not do so automatically.
+pub const MIN_ALLOCATED_PAGE: u64 = 2;
 
 /// initialize the kernel page allocator.
 ///
@@ -126,7 +136,7 @@ pub fn init(page_table: &mut RecursivePageTable) {
 
     let mut vaddrs = RangeSet::new();
     vaddrs.insert(Range {
-        start: 2 * Size4KiB::SIZE,
+        start: MIN_ALLOCATED_PAGE * Size4KiB::SIZE,
         end: MAX_VIRT_ADDR,
     });
 
@@ -157,7 +167,11 @@ pub fn init(page_table: &mut RecursivePageTable) {
         end: page_table_end_inclusive.as_u64(),
     });
 
-    let mut page_allocator = PageAllocator { vaddrs };
+    let mut page_allocator = PageAllocator {
+        vaddrs,
+        #[cfg(feature = "mem-stats")]
+        stats: PageFrameAllocStats::default(),
+    };
     reserve_pages(&mut page_allocator);
     KERNEL_PAGE_ALLOCATOR.lock_uninit().write(page_allocator);
 }
@@ -170,23 +184,14 @@ fn reserve_pages(page_allocator: &mut PageAllocator) {
 pub struct PageAllocator {
     /// rangeset used by the allocator to keep track of used virt mem
     vaddrs: RangeSet<256>,
+
+    #[cfg(feature = "mem-stats")]
+    stats: PageFrameAllocStats,
 }
 
-// TODO convert errors from MemError to PageTableError
-// TODO do I want to always return/require Mapped/Unmapped?
 impl PageAllocator {
-    /// create a new [PageAllocator]
-    pub fn new() -> Self {
-        let mut vaddrs = RangeSet::new();
-        vaddrs.insert(Range {
-            start: 2 * Size4KiB::SIZE,
-            end: MAX_VIRT_ADDR,
-        });
-        Self { vaddrs }
-    }
-
     /// get access to the kernel's [PageAllocator]
-    pub fn get_kernel_allocator() -> &'static UnwrapTicketLock<Self> {
+    pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
         &KERNEL_PAGE_ALLOCATOR
     }
 
@@ -213,6 +218,8 @@ impl PageAllocator {
             start: page.start_address().as_u64(),
             end: page.start_address().as_u64() + (S::SIZE - 1),
         }) {
+            #[cfg(feature = "mem-stats")]
+            self.stats.register_alloc::<S>(1);
             Ok(())
         } else {
             Err(MemError::PageInUse)
@@ -232,6 +239,10 @@ impl PageAllocator {
                     .expect("RangeSet should provide properly aligned addresses")
             })
             .ok_or(MemError::OutOfPages)
+            .inspect(|_| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_alloc::<S>(1);
+            })
     }
 
     /// allocates multiple consecutive pages of virtual memory.
@@ -251,6 +262,10 @@ impl PageAllocator {
                 count,
             })
             .ok_or(MemError::OutOfPages)
+            .inspect(|_| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_alloc::<S>(count);
+            })
     }
 
     /// allocate multiple consecutive pages, with additional guard pages.
@@ -307,10 +322,22 @@ impl PageAllocator {
             .map(|s| VirtAddr::new(s as u64))
             .ok_or(MemError::OutOfPages)?;
 
+        #[cfg(feature = "mem-stats")]
+        {
+            self.stats.register_alloc::<S>(count);
+            if head_guard {
+                self.stats.register_alloc::<Size4KiB>(count);
+            }
+
+            if tail_guard {
+                self.stats.register_alloc::<Size4KiB>(count);
+            }
+        }
+
         let head_guard = if head_guard {
             let guard = Page::from_start_address(start).expect("head_gurad should be aligned");
             start += Size4KiB::SIZE;
-            Some(Unmapped(guard))
+            Some(guard)
         } else {
             None
         };
@@ -320,9 +347,7 @@ impl PageAllocator {
         let pages = Pages { first_page, count };
 
         let tail_guard = if tail_guard {
-            Some(Unmapped(
-                Page::from_start_address(start).expect("tail guard should be aligned"),
-            ))
+            Some(Page::from_start_address(start).expect("tail guard should be aligned"))
         } else {
             None
         };
@@ -349,14 +374,11 @@ impl PageAllocator {
         self.allocate_page()
     }
 
-    // FIXME: free should be unsafe, right??
-    // it is fine for unmap to be safe, because worst case we create a page fault
-    // there, but free means we can reuse this page so it needs to be unsafe or
-    // we can create unintended aliases
-
     /// frees a page
-    // TODO unsafe?
-    pub fn free_page<S: PageSize>(&mut self, page: Page<S>) {
+    ///
+    /// # Safety:
+    /// Call must guarantee that there are no pointers into the page.
+    pub unsafe fn free_page<S: PageSize>(&mut self, page: Page<S>) {
         if self.vaddrs.len() as usize == self.vaddrs.capacity() {
             // TODO this warning also aplies to try_allocate_page
             warn!("trying to free page({page:?}) when range set is at max len. This can panic unexpectedly");
@@ -365,30 +387,42 @@ impl PageAllocator {
             start: page.start_address().as_u64(),
             end: page.start_address().as_u64() + (S::SIZE - 1),
         });
+        #[cfg(feature = "mem-stats")]
+        self.stats.register_free::<S>(1);
     }
 
     /// frees multiple pages
-    pub fn free_pages<S: PageSize>(&mut self, pages: Pages<S>) {
+    ///
+    /// # Safety:
+    /// Call must guarantee that there are no pointers into the pages.
+    pub unsafe fn free_pages<S: PageSize>(&mut self, pages: Pages<S>) {
         for p in pages.iter() {
-            self.free_page(p);
+            unsafe {
+                self.free_page(p);
+            }
         }
     }
 
     /// frees multiple pages
-    pub fn free_guarded_pages<S: PageSize>(&mut self, pages: GuardedPages<S>) {
-        self.free_pages(pages.pages);
-        if let Some(guard) = pages.head_guard {
-            self.free_page(guard.0);
-        }
-        if let Some(guard) = pages.tail_guard {
-            self.free_page(guard.0);
+    ///
+    /// # Safety:
+    /// Call must guarantee that there are no pointers into the pages.
+    pub unsafe fn free_guarded_pages<S: PageSize>(&mut self, pages: GuardedPages<S>) {
+        unsafe {
+            self.free_pages(pages.pages);
+            if let Some(guard) = pages.head_guard {
+                self.free_page(guard);
+            }
+            if let Some(guard) = pages.tail_guard {
+                self.free_page(guard);
+            }
         }
     }
-}
 
-impl Default for PageAllocator {
-    fn default() -> Self {
-        PageAllocator::new()
+    /// Access to [PageAllocStats]
+    #[cfg(feature = "mem-stats")]
+    pub fn stats(&self) -> &PageFrameAllocStats {
+        &self.stats
     }
 }
 
@@ -401,7 +435,7 @@ mod test {
     use x86_64::structures::paging::{Page, PageTableIndex, RecursivePageTable, Size4KiB};
 
     use crate::mem::{
-        page_table::{RecursivePageTableExt, KERNEL_PAGE_TABLE},
+        page_table::{PageTable, RecursivePageTableExt},
         MemError,
     };
 
@@ -409,7 +443,7 @@ mod test {
 
     #[kernel_test]
     fn test_cannot_alloc_page_table_page() -> Result<(), KernelTestError> {
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
         let recursive_index = page_table.recursive_index();
         drop(page_table);
 
@@ -421,7 +455,7 @@ mod test {
         let l1_vaddr =
             RecursivePageTable::l1_table_vaddr(recursive_index, some_index, some_index, some_index);
 
-        let mut alloc = PageAllocator::get_kernel_allocator().lock();
+        let mut alloc = PageAllocator::get_for_kernel().lock();
 
         assert_matches!(
             alloc.try_allocate_page(Page::<Size4KiB>::from_start_address(l4_vaddr).unwrap()),

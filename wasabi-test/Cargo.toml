@@ -6,7 +6,10 @@ edition.workspace = true
 [features]
 no-color = ["wasabi-kernel/no-color"]
 test-tests = []
-default = []
+mem-backed-guard-page = ["wasabi-kernel/mem-backed-guard-page"]
+mem-stats = ["wasabi-kernel/mem-stats"]
+
+default = ["mem-stats"]
 
 [dependencies]
 shared = { path = "../shared" }

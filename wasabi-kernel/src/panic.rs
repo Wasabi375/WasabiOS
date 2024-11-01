@@ -184,7 +184,7 @@ static mut SERIAL_LOGGER: Option<
 /// This should onl be called from panics, after all multicore and interrupts are
 /// disabled. This function dose not require logging.
 unsafe fn recreate_framebuffer() {
-    // FIXME: implement
+    // TODO: implement
 }
 
 /// This function is called on panic.

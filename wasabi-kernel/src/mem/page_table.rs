@@ -1,18 +1,207 @@
 //! Page table implementation for the kernel
 
+use core::ops::{Deref, DerefMut};
+
 #[allow(unused_imports)]
 use log::{debug, error, info, log, trace, warn};
 
-use crate::prelude::UnwrapTicketLock;
+use super::frame_allocator::FrameAllocator;
+use crate::{kernel_info::KernelInfo, prelude::UnwrapTicketLock};
+
+#[cfg(feature = "mem-stats")]
+use super::stats::PageTableStats;
+
 use thiserror::Error;
 use x86_64::{
     structures::paging::{
-        mapper::{MapToError, UnmapError},
-        Page, PageTable, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable, Size1GiB,
-        Size2MiB, Size4KiB,
+        mapper::{FlagUpdateError, MapToError, MapperFlush, UnmapError, UnmappedFrame},
+        Mapper, Page, PageSize, PageTable as X86PageTable, PageTableFlags, PageTableIndex,
+        PhysFrame, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
+
+/// A Page Table
+pub struct PageTable<T> {
+    inner: T,
+
+    #[cfg(feature = "mem-stats")]
+    stats: PageTableStats,
+}
+
+/// the kernel [RecursivePageTable]
+// Safety: not used before initialized in [init]
+static KERNEL_PAGE_TABLE: UnwrapTicketLock<PageTable<RecursivePageTable>> =
+    unsafe { UnwrapTicketLock::new_uninit() };
+
+impl PageTable<RecursivePageTable<'static>> {
+    /// get access to the kernel's [PageTable]
+    pub fn get_for_kernel() -> &'static UnwrapTicketLock<Self> {
+        &KERNEL_PAGE_TABLE
+    }
+}
+
+impl<T> PageTable<T> {
+    /// Creates a new page table
+    pub fn new(inner: T) -> Self {
+        PageTable {
+            inner,
+            #[cfg(feature = "mem-stats")]
+            stats: Default::default(),
+        }
+    }
+
+    /// get the [PageTableStats] for the page table
+    #[cfg(feature = "mem-stats")]
+    pub fn stats(&self) -> &PageTableStats {
+        &self.stats
+    }
+
+    /// Returns the underlying [Mapper] implementation
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    /// map a page for the kernel
+    ///
+    /// See: [Mapper::map_to_with_table_flags]
+    ///
+    /// # Safety:
+    ///
+    /// The caller must ensure that by creating this page-frame mapping all
+    /// of rusts safety guarantees are fullfilled
+    pub unsafe fn map_kernel<S>(
+        &mut self,
+        page: Page<S>,
+        frame: PhysFrame<S>,
+        flags: PageTableFlags,
+        frame_allocator: &mut FrameAllocator,
+    ) -> Result<MapperFlush<S>, PageTableMapError>
+    where
+        S: PageSize,
+        T: Mapper<S>,
+        PageTableMapError: From<MapToError<S>>,
+    {
+        unsafe {
+            self.inner.map_to_with_table_flags(
+                page,
+                frame,
+                flags,
+                PageTableFlags::KERNEL_TABLE_FLAGS,
+                frame_allocator,
+            )
+        }
+        .map_err(|e| e.into())
+        .inspect(|_| {
+            #[cfg(feature = "mem-stats")]
+            self.stats.register_map::<S>(flags)
+        })
+    }
+
+    /// Remoev the mapping for the page
+    ///
+    /// See: [Mapper::unmap]
+    pub fn unmap<S>(
+        &mut self,
+        page: Page<S>,
+    ) -> Result<(PhysFrame<S>, PageTableFlags, MapperFlush<S>), PageTableMapError>
+    where
+        S: PageSize,
+        T: Mapper<S>,
+    {
+        #[allow(unused)]
+        self.inner
+            .unmap(page)
+            .map_err(|e| e.into())
+            .inspect(|(_, flags, _)| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_unmap::<S>(*flags)
+            })
+    }
+
+    /// Update the flags of a already mapped page.
+    ///
+    /// To get the current flags of a mapping see [translate]
+    ///
+    /// # Safety:
+    ///
+    /// The caller must ensure that by creating this page-frame mapping all
+    /// of rusts safety guarantees are fullfilled
+    ///
+    /// [translate]: x86_64::structures::paging::Translate::translate
+    pub unsafe fn update_flags<S>(
+        &mut self,
+        page: Page<S>,
+        flags: PageTableFlags,
+    ) -> Result<MapperFlush<S>, PageTableMapError>
+    where
+        S: PageSize,
+        T: Mapper<S>,
+    {
+        unsafe { self.inner.update_flags(page, flags) }
+            .map_err(|e| e.into())
+            .inspect(|_| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_remap::<S>(flags)
+            })
+    }
+    /// Remoev the mapping for the page.
+    ///
+    /// unlike [Self::unmap] this does not require the page to be mapped as
+    /// [PageTableFlags::PRESENT]
+    ///
+    /// See: [Mapper::clear]
+    pub fn clear<S>(&mut self, page: Page<S>) -> Result<UnmappedFrame<S>, PageTableMapError>
+    where
+        S: PageSize,
+        T: Mapper<S>,
+    {
+        #[allow(unused)]
+        self.inner
+            .clear(page)
+            .map_err(|e| e.into())
+            .inspect(|frame| {
+                #[cfg(feature = "mem-stats")]
+                match frame {
+                    x86_64::structures::paging::mapper::UnmappedFrame::Present {
+                        frame: _,
+                        flags,
+                        flush: _,
+                    } => self.stats.register_unmap::<S>(*flags),
+                    x86_64::structures::paging::mapper::UnmappedFrame::NotPresent { entry } => {
+                        let flags = entry.flags();
+                        self.stats.register_unmap::<S>(flags);
+                    }
+                }
+            })
+    }
+}
+
+impl<T> Deref for PageTable<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> DerefMut for PageTable<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<T> AsRef<T> for PageTable<T> {
+    fn as_ref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T> AsMut<T> for PageTable<T> {
+    fn as_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+}
 
 /// kernel internal page table flags
 pub trait PageTableKernelFlags {
@@ -29,14 +218,37 @@ pub trait PageTableKernelFlags {
         flags = flags.union(PageTableFlags::GUARD);
         flags
     };
+
+    /// The flags used for the page table pages
+    const KERNEL_TABLE_FLAGS: PageTableFlags = {
+        let mut flags = PageTableFlags::PRESENT;
+        flags = flags.union(PageTableFlags::WRITABLE);
+        flags
+    };
+
+    /// Get the name of a PageTableFlags.
+    ///
+    /// This will return "unknown" if there are multiple flags set
+    fn get_name(&self) -> &'static str;
 }
 
-impl PageTableKernelFlags for PageTableFlags {}
-
-/// the kernel [RecursivePageTable]
-// Safety: not used before initialized in [init]
-pub static KERNEL_PAGE_TABLE: UnwrapTicketLock<RecursivePageTable> =
-    unsafe { UnwrapTicketLock::new_uninit() };
+impl PageTableKernelFlags for PageTableFlags {
+    fn get_name(&self) -> &'static str {
+        let name = PageTableFlags::all()
+            .iter_names()
+            .find(|(_, f)| f == self)
+            .map(|(n, _)| n)
+            .take()
+            .unwrap_or("unknown");
+        if name.starts_with("BIT_") {
+            return match *self {
+                Self::GUARD => "GUARD",
+                _ => name,
+            };
+        }
+        return name;
+    }
+}
 
 #[derive(Error, Debug, PartialEq, Eq, Clone)]
 #[allow(missing_docs)]
@@ -55,6 +267,19 @@ pub enum PageTableMapError {
     InvalidFrameAddress(PhysAddr),
     #[error("unmapped page cannot be unmapped again")]
     PageNotMapped,
+    #[error("failed to update flags: Page not mapped")]
+    FlagUpdateNotMapped,
+    #[error("failed to update flags: Huge page")]
+    FlagUpdateHuge,
+}
+
+impl From<FlagUpdateError> for PageTableMapError {
+    fn from(value: FlagUpdateError) -> Self {
+        match value {
+            FlagUpdateError::PageNotMapped => Self::FlagUpdateNotMapped,
+            FlagUpdateError::ParentEntryHugePage => Self::FlagUpdateHuge,
+        }
+    }
 }
 
 impl From<UnmapError> for PageTableMapError {
@@ -101,7 +326,9 @@ impl From<MapToError<Size1GiB>> for PageTableMapError {
 /// initialize the kernel page table
 pub fn init(page_table: RecursivePageTable<'static>) {
     trace!("store kernel page table in lock");
-    KERNEL_PAGE_TABLE.lock_uninit().write(page_table);
+    KERNEL_PAGE_TABLE
+        .lock_uninit()
+        .write(PageTable::new(page_table));
 }
 
 /// extension trait for [RecursivePageTable]
@@ -143,27 +370,16 @@ pub trait RecursivePageTableExt {
 }
 
 /// get the recursive [PageTableIndex] of the page table, provided by the bootloader.
-/// TODO: remove pub. pub(super) is probably enough. This shouldn't be after the
-///     boot process is done anyways
 #[inline]
 pub fn recursive_index() -> PageTableIndex {
-    // TODO this is unsafe. I should extract the recursive index and store it where it's
-    // easy to access it
-    let boot_info = unsafe { crate::boot_info() };
-
-    let index = *boot_info
-        .recursive_index
-        .as_ref()
-        .expect("Expected boot info to contain recursive index");
-
-    PageTableIndex::new(index)
+    PageTableIndex::new(KernelInfo::get().recursive_index)
 }
 
 impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
     #[inline]
     #[allow(dead_code)]
     fn recursive_index(&mut self) -> PageTableIndex {
-        let vaddr = VirtAddr::new(self.level_4_table() as *const PageTable as u64);
+        let vaddr = VirtAddr::new(self.level_4_table() as *const X86PageTable as u64);
         Page::<Size4KiB>::containing_address(vaddr).p4_index()
     }
 
@@ -243,17 +459,14 @@ impl<'a> RecursivePageTableExt for RecursivePageTable<'a> {
 
 #[cfg(feature = "test")]
 mod test {
-    use crate::{
-        map_page,
-        mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator},
-    };
+    use crate::mem::{frame_allocator::FrameAllocator, page_allocator::PageAllocator};
     use shared::sync::lockcell::LockCell;
     use testing::{
         kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
         TestUnwrapExt,
     };
     use x86_64::structures::paging::{
-        mapper::{MappedFrame, Mapper, TranslateResult, UnmappedFrame},
+        mapper::{MappedFrame, TranslateResult, UnmappedFrame},
         Translate,
     };
 
@@ -264,15 +477,14 @@ mod test {
         let fake_frame = PhysFrame::from_start_address(PhysAddr::new(0))
             .map_err_debug_display()
             .tunwrap()?;
-        let page: Page<Size4KiB> = PageAllocator::get_kernel_allocator()
+        let page: Page<Size4KiB> = PageAllocator::get_for_kernel()
             .lock()
             .allocate_page::<Size4KiB>()
             .tunwrap()?;
-        let frame_alloc: &mut WasabiFrameAllocator<Size4KiB> =
-            &mut WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let frame_alloc: &mut FrameAllocator = &mut FrameAllocator::get_for_kernel().lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
 
-        unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
+        unsafe { page_table.map_kernel(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
             .map(|flusher| flusher.flush())
             .map_err_debug_display()
             .tunwrap()?;
@@ -291,6 +503,11 @@ mod test {
             TranslateResult::NotMapped,
         );
 
+        unsafe {
+            // Safety: page no longer used
+            PageAllocator::get_for_kernel().lock().free_page(page);
+        }
+
         Ok(())
     }
 
@@ -299,14 +516,13 @@ mod test {
         let fake_frame = PhysFrame::from_start_address(PhysAddr::new(0))
             .map_err_debug_display()
             .tunwrap()?;
-        let page: Page<Size4KiB> = PageAllocator::get_kernel_allocator()
+        let page: Page<Size4KiB> = PageAllocator::get_for_kernel()
             .lock()
             .allocate_page::<Size4KiB>()
             .tunwrap()?;
-        let frame_alloc: &mut WasabiFrameAllocator<Size4KiB> =
-            &mut WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
-        unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
+        let frame_alloc: &mut FrameAllocator = &mut FrameAllocator::get_for_kernel().lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
+        unsafe { page_table.map_kernel(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
             .map(|flusher| flusher.flush())
             .map_err_debug_display()
             .tunwrap()?;
@@ -339,6 +555,11 @@ mod test {
         t_assert_eq!(freed_entry.addr(), fake_frame.start_address());
         t_assert_eq!(freed_entry.flags(), PageTableFlags::BIT_10);
 
+        unsafe {
+            // Safety: page no longer used
+            PageAllocator::get_for_kernel().lock().free_page(page);
+        }
+
         Ok(())
     }
 
@@ -352,6 +573,10 @@ mod test {
         ];
         let mut pages: [Option<Page<Size4KiB>>; START_ADDRS.len()] = [None; START_ADDRS.len()];
 
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
+
         for (i, p) in &mut pages.iter_mut().enumerate() {
             t_assert_eq!(&None, p);
 
@@ -360,13 +585,22 @@ mod test {
                 .map_err_debug_display()
                 .tunwrap()?;
 
-            PageAllocator::get_kernel_allocator()
-                .lock()
-                .try_allocate_page(page)
-                .tunwrap()?;
+            page_allocator.try_allocate_page(page).tunwrap()?;
 
             debug!("Map page {:?}", page);
-            unsafe { map_page!(page, Size4KiB, PageTableFlags::PRESENT) }.tunwrap()?;
+            let frame = frame_allocator.alloc_4k().tunwrap()?;
+            unsafe {
+                page_table
+                    .map_kernel(
+                        page,
+                        frame,
+                        PageTableFlags::PRESENT,
+                        frame_allocator.as_mut(),
+                    )
+                    .map_err_debug_display()
+                    .tunwrap()?
+                    .flush();
+            }
 
             *p = Some(page);
         }
@@ -377,13 +611,13 @@ mod test {
             };
             trace!("unmap page {:?}", page);
 
-            let (_, _, flush) = KERNEL_PAGE_TABLE
-                .lock()
-                .unmap(page)
-                .map_err_debug_display()
-                .tunwrap()?;
+            let (frame, _, flush) = page_table.unmap(page).map_err_debug_display().tunwrap()?;
             flush.flush();
-            PageAllocator::get_kernel_allocator().lock().free_page(page);
+            unsafe {
+                // Safety: page and frame unmapped and no longer accessible
+                page_allocator.free_page(page);
+                frame_allocator.free(frame);
+            }
         }
 
         Ok(())
@@ -394,9 +628,9 @@ mod test {
         const PAGE_COUNT: usize = 1000;
         let mut pages: [Option<Page<Size4KiB>>; PAGE_COUNT] = [None; PAGE_COUNT];
 
-        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_alloc = PageAllocator::get_for_kernel().lock();
+        let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
 
         for (idx, p) in pages.iter_mut().enumerate() {
             t_assert_eq!(&None, p);
@@ -407,13 +641,7 @@ mod test {
             let frame = frame_alloc.alloc().tunwrap()?;
 
             unsafe {
-                page_table.map_to_with_table_flags(
-                    page,
-                    frame,
-                    PageTableFlags::PRESENT,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                    frame_alloc.as_mut(),
-                )
+                page_table.map_kernel(page, frame, PageTableFlags::PRESENT, frame_alloc.as_mut())
             }
             .map_err_debug_display()
             .tunwrap()?

@@ -85,7 +85,7 @@ pub unsafe fn init() {
             // .with_module_level("wasabi_kernel::cpu::acpi", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu::apic", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
-            // .with_module_level("wasabi_kernel::mem", LevelFilter::Trace)
+            .with_module_level("wasabi_kernel::mem", LevelFilter::Debug)
             // .with_module_level("wasabi_kernel::mem::kernel_heap", LevelFilter::Info)
             // .with_module_level("GlobalAlloc", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::graphics", LevelFilter::Trace)
@@ -189,14 +189,14 @@ impl Log for GlobalLogger {
 /// The result of the expression is logged using the [log::debug] macro.
 ///
 /// ```
-/// assert_eq!(5, dbg!(5)); // also calls log::debug(5)
+/// assert_eq!(5 + 3, dbg!(8)); // also calls log::debug("5 + 3 = 8")
 /// ```
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! dbg {
     ($v:expr) => {{
         let value = $v;
-        log::debug!("{value:?}");
+        log::debug!("{} = {:?}", core::stringify($v), value);
         value
     }};
 }

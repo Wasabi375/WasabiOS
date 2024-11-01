@@ -9,7 +9,7 @@ use static_assertions::const_assert_eq;
 use thiserror::Error;
 use x86_64::PhysAddr;
 
-use super::{queue::QueueIdentifier, COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
+use super::queue::QueueIdentifier;
 
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
@@ -26,6 +26,10 @@ impl core::fmt::UpperHex for CommandIdentifier {
         u16::fmt(&self.0, f)
     }
 }
+
+/// The size of all submission command entries
+pub const SUBMISSION_COMMAND_ENTRY_SIZE: usize = size_of::<CommonCommand>();
+const_assert_eq!(SUBMISSION_COMMAND_ENTRY_SIZE, 64);
 
 /// Command layout shared by all commands
 //
@@ -47,10 +51,6 @@ pub struct CommonCommand {
     pub(super) dword14: u32,
     pub(super) dword15: u32,
 }
-const_assert_eq!(
-    size_of::<CommonCommand>() as u64,
-    SUBMISSION_COMMAND_ENTRY_SIZE
-);
 
 /// The first command dword in a [CommonCommand]
 ///
@@ -140,11 +140,15 @@ impl Default for DataPtr {
     }
 }
 
+/// The size of all completion command entries
+pub const COMPLETION_COMMAND_ENTRY_SIZE: usize = size_of::<CommonCompletionEntry>();
+const_assert_eq!(COMPLETION_COMMAND_ENTRY_SIZE, 16);
+
 /// Common layout shared by all completion entries
 ///
 /// See: NVM Express Base Spec: Figure 90: Common Completion Queue Entry Layout
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CommonCompletionEntry {
     pub(super) dword0: u32,
     pub(super) dword1: u32,
@@ -153,10 +157,6 @@ pub struct CommonCompletionEntry {
     pub(super) command_ident: CommandIdentifier,
     pub(super) status_and_phase: StatusAndPhase,
 }
-const_assert_eq!(
-    size_of::<CommonCompletionEntry>(),
-    COMPLETION_COMMAND_ENTRY_SIZE as usize
-);
 
 impl CommonCompletionEntry {
     pub fn status(&self) -> CommandStatusCode {

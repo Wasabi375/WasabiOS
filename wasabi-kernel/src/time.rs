@@ -142,6 +142,7 @@ pub fn calibration_tick() -> f64 {
 }
 
 /// calibrate the tsc tick rate and store it. It can be accessed by [tsc_tickrate]
+/// TODO: this is unsafe as in I only want this called from bsp_entry
 pub fn calibrate_tsc() {
     STARTUP_TSC_TIME.store(timestamp_now_tsc().into(), Ordering::Relaxed);
 

@@ -18,14 +18,13 @@ use alloc::boxed::Box;
 use core::{
     arch::asm,
     hint::spin_loop,
-    ptr::addr_of_mut,
+    ptr::{addr_of_mut, NonNull},
     sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
 };
 use shared::{
     sync::{lockcell::LockCellInternal, CoreInfo, InterruptState},
     types::CoreId,
 };
-use x86_64::VirtAddr;
 
 /// A counter used to assign the core id for each core.
 /// Each core calls [AtomicU8::fetch_add] to get it's id and automatically increment
@@ -37,8 +36,8 @@ static CORE_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
 /// The number of cores that have finished booting
 static CORE_READY_COUNT: AtomicU8 = AtomicU8::new(0);
 
-/// an array with the [VirtAddr]s for each [CoreLocals] indexed by the core id.
-static mut CORE_LOCALS_VADDRS: [VirtAddr; 255] = [VirtAddr::zero(); 255];
+/// an array with the [NonNull]s for each [CoreLocals] indexed by the core id.
+static mut CORE_LOCALS_VADDRS: [Option<NonNull<CoreLocals>>; 255] = [None; 255];
 
 /// A [CoreLocals] instance used during the boot process.
 static mut BOOT_CORE_LOCALS: CoreLocals = CoreLocals::empty();
@@ -88,7 +87,7 @@ pub struct CoreLocals {
     /// `GS` segment to load this struct.
     // NOTE: this must be the first entry in the struct, in order to load
     // the core locals from gs
-    virt_addr: VirtAddr,
+    self_ptr: NonNull<CoreLocals>,
 
     /// lock used to access the critical boot section.
     ///
@@ -150,7 +149,7 @@ impl CoreLocals {
     /// creates an empty [CoreLocals] struct.
     const fn empty() -> Self {
         Self {
-            virt_addr: VirtAddr::zero(),
+            self_ptr: NonNull::dangling(),
             boot_lock: AtomicU8::new(0),
             core_id: CoreId(0),
             apic_id: CoreId(0),
@@ -273,6 +272,13 @@ impl CoreLocals {
 /// this functon must only be called once per CPU core, at the start of the execution.
 /// Also [`locals!`] does not return a static ref before [`init`] finished.
 pub unsafe fn core_boot() -> CoreId {
+    unsafe {
+        // Safety:
+        // we are still setting up all interrupt handlers, locks, etc so
+        // we can disable this now until everything is set up.
+        cpu::disable_interrupts();
+    }
+
     let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::AcqRel).into();
 
     // Safety: This is only safe as long as we are the only core
@@ -280,13 +286,6 @@ pub unsafe fn core_boot() -> CoreId {
     // We must not use this other than to take th boot_lock.
     // Only when we have the boot_lock, this is save to use.
     let boot_core_locals = unsafe { &mut *addr_of_mut!(BOOT_CORE_LOCALS) };
-
-    unsafe {
-        // Safety:
-        // we are still setting up all interrupt handlers, locks, etc so
-        // we can disable this now until everything is set up.
-        cpu::disable_interrupts();
-    }
 
     // This is critical for the safe access to boot_core_locals
     while boot_core_locals.boot_lock.load(Ordering::SeqCst) != core_id.0 {
@@ -297,7 +296,8 @@ pub unsafe fn core_boot() -> CoreId {
 
     // setup locals region for boot of core
     boot_core_locals.core_id = core_id;
-    boot_core_locals.virt_addr = VirtAddr::from_ptr(boot_core_locals);
+    boot_core_locals.self_ptr =
+        NonNull::new(boot_core_locals).expect("Core locals should never be at ptr 0");
 
     assert_eq!(boot_core_locals.interrupt_count.count(), 0);
     assert_eq!(boot_core_locals.exception_count.count(), 0);
@@ -334,7 +334,8 @@ pub unsafe fn init(core_id: CoreId) {
         ..CoreLocals::empty()
     });
 
-    core_local.virt_addr = VirtAddr::from_ptr(core_local.as_ref());
+    core_local.self_ptr =
+        NonNull::new(core_local.as_mut()).expect("Core locals should never be at ptr 0");
     assert!(!LockCellInternal::<Apic>::is_preemtable(&core_local.apic));
     debug!(
         "Core {}: Core Locals initialized from boot locals",
@@ -344,13 +345,13 @@ pub unsafe fn init(core_id: CoreId) {
     unsafe {
         // safety: we are in the kernel boot process and we only access our own
         // core's data
-        assert!(CORE_LOCALS_VADDRS[core_id.0 as usize].is_null());
-        CORE_LOCALS_VADDRS[core_id.0 as usize] = core_local.virt_addr;
+        assert!(CORE_LOCALS_VADDRS[core_id.0 as usize].is_none());
+        CORE_LOCALS_VADDRS[core_id.0 as usize] = Some(core_local.self_ptr);
     }
 
     // set gs base to point to this core_local. That way we can use the core!
     // macro to access the core_locals.
-    cpu::set_gs_base(core_local.virt_addr.as_u64());
+    cpu::set_gs_base(core_local.self_ptr.as_ptr() as u64);
 
     unsafe {
         // exit the critical boot section and let next core enter
@@ -391,10 +392,14 @@ impl CoreInfo for CoreInterruptState {
 }
 
 impl InterruptState for CoreInterruptState {
+    #[track_caller]
+    #[inline(always)]
     fn in_interrupt(&self) -> bool {
         locals!().in_interrupt()
     }
 
+    #[track_caller]
+    #[inline(always)]
     fn in_exception(&self) -> bool {
         locals!().in_exception()
     }
@@ -446,7 +451,7 @@ pub fn get_ready_core_count(ordering: Ordering) -> u8 {
 pub unsafe fn get_core_locals() -> &'static CoreLocals {
     unsafe {
         let ptr: usize;
-        // Safety: we assume that gs contains the vaddr of this cores
+        // Safety: we assume that gs contains the vaddr of this core's
         // [CoreLocals], which starts with it's own address, therefor we
         // can access the [CoreLocals] vaddr using `gs:[0]`
         asm! {

@@ -64,14 +64,12 @@ impl AsMut<[u32]> for Point {
 /// must only be called once during initialization.
 /// Requires logging and heap access.
 pub unsafe fn init(frambuffer_logger: bool) {
-    let fb: Framebuffer = unsafe {
-        take_boot_framebuffer()
-            .expect("No framebuffer found")
-            .into()
-    };
+    let fb: Framebuffer = take_boot_framebuffer()
+        .expect("No framebuffer found")
+        .into();
 
     unsafe {
-        HARDWARE_FRAMEBUFFER_START_INFO = Some((fb.start, fb.info.clone()));
+        HARDWARE_FRAMEBUFFER_START_INFO = Some((fb.buffer, fb.info.clone()));
     }
 
     *HARDWARE_FRAMEBUFFER.lock() = Some(fb);

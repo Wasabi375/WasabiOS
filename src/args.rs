@@ -226,7 +226,7 @@ pub struct BuildOptions {
     pub target: Target,
 
     /// build features
-    #[arg(long)]
+    #[arg(long, short = 'F')]
     pub features: Vec<Feature>,
 
     /// build with all features, overwrites [features]
@@ -278,7 +278,6 @@ pub enum WorkspacePackage {
     Shared,
     Logger,
     Staticvec,
-    Colored,
     InterruptFnBuilder,
     Testing,
     Testing_Derive,
@@ -342,6 +341,8 @@ pub enum Feature {
     NoColor,
     Test,
     TestTests,
+    MemBackedGuardPage,
+    MemStats,
 }
 
 impl Feature {
@@ -351,14 +352,16 @@ impl Feature {
             Feature::NoColor => OsStr::new("no-color"),
             Feature::Test => OsStr::new("test"),
             Feature::TestTests => OsStr::new("test-tests"),
+            Feature::MemBackedGuardPage => OsStr::new("mem-backed-guard-page"),
+            Feature::MemStats => OsStr::new("mem-stats"),
         }
     }
 
     pub fn used_in(&self, binary: &KernelBinary) -> bool {
         use Feature::*;
         let valid_flags: &[Feature] = match binary {
-            KernelBinary::Wasabi => &[NoUnicodeLog, NoColor, Test],
-            KernelBinary::Test => &[NoColor, TestTests],
+            KernelBinary::Wasabi => &[NoUnicodeLog, NoColor, Test, MemBackedGuardPage, MemStats],
+            KernelBinary::Test => &[NoColor, TestTests, MemBackedGuardPage, MemStats],
         };
         valid_flags.contains(self)
     }

@@ -10,6 +10,9 @@ use x86_64::{
     },
 };
 
+use super::interrupt_handler;
+use crate::mem::page_table::PageTable;
+
 panic_exception!(divide_error);
 panic_exception!(debug);
 panic_exception!(non_maskable_interrupt);
@@ -38,7 +41,7 @@ exception_page_fault_fn!(pub(super) page_fault_handler, stack_frame, page_fault,
     let page_table = unsafe {
         // FIXME this is not save, but otherwise we might deadlock and I only want to read right
         // now, so this should be fine :shrug:
-        KERNEL_PAGE_TABLE.lockcell.get_mut().assume_init_mut()
+        PageTable::get_for_kernel().lockcell.get_mut().assume_init_mut()
     };
     let vaddr = Cr2::read().expect("Cr2 is not a valid addr");
     if let TranslateResult::Mapped { frame, offset, flags } = page_table.translate(vaddr) {
@@ -70,10 +73,6 @@ macro_rules! int_handler_fn {
         }
     };
 }
-
-use crate::mem::page_table::KERNEL_PAGE_TABLE;
-
-use super::interrupt_handler;
 
 int_handler_fn!(32);
 int_handler_fn!(33);

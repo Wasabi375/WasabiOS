@@ -27,12 +27,12 @@ use log::{debug, error, info, trace, warn};
 use crate::{
     core_local::{get_ready_core_count, get_started_core_count},
     cpu::apic::ipi::{self, Ipi},
-    enter_kernel_main, locals, map_page,
+    enter_kernel_main, locals,
     mem::{
-        frame_allocator::PhysAllocator,
+        frame_allocator::{FrameAllocator, PhysAllocator},
         page_allocator::PageAllocator,
-        page_table::KERNEL_PAGE_TABLE,
-        structs::{GuardedPages, Mapped, Unmapped},
+        page_table::PageTable,
+        structs::GuardedPages,
         MemError,
     },
     processor_init,
@@ -251,7 +251,7 @@ pub fn ap_startup() {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ApStack(Mapped<GuardedPages<Size4KiB>>);
+struct ApStack(GuardedPages<Size4KiB>);
 
 /// enum for all ap stack related errors
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -274,17 +274,19 @@ impl ApStack {
 
     fn alloc() -> Result<Self, ApStackError> {
         trace!("Allocate ap stack");
-        let pages: Unmapped<_> = PageAllocator::get_kernel_allocator()
+        let pages = PageAllocator::get_for_kernel()
             .lock()
             .allocate_guarded_pages(DEFAULT_STACK_PAGE_COUNT, true, true)
-            .map_err(ApStackError::from)?
-            .into();
-        let pages = pages.alloc_and_map().map_err(ApStackError::from)?;
+            .map_err(ApStackError::from)?;
+        let pages = unsafe {
+            // Safety: pages was just allocated
+            pages.map().map_err(ApStackError::from)?
+        };
 
-        assert_eq!(pages.0.size(), DEFAULT_STACK_SIZE);
+        assert_eq!(pages.size(), DEFAULT_STACK_SIZE);
 
-        let start = pages.0.start_addr();
-        let end = pages.0.end_addr().align_down(Self::STACK_ALIGN);
+        let start = pages.start_addr();
+        let end = pages.end_addr().align_down(Self::STACK_ALIGN);
 
         assert!(
             start.is_aligned(Self::STACK_ALIGN),
@@ -301,7 +303,7 @@ impl ApStack {
                     "ap stack allocated to {:p}..{:p} (size: {})",
                     start,
                     end,
-                    pages.0.size()
+                    pages.size()
                 );
                 Ok(Self(pages))
             }
@@ -317,27 +319,32 @@ impl ApStack {
     }
 
     /// frees the pages of the AP stack.
-    fn free(pages: Mapped<GuardedPages<Size4KiB>>) {
+    fn free(pages: GuardedPages<Size4KiB>) {
         let unmapped = unsafe {
             // Safety:
             //  we never gave await the address to this memory and we
             //  can't use it, so it's safe to free
             trace!("unmap and free");
-            pages.unmap_and_free()
+            pages.unmap()
         };
         match unmapped {
             Ok(unmapped) => {
                 trace!("free unused stack pages");
-                PageAllocator::get_kernel_allocator()
-                    .lock()
-                    .free_guarded_pages(unmapped.0);
+                unsafe {
+                    // Safety:
+                    //  we never gave await the address to this memory and we
+                    //  can't use it, so it's safe to free
+                    PageAllocator::get_for_kernel()
+                        .lock()
+                        .free_guarded_pages(unmapped);
+                }
             }
             Err(err) => error!("Failed to unmap unsued ap stack. Leaking memory: {err:?}"),
         }
     }
 
     fn end(&self) -> VirtAddr {
-        self.0 .0.end_addr() + 1
+        self.0.end_addr() + 1
     }
 }
 
@@ -421,16 +428,17 @@ impl SipiPayload<Ready> {
             .expect("identity mapping for AP_START_VECTOR must be valid");
 
         unsafe {
+            let mut page_table = PageTable::get_for_kernel().lock();
+            let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
+
             // Safety:
             //  both frame and page were reserved for this
-            map_page!(
-                page,
-                Size4KiB,
-                PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                frame
-            )
+            let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+            page_table
+                .map_kernel(page, frame, flags, frame_allocator.as_mut())
+                .expect("failed to identity map ap trampoline")
+                .flush();
         }
-        .expect("failed to identity map ap trampoline");
 
         trace!("Identity mapped ap trampoline {:p}", phys);
 
@@ -578,20 +586,21 @@ impl<S: SipiPayloadState> SipiPayload<S> {
     }
 }
 
-use x86_64::structures::paging::mapper::Mapper;
-
 impl<S: SipiPayloadState> Drop for SipiPayload<S> {
     fn drop(&mut self) {
-        // FIXME: freeing this can lead to tripple fault if AP starts after
+        // TODO: freeing this can lead to tripple fault if AP starts after
         //  the drop. Do I care? I mean they should all have started at this time.
-        let mut table = KERNEL_PAGE_TABLE.lock();
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
+        let mut table = PageTable::get_for_kernel().lock();
         let (_frame, _flags, flush) = table
             .unmap(self.page)
             .expect("Failed to unmap ap trampoline during drop");
         flush.flush();
-        PageAllocator::get_kernel_allocator()
-            .lock()
-            .free_page(self.page);
+        unsafe {
+            page_allocator
+                // Safety: All aps are started and therefor won't access this page anymore
+                .free_page(self.page);
+        }
         debug!("ap trampoline unmapped and freed");
         AP_FRAME_ALLOCATED.store(false, Ordering::Release);
         AP_PAGE_ALLOCATED.store(false, Ordering::Release);

@@ -13,11 +13,18 @@ use log::{debug, error, info, trace, warn};
 use bootloader_api::BootInfo;
 use shared::sync::lockcell::LockCell;
 use wasabi_kernel::{
-    boot_info, bootloader_config_common,
+    bootloader_config_common,
     cpu::{self, apic::timer::TimerConfig, interrupts::InterruptVector},
+    kernel_info::KernelInfo,
     pci, time,
 };
 use x86_64::structures::idt::InterruptStackFrame;
+
+#[cfg(feature = "mem-stats")]
+use wasabi_kernel::mem::{
+    frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
+    page_table::PageTable,
+};
 
 fn timer_int_handler(_vec: InterruptVector, _isf: InterruptStackFrame) -> Result<(), ()> {
     info!(target: "Timer", "tick");
@@ -34,7 +41,7 @@ fn kernel_main() -> ! {
 
     if locals!().is_bsp() {
         // TODO temp
-        info!("rsdp at: {:?}", unsafe { boot_info() }.rsdp_addr);
+        info!("rsdp at: {:?}", KernelInfo::get().boot_info.rsdp_addr);
         pci::pci_experiment();
     }
 
@@ -42,6 +49,21 @@ fn kernel_main() -> ! {
 
     //sleep_tsc(Duration::Seconds(5));
     //stop_timer();
+
+    #[cfg(feature = "mem-stats")]
+    if locals!().is_bsp() {
+        let level = log::Level::Info;
+        KernelHeap::get().lock().stats().log(level);
+        PageAllocator::get_for_kernel()
+            .lock()
+            .stats()
+            .log(level, Some("pages"));
+        FrameAllocator::get_for_kernel()
+            .lock()
+            .stats()
+            .log(level, Some("frames"));
+        PageTable::get_for_kernel().lock().stats().log(level);
+    }
 
     info!("OS Done!\tcpu::halt()");
     cpu::halt();

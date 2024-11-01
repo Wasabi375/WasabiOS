@@ -1,38 +1,83 @@
-//! module containing memory implementation
+//! # Memory and Type usage in the kernel
+//!
+//! ## Locks
+//!
+//! There are 4 locks that are used for kernel memory managment.
+//!  1. Page Allocator
+//!  2. Frame Allocator
+//!  3. Page Table
+//!  4. Kernel Heap
+//!
+//! Generally it should never be necessary to hold the kernel heap lock.
+//! Any rust allocation will automatically lock the heap when necessary.
+//! The other 3 locks should be held only for as long as necessary and
+//! when possible be locked in the above order to prevent deadlocks.
+//!
+//! ## Pointer Types
+//!
+//! * **Memory Mapped Pointers**:
+//!     In places where it is necessary to store memory mapped pointers,
+//!     when possible [NonNull] should be prefered to [VirtAddr].
+//!     Optional/Nullable pointers should be of type `Option<NonNull<T>>`.
+//! * **Untyped Mapped Pointers**
+//!     For untyped ptrs, e.g. stack or heap pointers, [UntypedPtr] should
+//!     be used. Again Optional/Nullable pointers should be of type `Option<UntypedPtr>`
+//! * **Unmapped Memory**:
+//!     When dealing with fixed static addresses that may not be mapped to physical
+//!     memory [VirtAddr] should be used.
+//! * **Physical Memory**:
+//!     [PhysAddr] is used to refer to physicall addresses.
+//!
+//! ## Data Structures
+//!
+//! Sometimes it is usefull to link the lifetime of a memory mapping to the lifetime
+//! of a data structure, e.g. when reading a file the lifetime of that mapping should
+//! match the lifetime of the file object.
+//!
+//! Data Structures that own a memory mapping should contain the following:
+//! 1. The page(s) that are mapped. This also includes any guard pages that are mapped to
+//!    non-physical memory.
+//! 2. The frame(s) that any pages are mapped to. In case of guard pages, there is no need to store
+//!    the guard frame (if any exists).
+//! 3. Non-reference pointers into the page(s) should be of type [NonNull] and not [VirtAddr].
+//!
+//! [UntypedPtr]: ptr::UntypedPtr
+
+#[cfg(feature = "mem-stats")]
+pub mod stats;
 
 pub mod frame_allocator;
 pub mod kernel_heap;
 pub mod page_allocator;
 pub mod page_table;
 pub mod page_table_debug_ext;
+pub mod ptr;
 pub mod structs;
+
+use core::alloc::AllocError;
 
 use log::Level;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use ptr::UntypedPtr;
 
 use crate::{
-    boot_info,
-    mem::{page_table::KERNEL_PAGE_TABLE, page_table_debug_ext::PageTableDebugExt},
+    kernel_info::KernelInfo,
+    mem::{page_table::PageTable, page_table_debug_ext::PageTableDebugExt},
     prelude::LockCell,
 };
 use bootloader_api::{
     info::{FrameBuffer, MemoryRegionKind},
     BootInfo,
 };
-use core::{
-    ops::{Deref, DerefMut},
-    ptr::{self, NonNull},
-};
 use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
 use thiserror::Error;
-use volatile::{
-    access::{ReadOnly, Readable, Writable},
-    Volatile,
-};
 use x86_64::{
     registers::{control::Cr3, read_rip},
-    structures::paging::{PageTable, RecursivePageTable, Translate},
+    structures::paging::{
+        mapper::{MapToError, UnmapError},
+        PageTable as X86PageTable, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB, Translate,
+    },
     PhysAddr, VirtAddr,
 };
 /// Result type with [MemError]
@@ -53,22 +98,48 @@ pub enum MemError {
     #[error("Page already in use")]
     PageInUse,
     #[error("Allocation size({size:#x}) is invalid. Expected: {expected:#x}")]
-    InvalidAllocSize { size: u64, expected: u64 },
+    InvalidAllocSize { size: usize, expected: usize },
     #[error("Allocation alignment({align:#x}) is invalid. Expected: {expected:#x}")]
-    InvalidAllocAlign { align: u64, expected: u64 },
+    InvalidAllocAlign { align: usize, expected: usize },
     #[error("Zero size allocation")]
     ZeroSizeAllocation,
-    #[error("Pointer was not allocated by this allocator")]
-    PtrNotAllocated(NonNull<u8>),
-    #[error("Failed to free ptr")]
-    FreeFailed(NonNull<u8>),
+    #[error("Pointer({0:p}) was not allocated by this allocator")]
+    PtrNotAllocated(UntypedPtr),
+    #[error("Failed to free ptr: {0:p}")]
+    FreeFailed(UntypedPtr),
     #[error("Page Table map failed: {0:?}")]
-    PageTableMap(PageTableMapError),
+    PageTableMap(#[from] PageTableMapError),
+    #[error("Heap allocation failed")]
+    AllocError,
 }
 
-impl From<PageTableMapError> for MemError {
-    fn from(value: PageTableMapError) -> Self {
-        Self::PageTableMap(value)
+impl From<AllocError> for MemError {
+    fn from(_value: AllocError) -> Self {
+        MemError::AllocError
+    }
+}
+
+impl From<MapToError<Size4KiB>> for MemError {
+    fn from(value: MapToError<Size4KiB>) -> Self {
+        PageTableMapError::from(value).into()
+    }
+}
+
+impl From<MapToError<Size2MiB>> for MemError {
+    fn from(value: MapToError<Size2MiB>) -> Self {
+        PageTableMapError::from(value).into()
+    }
+}
+
+impl From<MapToError<Size1GiB>> for MemError {
+    fn from(value: MapToError<Size1GiB>) -> Self {
+        PageTableMapError::from(value).into()
+    }
+}
+
+impl From<UnmapError> for MemError {
+    fn from(value: UnmapError) -> Self {
+        PageTableMapError::from(value).into()
     }
 }
 
@@ -77,7 +148,7 @@ impl From<PageTableMapError> for MemError {
 ///
 /// # Safety:
 ///
-/// Must be called only once during kernel boot process. Requires locks and logging
+/// Must be called only once during kernel boot process on bsp. Requires locks and logging
 pub unsafe fn init() {
     let (level_4_page_table, _) = Cr3::read();
 
@@ -92,7 +163,7 @@ pub unsafe fn init() {
 
     // Safety: assuming the bootloader doesn't lie to us, this is the valid page table vaddr
     // and we have mutable access, because we are in the boot process of the kernel
-    let bootloader_page_table: &'static mut PageTable =
+    let bootloader_page_table: &'static mut X86PageTable =
         unsafe { &mut *bootloader_page_table_vaddr.as_mut_ptr() };
 
     let recursive_page_table = RecursivePageTable::new(bootloader_page_table)
@@ -108,7 +179,7 @@ pub unsafe fn init() {
     page_table::init(recursive_page_table);
 
     {
-        let mut recursive_page_table = KERNEL_PAGE_TABLE.lock();
+        let mut recursive_page_table = PageTable::get_for_kernel().lock();
 
         if log::log_enabled!(log::Level::Debug) {
             print_debug_info(
@@ -118,8 +189,7 @@ pub unsafe fn init() {
             );
         }
 
-        // Safety: during kernel boot
-        frame_allocator::init(&unsafe { boot_info() }.memory_regions);
+        frame_allocator::init(&KernelInfo::get().boot_info.memory_regions);
 
         page_allocator::init(&mut recursive_page_table);
     }
@@ -127,231 +197,6 @@ pub unsafe fn init() {
 
     kernel_heap::init();
     info!("mem init done!");
-}
-
-/// Macro to map a frame
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// # use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// # let phys_frame: PhysFrame<Size4KiB> = todo!();
-///
-/// let page = map_frame!(Size4KiB, PageTableFlags::WRITABLE | PAGE_TABLE_FLAGS::PRESENT, phys_frame)?;
-/// let (page, frame) = map_frame!(Size4KiB, PageTableFlags::WRITABLE | PAGE_TABLE_FLAGS::PRESENT)?;
-/// # }
-/// ```
-///
-/// TODO Safety
-#[macro_export]
-macro_rules! map_frame {
-    ($size: ident, $flags: expr, $frame: expr) => {{
-        #[allow(unused_imports)]
-        use $crate::map_page;
-
-        let page: Result<x86_64::structures::paging::Page<$size>, $crate::mem::MemError> =
-            $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
-                .lock() // TODO call lock via full path
-                .allocate_page::<$size>();
-
-        let frame: x86_64::structures::paging::PhysFrame<$size> = $frame;
-
-        match page {
-            Ok(page) => match map_page!(page, $size, $flags, frame) {
-                Ok(_) => Ok(page),
-                Err(err) => Err($crate::mem::MemError::PageTableMap(err)),
-            },
-            Err(err) => Err(err),
-        }
-    }};
-    ($size: ident, $flags: expr) => {{
-        let frame: Option<x86_64::structures::paging::PhysFrame<$size>> =
-            $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
-                .lock()
-                .alloc();
-        match frame {
-            // Safety: we allocated both the frame and page
-            Some(frame) => unsafe { map_frame!($size, $flags, frame) }.map(|page| (page, frame)),
-            None => Err($crate::mem::MemError::OutOfMemory),
-        }
-    }};
-}
-
-/// Macro to map a page. Returns `Result<Page, PageTableMapError>`
-///
-/// # Example
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let page: Page<Size4KiB> = todo!();
-/// let phys_frame: PhysFrame<Size4KiB> = todo!();
-/// let frame_allocator: &mut WasabiFrameAllocator<Size4KiB> = todo!();
-///
-// TODO document return types
-//
-/// let page = map_page!(Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT)?;
-/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT)?;
-/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame)?;
-/// let page = map_page!(page, Size4KiB, PageTableFlags::WRITABLE | PageTableFlags::PRESENT, phys_frame, frame_allocator)?;
-/// let page = map_page!(Size4KiB, PageTableFlags::WRITABLE | PageTbaleFlags::PRESENT, phys_frame)?;
-/// # }
-/// ```
-///
-/// TODO Safety
-///
-/// # See
-///
-/// [Page](x86_64::structures::paging::Page), [PageTableMapError],
-/// [PageSize](x86_64::structures::paging::PageSize),
-/// [PageTableFlags], [PageTableKernelFlags], [PageAllocator],
-/// [WasabiFrameAllocator]
-#[macro_export]
-macro_rules! map_page {
-    ($size: ident, $flags: expr) => {{
-        let page = $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
-            .lock()
-            .allocate_page::<$size>();
-        match page {
-            Ok(page) => unsafe {
-                // Safety: we are mapping a new unused page to a new unused frame,
-                // so the mapping is save
-                match map_page!(page, $size, $flags) {
-                    Ok(_) => Ok(page),
-                    Err(err) => Err($crate::mem::MemError::PageTableMap(err)),
-                }
-            },
-            Err(err) => Err(err),
-        }
-    }};
-
-    ($page: expr, $size: ident, $flags: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
-                .lock();
-        let frame: Option<x86_64::structures::paging::PhysFrame<$size>> = frame_alloc.alloc();
-
-        frame
-            .ok_or_else(|| $crate::mem::page_table::PageTableMapError::FrameAllocationFailed)
-            .map(|frame| map_page!($page, $size, $flags, frame, frame_alloc))
-            .flatten()
-    }};
-
-    ($page: expr, $size: ident, $flags: expr, $frame: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
-                .lock();
-        map_page!($page, $size, $flags, $frame, frame_alloc)
-    }};
-
-    ($page: expr, $size: ident, $flags: expr, $frame: expr, $frame_alloc: expr) => {{
-        let kernel_page_table: &mut x86_64::structures::paging::mapper::RecursivePageTable<
-            'static,
-        > = &mut $crate::mem::page_table::KERNEL_PAGE_TABLE.lock();
-
-        let page: x86_64::structures::paging::Page<$size> = $page;
-        let frame: x86_64::structures::paging::PhysFrame<$size> = $frame;
-
-        let table_flags: x86_64::structures::paging::page_table::PageTableFlags =
-            x86_64::structures::paging::page_table::PageTableFlags::PRESENT
-                | x86_64::structures::paging::page_table::PageTableFlags::WRITABLE;
-
-        x86_64::structures::paging::Mapper::map_to_with_table_flags(
-            kernel_page_table,
-            page,
-            frame,
-            $flags,
-            table_flags,
-            $frame_alloc,
-        )
-        .map_err(|e| $crate::mem::page_table::PageTableMapError::from(e))
-        .map(|flusher| flusher.flush())
-    }};
-}
-
-/// Macro to map a page. Returns `Result<(PhysFrame, PageTableFlags), PageTableMapError>`
-///
-/// # Example
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let page: Page<Size4KiB> = todo!();
-///
-// TODO document return types
-//
-/// let result: Result<(phys_frame, flags), PageTableMapError> = unmap_page!(page);
-/// # }
-/// ```
-#[macro_export]
-macro_rules! unmap_page {
-    ($page: expr) => {{
-        let kernel_page_table: &mut x86_64::structures::paging::mapper::RecursivePageTable<
-            'static,
-        > = &mut $crate::mem::page_table::KERNEL_PAGE_TABLE.lock();
-
-        x86_64::structures::paging::Mapper::unmap(kernel_page_table, $page)
-            .map_err(|err| {
-                <$crate::mem::page_table::PageTableMapError as From<
-                    x86_64::structures::paging::mapper::UnmapError,
-                >>::from(err)
-            })
-            .map(|(frame, flags, flush)| {
-                flush.flush();
-                (frame, flags)
-            })
-    }};
-}
-
-/// Macro to free a page.
-///
-/// # Example
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let frame: PhysFrame<Size4KiB> = todo!();
-///
-// TODO Saftey
-//
-/// free_frame!(frame);
-/// # }
-/// ```
-#[macro_export]
-macro_rules! free_page {
-    ($page: expr) => {{
-        $crate::mem::page_allocator::PageAllocator::get_kernel_allocator()
-            .lock()
-            .free_page($page);
-    }};
-}
-
-/// Macro to free a frame.
-///
-/// # Example
-///
-/// ```no_run
-/// # #[macro_use] extern crate wasabi-kernel;
-/// # fn main() {
-/// use x86_64::structures::paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB};
-/// let frame: PhysFrame<Size4KiB> = todo!();
-///
-// TODO Saftey
-//
-/// free_frame!(frame);
-/// # }
-/// ```
-#[macro_export]
-macro_rules! free_frame {
-    ($size:ident, $frame: expr) => {{
-        let frame_alloc: &mut $crate::mem::frame_allocator::WasabiFrameAllocator<$size> =
-            &mut $crate::mem::frame_allocator::WasabiFrameAllocator::<$size>::get_for_kernel()
-                .lock();
-        frame_alloc.free($frame);
-    }};
 }
 
 /// Calculate the number of pages required for `bytes` memory.
@@ -409,79 +254,6 @@ macro_rules! frames_required_for {
     };
 }
 
-/// Extensiont trait for [VirtAddr]
-pub trait VirtAddrExt {
-    /// returns a [Volatile] that provides access to the value behind this address
-    ///
-    /// Safety: VirtAddr must be a valid reference
-    unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly>;
-
-    /// returns a [Volatile] that provides access to the value behind this address
-    ///
-    /// Safety: VirtAddr must be a valid *mut* reference
-    unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T>;
-
-    /// zeroes the memory at `self` for `bytes` size
-    ///
-    /// Safety: VirtAddr must be a valid *mut* byte slice of size `bytes`
-    unsafe fn zero_memory(self, bytes: usize);
-}
-
-#[allow(unsafe_op_in_unsafe_fn)]
-impl VirtAddrExt for VirtAddr {
-    unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly> {
-        let r: &T = &*self.as_ptr();
-        Volatile::new_read_only(r)
-    }
-
-    unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T> {
-        let r: &mut T = &mut *self.as_mut_ptr();
-        Volatile::new(r)
-    }
-
-    unsafe fn zero_memory(self, bytes: usize) {
-        let p: *mut u8 = self.as_mut_ptr();
-        ptr::write_bytes(p, 0, bytes);
-    }
-}
-
-/// extension trait for [Volatile]
-pub trait VolatileExt<R, T, A>
-where
-    R: Deref<Target = T>,
-    T: Copy,
-{
-    /// reads the value, calls the `update` function and wirtes back the result.
-    ///
-    /// This is the same as calling
-    /// ```no_run
-    /// let value = volatile.read();
-    /// volatile.write(update(value));
-    /// ```
-    fn update<F>(&mut self, update: F)
-    where
-        A: Writable + Readable,
-        R: DerefMut,
-        F: FnOnce(T) -> T;
-}
-
-impl<R, T, A> VolatileExt<R, T, A> for Volatile<R, A>
-where
-    R: Deref<Target = T>,
-    T: Copy,
-{
-    fn update<F>(&mut self, update: F)
-    where
-        A: Writable + Readable,
-        R: DerefMut,
-        F: FnOnce(T) -> T,
-    {
-        let value = self.read();
-        let updated = update(value);
-        self.write(updated);
-    }
-}
-
 /// prints out some random data about maped pages and phys frames
 fn print_debug_info(
     recursive_page_table: &mut RecursivePageTable,
@@ -491,7 +263,7 @@ fn print_debug_info(
     recursive_page_table.print_all_mapped_regions(true, Level::Info);
 
     // TODO this is unsafe
-    let boot_info = unsafe { boot_info() };
+    let boot_info = &KernelInfo::get().boot_info;
 
     recursive_page_table.print_page_flags_for_vaddr(
         bootloader_page_table_vaddr,
@@ -500,7 +272,7 @@ fn print_debug_info(
     );
 
     recursive_page_table.print_page_flags_for_vaddr(
-        VirtAddr::new(boot_info as *const BootInfo as u64),
+        VirtAddr::new(*boot_info as *const BootInfo as u64),
         level,
         Some("Boot Info"),
     );
@@ -559,8 +331,7 @@ fn print_debug_info(
 
 /// asserts that the given phys addr is not within the memory regions of the boot info
 fn assert_phys_not_available(addr: PhysAddr, message: &str) {
-    // TODO this is unsafe
-    let avail_mem = &unsafe { boot_info() }.memory_regions;
+    let avail_mem = &KernelInfo::get().boot_info.memory_regions;
 
     let available = avail_mem.iter().any(|region| {
         region.start <= addr.as_u64()

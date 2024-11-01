@@ -1,6 +1,6 @@
 //! NVME pci device
 //!
-//! The specification documents can be found at https://nvmexpress.org/specifications/
+//! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //TODO move this module out of pci?
 
 #![allow(missing_docs)] // TODO temp
@@ -12,23 +12,20 @@ pub mod io_commands;
 pub mod properties;
 pub mod queue;
 
-use capabilities::{ControllerCapabilities, Fuses, OptionalAdminCommands};
 pub use generic_command::{
     CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
     GenericCommandStatus,
 };
-use io_commands::LBA;
-use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
 
-use self::properties::{
-    AdminQueueAttributes, Capabilities, ControllerConfiguration, ControllerStatus,
-};
 use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
-    free_frame, free_page, locals, map_frame, map_page,
+    locals,
     mem::{
-        frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator,
-        page_table::PageTableMapError, MemError, VirtAddrExt,
+        frame_allocator::FrameAllocator,
+        page_allocator::PageAllocator,
+        page_table::{PageTable, PageTableMapError},
+        ptr::UntypedPtr,
+        MemError,
     },
     pages_required_for,
     pci::{
@@ -41,12 +38,18 @@ use crate::{
         },
         CommonRegisterOffset, Device, RegisterAddress, PCI_ACCESS,
     },
-    todo_error, unmap_page,
+    todo_error,
     utils::log_hex_dump,
 };
 use admin_commands::{CompletionQueueCreationStatus, IdentifyNamespaceData};
+use generic_command::{COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
+use io_commands::LBA;
+use properties::{AdminQueueAttributes, Capabilities, ControllerConfiguration, ControllerStatus};
+use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
+
 use alloc::vec::Vec;
 use bit_field::BitField;
+use capabilities::{ControllerCapabilities, Fuses, OptionalAdminCommands};
 use core::{cmp::min, hint::spin_loop, sync::atomic::Ordering};
 use derive_where::derive_where;
 use shared::{
@@ -56,18 +59,13 @@ use shared::{
 use thiserror::Error;
 use x86_64::{
     structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
-    PhysAddr, VirtAddr,
+    PhysAddr,
 };
 
 #[allow(unused_imports)]
 use crate::todo_warn;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
-
-/// The size of all submission command entries
-const SUBMISSION_COMMAND_ENTRY_SIZE: u64 = 64;
-/// The size of all completion command entries
-const COMPLETION_COMMAND_ENTRY_SIZE: u64 = 16;
 
 #[allow(missing_docs)]
 #[derive(Debug, PartialEq, Error, Clone)]
@@ -106,10 +104,10 @@ pub struct NVMEController {
     pci_dev: Device,
     controller_base_paddr: PhysAddr,
     controller_page: Page<Size4KiB>,
-    controller_base_vaddr: VirtAddr,
+    controller_base_ptr: UntypedPtr,
     doorbell_page: Page<Size4KiB>,
-    doorbell_base_vaddr: VirtAddr,
-    doorbell_stride: u64,
+    doorbell_base_ptr: UntypedPtr,
+    doorbell_stride: isize,
     admin_queue: CommandQueue,
 
     controller_id: Option<ControllerId>,
@@ -167,9 +165,13 @@ impl NVMEController {
             todo_warn!("support multi function nvme controllers not implemented!");
         }
 
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
+
         let properties_base_paddr = get_controller_properties_address(pci, pci_dev, 0);
 
-        let properties_page_table_falgs: PageTableFlags = PageTableFlags::WRITABLE
+        let no_cache_page_flags: PageTableFlags = PageTableFlags::WRITABLE
             | PageTableFlags::PRESENT
             | PageTableFlags::NO_CACHE
             | PageTableFlags::NO_EXECUTE;
@@ -180,16 +182,30 @@ impl NVMEController {
             properties_frame_offset, 0,
             "Properties that aren't page alligned are not supported"
         );
-        let properties_page = unsafe {
+        let properties_page = page_allocator.allocate_page_4k()?;
+        unsafe {
             // Safety: only called once for frame, assuming function safety
-            map_frame!(Size4KiB, properties_page_table_falgs, properties_frame).unwrap()
+            page_table
+                .map_kernel(
+                    properties_page,
+                    properties_frame,
+                    no_cache_page_flags,
+                    frame_allocator.as_mut(),
+                )
+                .map_err(MemError::from)?
+                .flush();
         };
-        let properties_base_vaddr = properties_page.start_address() + properties_frame_offset;
+        let properties_base_ptr = unsafe {
+            // Safety: We just mapped the page
+            UntypedPtr::new_from_page(properties_page)
+                .expect("Allocated page should not be the 0 page")
+                .add(properties_frame_offset as usize)
+        };
 
         trace!(
             "nvme controller properties at phys {:p} mapped to {:p}",
             properties_base_paddr,
-            properties_base_vaddr
+            properties_base_ptr
         );
 
         /// See NVME over PCIe Transport Spec: Figure 4: PCI Express Specific Property
@@ -197,23 +213,33 @@ impl NVMEController {
         const DOORBELL_PHYS_OFFSET: u64 = 0x1000;
         let doorbell_frame =
             PhysFrame::from_start_address(properties_base_paddr + DOORBELL_PHYS_OFFSET).unwrap();
-        let doorbell_page = unsafe {
+        let doorbell_page = page_allocator.allocate_page_4k()?;
+        unsafe {
             // Safety: only called once for frame, assuming function safety
-            map_frame!(Size4KiB, properties_page_table_falgs, doorbell_frame)?
+            page_table
+                .map_kernel(
+                    doorbell_page,
+                    doorbell_frame,
+                    no_cache_page_flags,
+                    frame_allocator.as_mut(),
+                )
+                .map_err(MemError::from)?
+                .flush();
         };
-        let doorbell_base: VirtAddr = doorbell_page.start_address();
+        let doorbell_base_ptr: UntypedPtr = unsafe {
+            UntypedPtr::new_from_page(doorbell_page)
+                .expect("Allocated page should never be the 0 page")
+        };
         trace!(
             "nvme controller doorbells starting at phys {:p} mapped to {:p}",
             doorbell_frame.start_address(),
-            doorbell_base
+            doorbell_base_ptr
         );
 
         // TODO figure out good admin queue size
-        const ADMIN_QUEUE_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE) as u16;
+        const ADMIN_QUEUE_SIZE: u16 =
+            (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE as u64) as u16;
         let admin_queue = unsafe {
-            let mut page_allocator = PageAllocator::get_kernel_allocator().lock();
-            let mut frame_allocator = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
-
             // Safety: we just mapped the doorbell memory as part of properties.
             // We only create 1 queue with index 0 (admin) right here.
             // We check the stride later on, once we have proper access to the properties.
@@ -221,10 +247,11 @@ impl NVMEController {
                 QueueIdentifier(0),
                 ADMIN_QUEUE_SIZE,
                 ADMIN_QUEUE_SIZE,
-                doorbell_base,
+                doorbell_base_ptr,
                 4,
-                &mut frame_allocator,
-                &mut page_allocator,
+                frame_allocator.as_mut(),
+                page_allocator.as_mut(),
+                page_table.as_mut(),
             )?
         };
 
@@ -232,9 +259,9 @@ impl NVMEController {
             pci_dev,
             controller_base_paddr: properties_base_paddr,
             controller_page: properties_page,
-            controller_base_vaddr: properties_base_vaddr,
+            controller_base_ptr: properties_base_ptr,
             doorbell_page,
-            doorbell_base_vaddr: doorbell_base,
+            doorbell_base_ptr,
             doorbell_stride: 4,
             admin_queue,
             controller_id: None,
@@ -257,14 +284,14 @@ impl NVMEController {
                 // Safety: we just mapped the doorbell memory as part of properties.
                 // we overwrite the old references, thereby ensuring no aliasing is done
                 CommandQueue::get_doorbells(
-                    doorbell_base,
-                    cap.doorbell_stride as u64,
+                    doorbell_base_ptr,
+                    cap.doorbell_stride as isize,
                     QueueIdentifier(0),
                 )
             };
             this.admin_queue.submission_queue_tail_doorbell = sub_tail;
             this.admin_queue.completion_queue_head_doorbell = comp_head;
-            this.doorbell_stride = cap.doorbell_stride as u64;
+            this.doorbell_stride = cap.doorbell_stride as isize;
         }
 
         // 1. The host waits for the controller to indicate that any previous reset is complete by waiting for
@@ -336,7 +363,20 @@ impl NVMEController {
         {
             let identy_result_pt_flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
-            let (page, frame) = map_frame!(Size4KiB, identy_result_pt_flags)?;
+            let page = page_allocator.allocate_page_4k()?;
+            let frame = frame_allocator.alloc_4k()?;
+            unsafe {
+                // Safety: we just allocated frame and page
+                page_table
+                    .map_kernel(
+                        page,
+                        frame,
+                        identy_result_pt_flags,
+                        frame_allocator.as_mut(),
+                    )
+                    .map_err(MemError::from)?
+                    .flush();
+            };
 
             let command = admin_commands::create_identify_command(
                 admin_commands::ControllerOrNamespace::Controller,
@@ -367,11 +407,12 @@ impl NVMEController {
                 identify_data.optional_admin_command_support,
             );
 
-            let (frame, _pt_flags) = unmap_page!(page)?;
-            free_page!(page);
+            let (frame, _pt_flags, flush) = page_table.unmap(page).map_err(MemError::from)?;
+            flush.flush();
             unsafe {
-                // frame is unmapped and no longer used
-                free_frame!(Size4KiB, frame);
+                // frame and page is unmapped and no longer used
+                page_allocator.free_page(page);
+                frame_allocator.free(frame)
             }
         }
         this.controller_id = Some(controller_id);
@@ -381,7 +422,20 @@ impl NVMEController {
         if cap.command_sets_supported.get_bit(6) {
             let identy_result_pt_flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
-            let (page, frame) = map_frame!(Size4KiB, identy_result_pt_flags)?;
+            let page = page_allocator.allocate_page_4k()?;
+            let frame = frame_allocator.alloc_4k()?;
+            unsafe {
+                // Safety: we just allocated frame and page
+                page_table
+                    .map_kernel(
+                        page,
+                        frame,
+                        identy_result_pt_flags,
+                        frame_allocator.as_mut(),
+                    )
+                    .map_err(MemError::from)?
+                    .flush();
+            };
 
             //     i.  Issue the Identify command specifying the Identify I/O Command Set data structure (CNS
             //         1Ch); and
@@ -434,11 +488,12 @@ impl NVMEController {
             debug!("Active command set: {best_set:?}");
             this.io_command_sets = best_set;
 
-            let (frame, _pt_flags) = unmap_page!(page)?;
-            free_page!(page);
+            let (frame, _pt_flags, flush) = page_table.unmap(page).map_err(MemError::from)?;
+            flush.flush();
             unsafe {
-                // frame is unmapped and no longer used
-                free_frame!(Size4KiB, frame);
+                // page and frame is unmapped and no longer used
+                page_allocator.free_page(page);
+                frame_allocator.free(frame)
             }
 
             //     ii. Issue the Set Features command with the I/O Command Set Profile Feature Identifier (FID
@@ -561,7 +616,20 @@ impl NVMEController {
 
             let identy_result_pt_flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
-            let (page, frame) = map_frame!(Size4KiB, identy_result_pt_flags)?;
+            let page = page_allocator.allocate_page_4k()?;
+            let frame = frame_allocator.alloc_4k()?;
+            unsafe {
+                // Safety: we just allocated frame and page
+                page_table
+                    .map_kernel(
+                        page,
+                        frame,
+                        identy_result_pt_flags,
+                        frame_allocator.as_mut(),
+                    )
+                    .map_err(MemError::from)?
+                    .flush();
+            };
 
             let command = admin_commands::create_identify_command(
                 admin_commands::ControllerOrNamespace::Namespace { nsid: 1 },
@@ -646,11 +714,12 @@ impl NVMEController {
                 return Err(NVMEControllerError::NoNamespace);
             }
 
-            let (frame, _pt_flags) = unmap_page!(page)?;
-            free_page!(page);
+            let (frame, _pt_flags, flush) = page_table.unmap(page).map_err(MemError::from)?;
+            flush.flush();
             unsafe {
-                // frame is unmapped and no longer used
-                free_frame!(Size4KiB, frame);
+                // page and frame is unmapped and no longer used
+                page_allocator.free_page(page);
+                frame_allocator.free(frame)
             }
         }
 
@@ -703,39 +772,39 @@ impl NVMEController {
     }
 
     /// Read a raw 32bit property
-    fn read_property_32(&self, offset: u64) -> u32 {
-        assert!(offset + 4 < Size4KiB::SIZE);
+    fn read_property_32(&self, offset: isize) -> u32 {
+        assert!(offset + 4 < Size4KiB::SIZE as isize);
         let property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have shared access to self
-            (self.controller_base_vaddr + offset).as_volatile()
+            self.controller_base_ptr.offset(offset).as_volatile()
         };
         property.read()
     }
 
-    fn write_property_32(&mut self, offset: u64, value: u32) {
-        assert!(offset + 4 < Size4KiB::SIZE);
+    fn write_property_32(&mut self, offset: isize, value: u32) {
+        assert!(offset + 4 < Size4KiB::SIZE as isize);
         let mut property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have mutable access to self
-            (self.controller_base_vaddr + offset).as_volatile_mut()
+            self.controller_base_ptr.offset(offset).as_volatile_mut()
         };
         property.write(value)
     }
 
     /// Read a raw 64bit property
-    fn read_property_64(&self, offset: u64) -> u64 {
-        assert!(offset + 8 < Size4KiB::SIZE);
+    fn read_property_64(&self, offset: isize) -> u64 {
+        assert!(offset + 8 < Size4KiB::SIZE as isize);
         let property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have shared access to self
-            (self.controller_base_vaddr + offset).as_volatile()
+            self.controller_base_ptr.offset(offset).as_volatile()
         };
         property.read()
     }
 
-    fn write_property_64(&mut self, offset: u64, value: u64) {
-        assert!(offset + 8 < Size4KiB::SIZE);
+    fn write_property_64(&mut self, offset: isize, value: u64) {
+        assert!(offset + 8 < Size4KiB::SIZE as isize);
         let mut property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have mutable access to self
-            (self.controller_base_vaddr + offset).as_volatile_mut()
+            self.controller_base_ptr.offset(offset).as_volatile_mut()
         };
         property.write(value)
     }
@@ -875,8 +944,8 @@ impl NVMEController {
     ///
     /// The size of the queue is determined by the number of commands that fit into a single page
     pub fn allocate_io_queues(&mut self, count: u16) -> Result<(), NVMEControllerError> {
-        const COMP_SIZE: u16 = (Size4KiB::SIZE / COMPLETION_COMMAND_ENTRY_SIZE) as u16;
-        const SUB_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE) as u16;
+        const COMP_SIZE: u16 = (Size4KiB::SIZE / COMPLETION_COMMAND_ENTRY_SIZE as u64) as u16;
+        const SUB_SIZE: u16 = (Size4KiB::SIZE / SUBMISSION_COMMAND_ENTRY_SIZE as u64) as u16;
 
         const QUEUE_SIZE: u16 = if COMP_SIZE < SUB_SIZE {
             COMP_SIZE
@@ -927,8 +996,9 @@ impl NVMEController {
         let queue_idents =
             (0..count).map(|ident_offset| self.next_unused_io_queue_ident + ident_offset);
 
-        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut page_alloc = PageAllocator::get_for_kernel().lock();
+        let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
 
         let mut error = None;
         let queues: Vec<_> = queue_idents
@@ -937,10 +1007,11 @@ impl NVMEController {
                     ident,
                     submission_queue_size,
                     completion_queue_size,
-                    self.doorbell_base_vaddr,
+                    self.doorbell_base_ptr,
                     self.doorbell_stride,
                     &mut frame_alloc,
                     &mut page_alloc,
+                    &mut page_table,
                 )
             })
             .filter_map(|queue_or_err| match queue_or_err {
@@ -960,6 +1031,7 @@ impl NVMEController {
 
         drop(page_alloc);
         drop(frame_alloc);
+        drop(page_table);
 
         let create_comp_queue_commands = queues.iter().map(|queue| {
             admin_commands::create_io_completion_queue(
@@ -1110,7 +1182,7 @@ impl NVMEController {
         Ok(())
     }
 
-    /// The [Capabilites] of the controller
+    /// The [ControllerCapabilities] of the controller
     pub fn capabilities(&self) -> &ControllerCapabilities {
         &self.capabilities
     }
@@ -1177,6 +1249,35 @@ impl Drop for NVMEController {
             }
         }
         trace!("all io queues deleted");
+
+        let mut page_table = PageTable::get_for_kernel().lock();
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
+
+        match page_table.unmap(self.controller_page) {
+            Ok((_, _, flush)) => {
+                flush.flush();
+                unsafe {
+                    // Safety: pages are no longer used or accessible after drop
+                    page_allocator.free_page(self.controller_page);
+                }
+            }
+            Err(e) => {
+                error!("Failed to unmap controller page on drop: {e:#?}");
+            }
+        }
+
+        match page_table.unmap(self.doorbell_page) {
+            Ok((_, _, flush)) => {
+                flush.flush();
+                unsafe {
+                    // Safety: pages are no longer used or accessible after drop
+                    page_allocator.free_page(self.doorbell_page);
+                }
+            }
+            Err(e) => {
+                error!("Failed to unmap doorbell page on drop: {e:#?}");
+            }
+        }
     }
 }
 
@@ -1223,25 +1324,25 @@ pub fn experiment_nvme_device() {
     let page_count = pages_required_for!(Size4KiB, bytes);
     assert_eq!(page_count, 1, "TODO multipage not implemented");
 
-    let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-    let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+    let pages;
+    let frames;
+    {
+        let mut page_alloc = PageAllocator::get_for_kernel().lock();
+        let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
 
-    let pages = page_alloc.allocate_pages(page_count).unwrap();
-    // TODO I don't think I need consecutive frames. PRP lists should support separate frames
-    let frames = frame_alloc.alloc_range(page_count).unwrap();
+        pages = page_alloc.allocate_pages(page_count).unwrap();
+        // TODO I don't think I need consecutive frames. PRP lists should support separate frames
+        frames = frame_alloc.alloc_range(page_count).unwrap();
 
-    drop(page_alloc);
-    drop(frame_alloc);
-
-    for (page, frame) in pages.iter().zip(frames) {
-        unsafe {
-            map_page!(
-                page,
-                Size4KiB,
-                PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT,
-                frame
-            )
-            .unwrap();
+        let mut page_table = PageTable::get_for_kernel().lock();
+        for (page, frame) in pages.iter().zip(frames) {
+            unsafe {
+                let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
+                page_table
+                    .map_kernel(page, frame, flags, frame_alloc.as_mut())
+                    .unwrap()
+                    .flush();
+            }
         }
     }
 
@@ -1264,7 +1365,7 @@ pub fn experiment_nvme_device() {
             "NVME read first few blocks",
             log::Level::Info,
             module_path!(),
-            pages.start_addr(),
+            UntypedPtr::new(pages.start_addr()).unwrap(),
             bytes as usize,
         );
     }
@@ -1341,8 +1442,10 @@ mod test {
     use x86_64::structures::paging::{PageTableFlags, Size4KiB};
 
     use crate::{
-        map_page,
-        mem::{frame_allocator::WasabiFrameAllocator, page_allocator::PageAllocator},
+        mem::{
+            frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
+            MemError,
+        },
         pages_required_for,
         pci::{
             nvme::io_commands::{self, LBA},
@@ -1431,18 +1534,18 @@ mod test {
         Ok(())
     }
 
-    #[kernel_test]
+    #[kernel_test(allow_page_leak, allow_frame_leak, allow_mapping_leak)]
     pub fn test_nvme_read_data() -> Result<(), KernelTestError> {
         let mut nvme_controller =
             unsafe { create_test_controller() }.texpect("failed to create controller")?;
 
         nvme_controller
             .allocate_io_queues_with_sizes(1, 64, 64)
-            .expect("Failed to allocate nvme command queue");
+            .texpect("Failed to allocate nvme command queue")?;
 
         let mut io_queue = nvme_controller
             .get_io_queue()
-            .expect("We juste allocated a queue so where is it?");
+            .texpect("We juste allocated a queue so where is it?")?;
 
         let capabilities = nvme_controller.capabilities();
 
@@ -1453,29 +1556,33 @@ mod test {
         let page_count = pages_required_for!(Size4KiB, bytes);
         assert_eq!(page_count, 1, "TODO multipage not implemented");
 
-        let mut page_alloc = PageAllocator::get_kernel_allocator().lock();
-        let mut frame_alloc = WasabiFrameAllocator::<Size4KiB>::get_for_kernel().lock();
+        let mut page_alloc = PageAllocator::get_for_kernel().lock();
+        let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
 
-        let pages = page_alloc.allocate_pages(page_count).unwrap();
+        let pages = page_alloc
+            .allocate_pages::<Size4KiB>(page_count)
+            .tunwrap()?;
         // TODO I don't think I need consecutive frames. PRP lists should support separate frames
-        let frames = frame_alloc.alloc_range(page_count).unwrap();
+        let frames = frame_alloc.alloc_range(page_count).tunwrap()?;
 
         drop(page_alloc);
-        drop(frame_alloc);
 
         for (page, frame) in pages.iter().zip(frames) {
             unsafe {
-                map_page!(
-                    page,
-                    Size4KiB,
-                    PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT,
-                    frame
-                )
-                .unwrap();
+                let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
+                let kernel_page_table = &mut PageTable::get_for_kernel().lock();
+
+                kernel_page_table
+                    .map_kernel(page, frame, flags, frame_alloc.as_mut())
+                    .map_err(MemError::from)
+                    .tunwrap()?
+                    .flush();
             }
         }
 
-        todo_warn!("Memory leak {page_count} pages for nvme read test");
+        drop(frame_alloc);
+
+        todo_warn!("Memory leak {page_count} pages and frames for nvme read test");
 
         let command = io_commands::create_read_command(
             frames.start,
@@ -1492,7 +1599,7 @@ mod test {
         // Safety: we just mapped this
         let read_data: &[u8; 4] = unsafe { &*pages.start_addr().as_ptr() };
 
-        assert_eq!(read_data, b"test");
+        t_assert_eq!(read_data, b"test");
 
         Ok(())
     }

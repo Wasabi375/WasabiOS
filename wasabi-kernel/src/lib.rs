@@ -18,7 +18,8 @@
     ptr_alignment_type,
     result_flattening,
     stmt_expr_attributes,
-    strict_overflow_ops
+    strict_overflow_ops,
+    new_zeroed_alloc
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![allow(rustdoc::private_intra_doc_links)]
@@ -27,6 +28,7 @@
 pub mod core_local;
 pub mod cpu;
 pub mod graphics;
+pub mod kernel_info;
 pub mod logger;
 pub mod math;
 pub mod mem;
@@ -43,6 +45,7 @@ pub mod testing;
 extern crate alloc;
 
 use core_local::get_ready_core_count;
+use kernel_info::KernelInfo;
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
 use shared::{
@@ -64,25 +67,11 @@ use crate::{
 use bootloader_api::{config::Mapping, info::Optional, BootInfo};
 use core::{
     hint::spin_loop,
-    ptr::null_mut,
     sync::atomic::{AtomicU8, Ordering},
 };
 
 /// The main function called for each Core after the kernel is initialized
 static mut KERNEL_MAIN: fn() -> ! = halt;
-
-/// Contains the [BootInfo] provided by the Bootloader
-/// TODO: this breaks rust uniquness guarantee
-static mut BOOT_INFO: *mut BootInfo = null_mut();
-
-/// returns the [BootInfo] provided by the bootloader
-///
-/// # Safety:
-///
-/// the caller must guarantee unique access
-pub unsafe fn boot_info() -> &'static mut BootInfo {
-    unsafe { &mut *BOOT_INFO }
-}
 
 static KERNEL_MAIN_BARRIER: AtomicU8 = AtomicU8::new(0);
 
@@ -100,10 +89,12 @@ pub fn in_kernel_main() -> bool {
 pub unsafe fn enter_kernel_main() -> ! {
     KERNEL_MAIN_BARRIER.fetch_add(1, Ordering::SeqCst);
     let spin_start = timestamp_now_tsc();
+    let mut warn_send = false;
     while KERNEL_MAIN_BARRIER.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
         spin_loop();
-        if time_since_tsc(spin_start) > Duration::new_seconds(5) {
+        if time_since_tsc(spin_start) > Duration::new_seconds(5) && !warn_send {
             warn!("waiting for all cores to reach kernel_main");
+            warn_send = true;
         }
         if time_since_tsc(spin_start) > Duration::new_seconds(30) {
             panic!("cancel waiting fo rall cores to reach kernel_main");
@@ -125,12 +116,10 @@ pub fn kernel_bsp_entry(
     kernel_config: KernelConfig,
     kernel_start: fn() -> !,
 ) -> ! {
-    // Safety: TODO: boot info handling not really save, but it's fine for now
-    // we are still single core and don't really care
     unsafe {
-        BOOT_INFO = boot_info;
-    }
-    unsafe {
+        // Saftey: This is the first function ever called
+        KernelInfo::init(boot_info);
+
         // Safety: only written once here, and bsp_entry is only executed once
         KERNEL_MAIN = kernel_start;
     }
@@ -194,9 +183,8 @@ pub unsafe fn processor_init() {
 
     if core_id.is_bsp() {
         // TODO cleanup acpi init and store it
-        // Saftey: during bsp initialization
-        let boot_info = unsafe { boot_info() };
-        if let Optional::Some(rsdp_addr) = boot_info.rsdp_addr {
+
+        if let Optional::Some(rsdp_addr) = KernelInfo::get().boot_info.rsdp_addr {
             let paddr = PhysAddr::new(rsdp_addr);
             ACPI::from_rsdp(paddr).expect("failed to init acpi");
         } else {

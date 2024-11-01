@@ -1,6 +1,6 @@
 //! NVMe io command set
 //!
-//! The specification documents can be found at https://nvmexpress.org/specifications/
+//! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //! specifically: NVM Command Set
 
 use core::fmt::{Debug, LowerHex, UpperHex};

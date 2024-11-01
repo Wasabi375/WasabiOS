@@ -640,8 +640,9 @@ impl<T, I: InterruptState> LockCellInternal<T> for ReadWriteCell<T, I> {
 
 /// A wrapper for a [`LockCell`] of an `MaybeUninit<T>`.
 ///
-/// unlike a normal [LockCell], [`UnwrapLock::lock`] will return `T`
-/// or panic if the value was not initialized
+/// Just like a normal [LockCell], [`UnwrapLock::lock`] will return `T`.
+/// This is unsafe and the user must ensure to initialize the value before
+/// using it.
 pub struct UnwrapLock<T: Send, L: LockCell<MaybeUninit<T>>> {
     /// inner lockcell that holds the `MaybeUninit<T>`
     pub lockcell: L,

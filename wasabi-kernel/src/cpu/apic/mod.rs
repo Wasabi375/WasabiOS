@@ -4,9 +4,13 @@ use core::sync::atomic::Ordering;
 
 use crate::{
     cpu::{cpuid::cpuid, interrupts::register_interrupt_handler},
-    locals, map_frame,
-    mem::{MemError, VirtAddrExt},
+    locals,
+    mem::{
+        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
+        ptr::UntypedPtr, MemError,
+    },
     prelude::TicketLock,
+    todo_warn,
 };
 use bit_field::BitField;
 use shared::sync::lockcell::LockCell;
@@ -22,7 +26,7 @@ use x86_64::{
         idt::InterruptStackFrame,
         paging::{PageTableFlags, PhysFrame, Size4KiB},
     },
-    PhysAddr, VirtAddr,
+    PhysAddr,
 };
 
 use self::{
@@ -93,11 +97,15 @@ pub fn init() -> Result<(), ApicCreationError> {
 /// A struct representing a local apic.
 pub struct Apic {
     /// the base vaddr of the Apic, used to access apic registers
-    base: VirtAddr,
+    base: UntypedPtr,
 
     /// the timer of this APIC
     timer: TimerData,
 }
+
+// Safety: We ensure that access to base is done in a save way
+unsafe impl Send for Apic {}
+unsafe impl Sync for Apic {}
 
 /// The error used for Apic creation
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -141,16 +149,33 @@ impl Apic {
             | PageTableFlags::NO_EXECUTE
             | PageTableFlags::NO_CACHE;
 
-        let page = unsafe {
+        let page = PageAllocator::get_for_kernel()
+            .lock()
+            .allocate_page_4k()
+            .map_err(MemError::from)?;
+        unsafe {
             // Safety: new page with apic frame (only used here) and is therefor safe
-            map_frame!(Size4KiB, apic_table_flags, phys_frame)?
+            PageTable::get_for_kernel()
+                .lock()
+                .map_kernel(
+                    page,
+                    phys_frame,
+                    apic_table_flags,
+                    FrameAllocator::get_for_kernel().lock().as_mut(),
+                )
+                .map_err(MemError::from)?
+                .flush();
         };
 
-        let virt_base = page.start_address();
-        debug!("Create apic base at addr: Phys {phys_base:p}, Virt {virt_base:p}");
+        let base_ptr = unsafe {
+            // Saftey: we just mapped this page
+            UntypedPtr::new(page.start_address())
+        }
+        .expect("Page start_addr should never be 0");
+        debug!("Create apic base at addr: Phys {phys_base:p}, Virt {base_ptr:p}");
 
         let mut apic = Apic {
-            base: virt_base,
+            base: base_ptr,
             timer: TimerData::default(),
         };
 
@@ -169,25 +194,35 @@ impl Apic {
 
     /// calculate [Volatile] for the given [Offset]
     fn offset(&self, offset: Offset) -> Volatile<&u32, ReadOnly> {
-        let vaddr = self.base + offset as u64;
-        // safety: we have read access to apic, so we can read it's registers
-        unsafe { vaddr.as_volatile() }
+        unsafe {
+            // saftey: offset is within allocation
+            let base_ptr = self.base.offset(offset as isize);
+            // safety: we have read access to apic, so we can read it's registers
+            base_ptr.as_volatile()
+        }
     }
 
     /// calculate [Volatile] low and high for the given [Offset]
     #[allow(dead_code)]
     fn offset64(&self, offset: Offset) -> (Volatile<&u32, ReadOnly>, Volatile<&u32, ReadOnly>) {
-        let vaddr_low = self.base + offset as u64;
-        let vaddr_high = vaddr_low + 0x10;
+        unsafe {
+            // Saftey: offsets within allocaton
+            let vaddr_low = self.base.offset(offset as isize);
+            let vaddr_high = vaddr_low.offset(0x10);
 
-        unsafe { (vaddr_low.as_volatile(), vaddr_high.as_volatile()) }
+            // safety: we have read access to apic, so we can read it's registers
+            (vaddr_low.as_volatile(), vaddr_high.as_volatile())
+        }
     }
 
     /// calculate mutable [Volatile] for the given [Offset]
     fn offset_mut(&mut self, offset: Offset) -> Volatile<&mut u32, ReadWrite> {
-        let vaddr = self.base + offset as u64;
-        // safety: we have mut access to apic, so we can read and write it's registers
-        unsafe { vaddr.as_volatile_mut() }
+        unsafe {
+            // saftey: offset is within allocation
+            let vaddr = self.base.offset(offset as isize);
+            // safety: we have mut access to apic, so we can read and write it's registers
+            vaddr.as_volatile_mut()
+        }
     }
 
     /// calculate mutable [Volatile] low and high for the given [Offset]
@@ -195,10 +230,14 @@ impl Apic {
         &self,
         offset: Offset,
     ) -> (Volatile<&mut u32, ReadWrite>, Volatile<&mut u32, ReadWrite>) {
-        let vaddr_low = self.base + offset as u64;
-        let vaddr_high = vaddr_low + 0x10;
+        unsafe {
+            // Saftey: offsets within allocaton
+            let vaddr_low = self.base.offset(offset as isize);
+            let vaddr_high = vaddr_low.offset(0x10);
 
-        unsafe { (vaddr_low.as_volatile_mut(), vaddr_high.as_volatile_mut()) }
+            // safety: we have mut access to apic, so we can read and write it's registers
+            (vaddr_low.as_volatile_mut(), vaddr_high.as_volatile_mut())
+        }
     }
 
     /// get access to the apic timer
@@ -243,9 +282,17 @@ impl Apic {
     }
 }
 
+impl Drop for Apic {
+    fn drop(&mut self) {
+        todo_warn!("Drop for APIC is not implemented");
+        // NOTE: I'm not sure what to do here. Is it even possible to recreate the APIC properly
+        // with this setup? I guess we could unmap the APIC page?
+    }
+}
+
 /// Offset of different registers into an [Apic]
 #[allow(missing_docs)]
-#[repr(usize)]
+#[repr(isize)]
 pub enum Offset {
     Id = 0x20,
     Version = 0x30,

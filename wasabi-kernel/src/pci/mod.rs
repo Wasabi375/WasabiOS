@@ -1,12 +1,12 @@
 //! PCI related structs and functions
 //!
-//! See  https://wiki.osdev.org/PCI for more information
+//! See <https://wiki.osdev.org/PCI> for more information
 //!
-//TODO move this module out of pci?
 
 // TODO temp
 #![allow(missing_docs)]
 
+//TODO move this module out of pci?
 pub mod nvme;
 
 use alloc::{format, vec::Vec};

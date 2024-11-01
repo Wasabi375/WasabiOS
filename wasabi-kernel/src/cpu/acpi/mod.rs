@@ -7,10 +7,11 @@ mod structs;
 use core::str::from_utf8;
 
 use hashbrown::HashMap;
+use shared::sync::lockcell::LockCell;
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Page, PageTableFlags, PhysFrame, Size4KiB},
-    PhysAddr, VirtAddr,
+    structures::paging::{Page, PageTableFlags, PhysFrame},
+    PhysAddr,
 };
 
 #[allow(unused_imports)]
@@ -18,8 +19,10 @@ use log::{debug, error, info, trace, warn};
 
 use crate::{
     cpu::acpi::structs::{Header, RsdpV1, XSDT},
-    map_frame,
-    mem::MemError,
+    mem::{
+        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
+        ptr::UntypedPtr, MemError,
+    },
     utils::log_hex_dump,
 };
 
@@ -53,16 +56,18 @@ impl ACPI {
         let frame = PhysFrame::containing_address(rsdp_paddr);
         let offset = rsdp_paddr - frame.start_address();
 
-        let page = unsafe {
-            // TODO this should be done in the macro
-            use shared::sync::lockcell::LockCell;
+        let page = PageAllocator::get_for_kernel().lock().allocate_page_4k()?;
+        unsafe {
+            let mut page_table = PageTable::get_for_kernel().lock();
+            let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
+            let flags =
+                PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
             // Safety: we are the only code mapping this frame
-            map_frame!(
-                Size4KiB,
-                PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE,
-                frame
-            )
-        }?;
+            page_table
+                .map_kernel(page, frame, flags, frame_allocator.as_mut())
+                .map_err(MemError::from)?
+                .flush();
+        }
 
         let vaddr = page.start_address() + offset;
 
@@ -93,10 +98,10 @@ impl ACPI {
 
         let mut this = Self { rsdp, mappings };
 
-        let xsdt_vaddr = this.phys_to_virt(PhysAddr::new(rsdp.xsdt_addr))?;
+        let xsdt_ptr = this.phys_to_vptr(PhysAddr::new(rsdp.xsdt_addr))?;
         let xsdt = unsafe {
             // Safety: pyhs_to_virt ensures that vaddr is mapped
-            XSDT::from_vaddr(xsdt_vaddr)?
+            XSDT::from_ptr(xsdt_ptr)?
         };
 
         info!("XSDT: entries {}", xsdt.entry_count);
@@ -106,7 +111,7 @@ impl ACPI {
                 "XSDT: ",
                 log::Level::Debug,
                 module_path!(),
-                xsdt_vaddr,
+                xsdt_ptr,
                 xsdt.header.length as usize,
             );
 
@@ -114,7 +119,7 @@ impl ACPI {
                 "XSDT entries",
                 log::Level::Debug,
                 module_path!(),
-                xsdt_vaddr + 36,
+                xsdt_ptr.offset(36),
                 (xsdt.header.length - 36) as usize,
             );
         }
@@ -141,30 +146,40 @@ impl ACPI {
         xsdt: &'a XSDT,
     ) -> impl Iterator<Item = Result<AcpiTable, AcpiError>> + 'a {
         xsdt.entries()
-            .map(|paddr| self.phys_to_virt(paddr).expect("failed to map acpi table"))
-            // Safety: phys_to_virt maps the vaddr and we get the paddr
+            .map(|paddr| self.phys_to_vptr(paddr).expect("failed to map acpi table"))
+            // Safety: phys_to_vptr maps the ptr and we get the paddr
             // from a valid xsdt table
-            .map(|vaddr| unsafe { AcpiTable::from_vaddr(vaddr) })
+            .map(|vptr| unsafe { AcpiTable::from_ptr(vptr) })
     }
 
-    fn phys_to_virt(&mut self, paddr: PhysAddr) -> Result<VirtAddr, MemError> {
+    fn phys_to_vptr(&mut self, paddr: PhysAddr) -> Result<UntypedPtr, MemError> {
         let frame = PhysFrame::containing_address(paddr);
-        trace!("phys to virt: {:p}", paddr);
+        trace!("phys to vptr: {:p}", paddr);
         let page: Page<_> = if let Some(page) = self.mappings.get(&frame) {
             *page
         } else {
+            let flags =
+                PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
+            let page = PageAllocator::get_for_kernel().lock().allocate_page_4k()?;
             unsafe {
-                // TODO this should be done in the macro
-                use shared::sync::lockcell::LockCell;
                 // Safety: we are the only code mapping this frame
-                map_frame!(
-                    Size4KiB,
-                    PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE,
-                    frame
-                )
-            }?
+                PageTable::get_for_kernel()
+                    .lock()
+                    .map_kernel(
+                        page,
+                        frame,
+                        flags,
+                        FrameAllocator::get_for_kernel().lock().as_mut(),
+                    )?
+                    .flush();
+            }
+            page
         };
         let offset = paddr - frame.start_address();
-        Ok(page.start_address() + offset)
+        let ptr = unsafe {
+            // Safety: this is within a page we mappped
+            UntypedPtr::new(page.start_address() + offset).expect("ptr should never be null here")
+        };
+        Ok(ptr)
     }
 }

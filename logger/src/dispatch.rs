@@ -13,13 +13,8 @@ use staticvec::StaticVec;
 
 use crate::{FlushError, TryLog};
 
-#[cfg(feature = "alloc")]
-use shared::alloc_ext::reforbox::RefOrBox;
-#[cfg(not(feature = "alloc"))]
-type RefOrBox<'a, T> = &'a T;
-
-#[cfg(feature = "alloc")]
 use alloc::boxed::Box;
+use shared::alloc_ext::reforbox::RefOrBox;
 
 /// Contains a reference to a [TryLogger] and some additional metadata
 /// for [DispatchLogger].
@@ -38,9 +33,6 @@ pub struct TargetLogger<'a> {
 
 impl<'a> TargetLogger<'a> {
     pub fn new_primary(name: &'a str, logger: &'a (dyn TryLog + Sync)) -> Self {
-        #[cfg(not(feature = "alloc"))]
-        let logger = logger;
-        #[cfg(feature = "alloc")]
         let logger = RefOrBox::Ref(logger);
         Self {
             name,
@@ -52,9 +44,6 @@ impl<'a> TargetLogger<'a> {
     }
 
     pub fn new_secondary(name: &'a str, logger: &'a (dyn TryLog + Sync)) -> Self {
-        #[cfg(not(feature = "alloc"))]
-        let logger = logger;
-        #[cfg(feature = "alloc")]
         let logger = RefOrBox::Ref(logger);
         Self {
             name,
@@ -65,7 +54,6 @@ impl<'a> TargetLogger<'a> {
         }
     }
 
-    #[cfg(feature = "alloc")]
     pub fn new_primary_boxed(name: &'a str, logger: Box<(dyn TryLog + Sync)>) -> Self {
         let logger = RefOrBox::Boxed(logger);
         Self {
@@ -77,7 +65,6 @@ impl<'a> TargetLogger<'a> {
         }
     }
 
-    #[cfg(feature = "alloc")]
     pub fn new_secondary_boxed(name: &'a str, logger: Box<(dyn TryLog + Sync)>) -> Self {
         let logger = RefOrBox::Boxed(logger);
         Self {
@@ -90,13 +77,10 @@ impl<'a> TargetLogger<'a> {
     }
 
     fn logger(&'a self) -> &'a (dyn TryLog + Sync) {
-        #[cfg(feature = "alloc")]
         match self.logger {
             RefOrBox::Ref(r) => r,
             RefOrBox::Boxed(ref b) => b.as_ref(),
         }
-        #[cfg(not(feature = "alloc"))]
-        self.logger
     }
 
     fn enabled(&self, metadata: &Metadata) -> bool {
@@ -192,17 +176,16 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> DispatchLogger<'a, I
 
 impl<'a, const N: usize, const L: usize, I: InterruptState> Log for DispatchLogger<'a, I, N, L> {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        if &metadata.level().to_level_filter()
-            > self
-                .module_levels
-                .iter()
-                /* At this point the vec is already sorted so that we can simply take
-                 * the first match
-                 */
-                .find(|(name, _level)| metadata.target().starts_with(name))
-                .map(|(_name, level)| level)
-                .unwrap_or(&self.default_level)
-        {
+        let log_level = metadata.level().to_level_filter();
+        let module_min_log_level = self
+            .module_levels
+            .iter()
+            /* At this point the vec is already sorted so that we can simply take
+             * the first match */
+            .find(|(name, _level)| metadata.target().starts_with(name))
+            .map(|(_name, level)| *level)
+            .unwrap_or(self.default_level);
+        if log_level > module_min_log_level {
             return false;
         }
 

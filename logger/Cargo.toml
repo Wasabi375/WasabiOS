@@ -4,13 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["color"]
-color = ["colored"]
-alloc = ["shared/alloc"]
+default = []
+no-color = []
 
 
 [dependencies]
 log.workspace = true
 shared = { path = "../shared" }
 staticvec = { path = "../staticvec" }
-colored = { path = "../colored", optional = true }

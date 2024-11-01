@@ -1,6 +1,6 @@
 //! Structs representing the different NVME Controller Properties
 //!
-//! The specification documents can be found at https://nvmexpress.org/specifications/
+//! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //! specifically: NVM Express Base Specification
 
 // TODO temp

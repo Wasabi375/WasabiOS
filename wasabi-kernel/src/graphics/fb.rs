@@ -1,22 +1,11 @@
 //! utilites for framebuffer access
 // TODO rename file to frambuffer
 
-use core::slice;
+use core::ptr::NonNull;
 
-use crate::graphics::Color;
-use crate::mem::page_allocator::PageAllocator;
-use crate::mem::structs::GuardedPages;
-use crate::mem::structs::Mapped;
-use crate::mem::structs::Unmapped;
-use crate::mem::MemError;
-use crate::pages_required_for;
-use crate::prelude::TicketLock;
-use bootloader_api::info::FrameBuffer as BootFrameBuffer;
-use bootloader_api::info::FrameBufferInfo;
-use bootloader_api::info::PixelFormat;
-use shared::sync::lockcell::LockCell;
-use x86_64::structures::paging::Size4KiB;
-use x86_64::VirtAddr;
+use crate::{graphics::Color, mem::MemError, prelude::TicketLock};
+use alloc::boxed::Box;
+use bootloader_api::info::{FrameBuffer as BootFrameBuffer, FrameBufferInfo, PixelFormat};
 
 use super::canvas::Canvas;
 
@@ -30,56 +19,40 @@ enum FramebufferSource {
     /// framebuffer is backed by the hardware buffer
     HardwareBuffer,
     /// framebuffer is backed by normal mapped memory
-    Owned(Mapped<GuardedPages<Size4KiB>>),
-    /// framebuffer is dropped
-    Dropped,
-}
-
-impl FramebufferSource {
-    fn drop(&mut self) -> Option<Mapped<GuardedPages<Size4KiB>>> {
-        match self {
-            FramebufferSource::HardwareBuffer => None,
-            FramebufferSource::Owned(pages) => {
-                let pages = *pages;
-                *self = FramebufferSource::Dropped;
-                Some(pages)
-            }
-            FramebufferSource::Dropped => None,
-        }
-    }
+    Owned(#[allow(unused)] Box<[u8]>),
 }
 
 #[derive(Debug)]
 /// A framebuffer used for rendering to the screen
 pub struct Framebuffer {
     /// The start address of the framebuffer
-    pub(super) start: VirtAddr,
+    pub(super) buffer: NonNull<[u8]>,
 
     /// the source of the fb memory
-    source: FramebufferSource,
+    // This may be unused but is necessary to ensure the ownership over [buffer]
+    _source: FramebufferSource,
 
     /// info about the framebuffer memory layout
     pub info: FrameBufferInfo,
 }
 
+unsafe impl Send for Framebuffer {}
+unsafe impl Sync for Framebuffer {}
+
 impl Framebuffer {
     /// Allocates a new memory backed framebuffer
     pub fn alloc_new(info: FrameBufferInfo) -> Result<Self, MemError> {
-        let page_count = pages_required_for!(Size4KiB, info.byte_len as u64);
+        let source_buffer = unsafe {
+            // Safety: 0 is a valid byte
+            Box::try_new_zeroed_slice(info.byte_len)?.assume_init()
+        };
 
-        let pages = PageAllocator::get_kernel_allocator()
-            .lock()
-            .allocate_guarded_pages(page_count, true, true)?;
-
-        let pages = Unmapped(pages);
-        let mapped_pages = pages.alloc_and_map()?;
-        let start = mapped_pages.0.start_addr();
-
-        let source = FramebufferSource::Owned(mapped_pages);
+        let buffer = NonNull::from(source_buffer.as_ref());
+        let source = FramebufferSource::Owned(source_buffer);
 
         Ok(Framebuffer {
-            start,
-            source,
+            buffer,
+            _source: source,
             info,
         })
     }
@@ -90,10 +63,10 @@ impl Framebuffer {
     ///
     /// `vaddr` must be a valid memory location with a lifetime of at least the result of
     /// this function, that cannot be accessed in any other way.
-    pub unsafe fn new_at_virt_addr(vaddr: VirtAddr, info: FrameBufferInfo) -> Self {
+    pub unsafe fn new_hardware(buffer: NonNull<[u8]>, info: FrameBufferInfo) -> Self {
         Framebuffer {
-            start: vaddr,
-            source: FramebufferSource::HardwareBuffer,
+            buffer,
+            _source: FramebufferSource::HardwareBuffer,
             info,
         }
     }
@@ -101,35 +74,20 @@ impl Framebuffer {
     /// Gives read access to the buffer
     pub fn buffer(&self) -> &[u8] {
         // Safety: buffer_start + byte_len is memory owned by this framebuffer
-        unsafe { slice::from_raw_parts(self.start.as_ptr(), self.info.byte_len) }
+        unsafe { self.buffer.as_ref() }
     }
 
     /// Gives write access to the buffer
     pub fn buffer_mut(&mut self) -> &mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.start.as_mut_ptr(), self.info.byte_len) }
+        unsafe { self.buffer.as_mut() }
     }
 }
 
 impl From<BootFrameBuffer> for Framebuffer {
     fn from(value: BootFrameBuffer) -> Self {
-        // TODO use VirtAddr::from_slice once that is available
-        let start = VirtAddr::new(value.buffer() as *const [u8] as *const u8 as u64);
         // Safety: start points to valid FB memory,
         // since we got it from the bootloader framebuffer
-        unsafe { Self::new_at_virt_addr(start, value.info()) }
-    }
-}
-
-impl Drop for Framebuffer {
-    fn drop(&mut self) {
-        if let Some(pages) = self.source.drop() {
-            unsafe {
-                // Safety: after drop, there are no ways to access the fb memory
-                pages
-                    .unmap_and_free()
-                    .expect("failed to deallco framebuffer");
-            }
-        }
+        unsafe { Self::new_hardware(value.buffer().into(), value.info()) }
     }
 }
 
@@ -234,22 +192,25 @@ fn set_pixel_at_pos(buffer: &mut [u8], index: usize, color: Color, pixel_format:
 
 /// module containing startup/panic recovery functionality for the framebuffer
 pub mod startup {
+    use core::ptr::NonNull;
+
     use bootloader_api::info::{FrameBuffer, FrameBufferInfo, Optional};
-    use x86_64::VirtAddr;
 
-    use crate::boot_info;
+    use crate::kernel_info::KernelInfo;
 
-    /// The start addr of the hardware framebuffer. Used during panic to recreate the fb
-    pub static mut HARDWARE_FRAMEBUFFER_START_INFO: Option<(VirtAddr, FrameBufferInfo)> = None;
+    /// The buffer and info of the hardware framebuffer. Used during panic to recreate the fb
+    pub static mut HARDWARE_FRAMEBUFFER_START_INFO: Option<(NonNull<[u8]>, FrameBufferInfo)> = None;
 
     /// Extracts the frambuffer from the boot info
     ///
     /// # Safety
     ///
-    /// this is racy and must only be called while only a single execution has access
-    pub unsafe fn take_boot_framebuffer() -> Option<FrameBuffer> {
-        let boot_info = unsafe { boot_info() };
-        let fb = core::mem::replace(&mut boot_info.framebuffer, Optional::None);
+    /// Must only be called on bsp during startup
+    pub fn take_boot_framebuffer() -> Option<FrameBuffer> {
+        let fb = core::mem::replace(
+            &mut KernelInfo::get_mut_for_bsp().boot_info.framebuffer,
+            Optional::None,
+        );
         fb.into_option()
     }
 }
