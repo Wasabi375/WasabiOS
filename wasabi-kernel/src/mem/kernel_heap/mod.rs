@@ -27,7 +27,7 @@ use core::{
 };
 use linked_list_allocator::Heap as LinkedHeap;
 use shared::{sync::lockcell::LockCellInternal, KiB};
-use x86_64::structures::paging::{Mapper, PageSize, PageTableFlags, Size4KiB};
+use x86_64::structures::paging::{PageSize, PageTableFlags, Size4KiB};
 
 /// the size of the kernel heap in bytes
 pub const KERNEL_HEAP_SIZE: usize =
@@ -50,10 +50,6 @@ static GLOBAL_ALLOCATOR: KernelHeapGlobalAllocator = KernelHeapGlobalAllocator;
 /// true if the kernel heap is initiaized.
 static KERNEL_HEAP_INIT: AtomicBool = AtomicBool::new(false);
 
-// TODO I set the wrong parent table flags in map calls
-//      I currently use `map_to` which sets `USER_ACCESSIBLE` which is not actually true
-//      for kernel pages
-
 /// initializes the kernel heap
 pub fn init() {
     info!(
@@ -75,7 +71,7 @@ pub fn init() {
 
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         trace!("frame alloc lock aquired");
-        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
 
         for page in pages.iter() {
             let frame = frame_allocator
@@ -83,7 +79,7 @@ pub fn init() {
                 .expect("Out of memory setting up kernel heap");
             unsafe {
                 // Safety: we are mapping new unused pages to new unused phys frames
-                match page_table.map_to(page, frame, flags, frame_allocator.deref_mut()) {
+                match page_table.map_kernel(page, frame, flags, frame_allocator.deref_mut()) {
                     Ok(flusher) => flusher.flush(),
                     Err(e) => panic!("Failed to map page {page:?} to frame {frame:?}: {e:?}"),
                 }

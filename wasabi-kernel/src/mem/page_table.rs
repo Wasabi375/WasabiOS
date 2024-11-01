@@ -466,7 +466,7 @@ mod test {
         TestUnwrapExt,
     };
     use x86_64::structures::paging::{
-        mapper::{MappedFrame, Mapper, TranslateResult, UnmappedFrame},
+        mapper::{MappedFrame, TranslateResult, UnmappedFrame},
         Translate,
     };
 
@@ -522,7 +522,7 @@ mod test {
             .tunwrap()?;
         let frame_alloc: &mut FrameAllocator = &mut FrameAllocator::get_for_kernel().lock();
         let mut page_table = PageTable::get_for_kernel().lock();
-        unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
+        unsafe { page_table.map_kernel(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
             .map(|flusher| flusher.flush())
             .map_err_debug_display()
             .tunwrap()?;
