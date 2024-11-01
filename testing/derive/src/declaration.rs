@@ -53,6 +53,7 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
     let allow_heap_leak = args.allow_heap_leak;
     let allow_page_leak = args.allow_page_leak;
     let allow_frame_leak = args.allow_frame_leak;
+    let allow_mapping_leak = args.allow_mapping_leak;
 
     quote! {
         #test_fn
@@ -70,6 +71,7 @@ pub fn expand(args: Args, test_fn: ItemFn) -> TokenStream {
             allow_heap_leak: #allow_heap_leak,
             allow_frame_leak: #allow_frame_leak,
             allow_page_leak: #allow_page_leak,
+            allow_mapping_leak: #allow_mapping_leak,
         };
     }
 }

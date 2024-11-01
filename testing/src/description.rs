@@ -97,6 +97,8 @@ pub struct KernelTestDescription {
     pub allow_page_leak: bool,
     /// If set, this test will not fail if a frame leak is detected
     pub allow_frame_leak: bool,
+    /// If set, this test will not fail if a page table mapping leak is detected
+    pub allow_mapping_leak: bool,
 }
 
 /// The distributed slice, collecting all kernel testss marked with `#[kernel_test]`

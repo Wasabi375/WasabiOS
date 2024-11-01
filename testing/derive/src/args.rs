@@ -14,6 +14,7 @@ pub struct Args {
     pub allow_frame_leak: bool,
     pub allow_page_leak: bool,
     pub allow_heap_leak: bool,
+    pub allow_mapping_leak: bool,
 }
 
 impl Parse for Args {
@@ -26,6 +27,7 @@ impl Parse for Args {
         let mut allow_frame_leak = false;
         let mut allow_page_leak = false;
         let mut allow_heap_leak = false;
+        let mut allow_mapping_leak = false;
 
         while !input.is_empty() {
             let lookahead = input.lookahead1();
@@ -103,6 +105,16 @@ impl Parse for Args {
                             ));
                         }
                     }
+                    "allow_mapping_leak" => {
+                        if !allow_mapping_leak {
+                            allow_mapping_leak = true;
+                        } else {
+                            return Err(Error::new_spanned(
+                                ident,
+                                "\"allow_mapping_leak\" can only be set once",
+                            ));
+                        }
+                    }
                     _ => {
                         return Err(Error::new_spanned(
                             ident,
@@ -138,6 +150,7 @@ impl Parse for Args {
             allow_frame_leak,
             allow_page_leak,
             allow_heap_leak,
+            allow_mapping_leak,
         })
     }
 }
