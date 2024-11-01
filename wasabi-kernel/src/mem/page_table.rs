@@ -8,10 +8,13 @@ use log::{debug, error, info, log, trace, warn};
 use super::frame_allocator::FrameAllocator;
 use crate::{kernel_info::KernelInfo, prelude::UnwrapTicketLock};
 
+#[cfg(feature = "mem-stats")]
+use super::stats::PageTableStats;
+
 use thiserror::Error;
 use x86_64::{
     structures::paging::{
-        mapper::{MapToError, MapperFlush, UnmapError},
+        mapper::{FlagUpdateError, MapToError, MapperFlush, UnmapError, UnmappedFrame},
         Mapper, Page, PageSize, PageTable as X86PageTable, PageTableFlags, PageTableIndex,
         PhysFrame, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB,
     },
@@ -21,6 +24,9 @@ use x86_64::{
 /// A Page Table
 pub struct PageTable<T> {
     inner: T,
+
+    #[cfg(feature = "mem-stats")]
+    stats: PageTableStats,
 }
 
 /// the kernel [RecursivePageTable]
@@ -37,8 +43,18 @@ impl PageTable<RecursivePageTable<'static>> {
 
 impl<T> PageTable<T> {
     /// Creates a new page table
-    pub const fn new(inner: T) -> Self {
-        PageTable { inner }
+    pub fn new(inner: T) -> Self {
+        PageTable {
+            inner,
+            #[cfg(feature = "mem-stats")]
+            stats: Default::default(),
+        }
+    }
+
+    /// get the [PageTableStats] for the page table
+    #[cfg(feature = "mem-stats")]
+    pub fn stats(&self) -> &PageTableStats {
+        &self.stats
     }
 
     /// Returns the underlying [Mapper] implementation
@@ -67,16 +83,19 @@ impl<T> PageTable<T> {
         PageTableMapError: From<MapToError<S>>,
     {
         unsafe {
-            self.inner
-                .map_to_with_table_flags(
-                    page,
-                    frame,
-                    flags,
-                    PageTableFlags::KERNEL_TABLE_FLAGS,
-                    frame_allocator,
-                )
-                .map_err(|e| e.into())
+            self.inner.map_to_with_table_flags(
+                page,
+                frame,
+                flags,
+                PageTableFlags::KERNEL_TABLE_FLAGS,
+                frame_allocator,
+            )
         }
+        .map_err(|e| e.into())
+        .inspect(|_| {
+            #[cfg(feature = "mem-stats")]
+            self.stats.register_map::<S>(flags)
+        })
     }
 
     /// Remoev the mapping for the page
@@ -90,7 +109,71 @@ impl<T> PageTable<T> {
         S: PageSize,
         T: Mapper<S>,
     {
-        self.inner.unmap(page).map_err(|e| e.into())
+        #[allow(unused)]
+        self.inner
+            .unmap(page)
+            .map_err(|e| e.into())
+            .inspect(|(_, flags, _)| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_unmap::<S>(*flags)
+            })
+    }
+
+    /// Update the flags of a already mapped page.
+    ///
+    /// To get the current flags of a mapping see [translate]
+    ///
+    /// # Safety:
+    ///
+    /// The caller must ensure that by creating this page-frame mapping all
+    /// of rusts safety guarantees are fullfilled
+    ///
+    /// [translate]: x86_64::structures::paging::Translate::translate
+    pub unsafe fn update_flags<S>(
+        &mut self,
+        page: Page<S>,
+        flags: PageTableFlags,
+    ) -> Result<MapperFlush<S>, PageTableMapError>
+    where
+        S: PageSize,
+        T: Mapper<S>,
+    {
+        unsafe { self.inner.update_flags(page, flags) }
+            .map_err(|e| e.into())
+            .inspect(|_| {
+                #[cfg(feature = "mem-stats")]
+                self.stats.register_remap::<S>(flags)
+            })
+    }
+    /// Remoev the mapping for the page.
+    ///
+    /// unlike [Self::unmap] this does not require the page to be mapped as
+    /// [PageTableFlags::PRESENT]
+    ///
+    /// See: [Mapper::clear]
+    pub fn clear<S>(&mut self, page: Page<S>) -> Result<UnmappedFrame<S>, PageTableMapError>
+    where
+        S: PageSize,
+        T: Mapper<S>,
+    {
+        #[allow(unused)]
+        self.inner
+            .clear(page)
+            .map_err(|e| e.into())
+            .inspect(|frame| {
+                #[cfg(feature = "mem-stats")]
+                match frame {
+                    x86_64::structures::paging::mapper::UnmappedFrame::Present {
+                        frame: _,
+                        flags,
+                        flush: _,
+                    } => self.stats.register_unmap::<S>(*flags),
+                    x86_64::structures::paging::mapper::UnmappedFrame::NotPresent { entry } => {
+                        let flags = entry.flags();
+                        self.stats.register_unmap::<S>(flags);
+                    }
+                }
+            })
     }
 }
 
@@ -142,9 +225,30 @@ pub trait PageTableKernelFlags {
         flags = flags.union(PageTableFlags::WRITABLE);
         flags
     };
+
+    /// Get the name of a PageTableFlags.
+    ///
+    /// This will return "unknown" if there are multiple flags set
+    fn get_name(&self) -> &'static str;
 }
 
-impl PageTableKernelFlags for PageTableFlags {}
+impl PageTableKernelFlags for PageTableFlags {
+    fn get_name(&self) -> &'static str {
+        let name = PageTableFlags::all()
+            .iter_names()
+            .find(|(_, f)| f == self)
+            .map(|(n, _)| n)
+            .take()
+            .unwrap_or("unknown");
+        if name.starts_with("BIT_") {
+            return match *self {
+                Self::GUARD => "GUARD",
+                _ => name,
+            };
+        }
+        return name;
+    }
+}
 
 #[derive(Error, Debug, PartialEq, Eq, Clone)]
 #[allow(missing_docs)]
@@ -163,6 +267,19 @@ pub enum PageTableMapError {
     InvalidFrameAddress(PhysAddr),
     #[error("unmapped page cannot be unmapped again")]
     PageNotMapped,
+    #[error("failed to update flags: Page not mapped")]
+    FlagUpdateNotMapped,
+    #[error("failed to update flags: Huge page")]
+    FlagUpdateHuge,
+}
+
+impl From<FlagUpdateError> for PageTableMapError {
+    fn from(value: FlagUpdateError) -> Self {
+        match value {
+            FlagUpdateError::PageNotMapped => Self::FlagUpdateNotMapped,
+            FlagUpdateError::ParentEntryHugePage => Self::FlagUpdateHuge,
+        }
+    }
 }
 
 impl From<UnmapError> for PageTableMapError {
@@ -367,7 +484,7 @@ mod test {
         let frame_alloc: &mut FrameAllocator = &mut FrameAllocator::get_for_kernel().lock();
         let mut page_table = PageTable::get_for_kernel().lock();
 
-        unsafe { page_table.map_to(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
+        unsafe { page_table.map_kernel(page, fake_frame, PageTableFlags::BIT_9, frame_alloc) }
             .map(|flusher| flusher.flush())
             .map_err_debug_display()
             .tunwrap()?;

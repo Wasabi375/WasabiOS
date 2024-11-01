@@ -23,6 +23,7 @@ use x86_64::structures::idt::InterruptStackFrame;
 #[cfg(feature = "mem-stats")]
 use wasabi_kernel::mem::{
     frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
+    page_table::PageTable,
 };
 
 fn timer_int_handler(_vec: InterruptVector, _isf: InterruptStackFrame) -> Result<(), ()> {
@@ -61,6 +62,7 @@ fn kernel_main() -> ! {
             .lock()
             .stats()
             .log(level, Some("frames"));
+        PageTable::get_for_kernel().lock().stats().log(level);
     }
 
     info!("OS Done!\tcpu::halt()");

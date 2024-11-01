@@ -4,7 +4,9 @@ use alloc::boxed::Box;
 use histogram::{Config, Histogram};
 use log::{trace, warn};
 use shared::math::IntoU64;
-use x86_64::structures::paging::{PageSize, Size1GiB, Size2MiB, Size4KiB};
+use x86_64::structures::paging::{PageSize, PageTableFlags, Size1GiB, Size2MiB, Size4KiB};
+
+use crate::mem::page_table::PageTableKernelFlags;
 
 /// Statistics about the heap usage
 #[derive(Clone)]
@@ -201,8 +203,8 @@ pub struct PageAllocStatSnapshot {
 
 impl PageFrameAllocStats {
     /// Register an allocation
-    pub fn register_alloc<P: PageSize>(&mut self, count: u64) {
-        match P::SIZE {
+    pub fn register_alloc<S: PageSize>(&mut self, count: u64) {
+        match S::SIZE {
             Size4KiB::SIZE => {
                 self.alloc_4k_count += count;
             }
@@ -217,8 +219,8 @@ impl PageFrameAllocStats {
     }
 
     /// Register a free
-    pub fn register_free<P: PageSize>(&mut self, count: u64) {
-        match P::SIZE {
+    pub fn register_free<S: PageSize>(&mut self, count: u64) {
+        match S::SIZE {
             Size4KiB::SIZE => {
                 self.free_4k_count += count;
             }
@@ -249,4 +251,143 @@ impl PageFrameAllocStats {
             log::log!(level, "{:#?}", self);
         }
     }
+}
+
+/// Statistics about mappings within a page table
+#[derive(Clone, Default, Debug)]
+pub struct PageTableStats {
+    /// the total number of 4k pages mapped
+    pub total_mapped_4k: u64,
+    /// the total number of 2m pages mapped
+    pub total_mapped_2m: u64,
+    /// the total number of 1g pages mapped
+    pub total_mapped_1g: u64,
+
+    /// the total number of 4k pages unmapped
+    pub total_unmapped_4k: u64,
+    /// the total number of 2m pages unmapped
+    pub total_unmapped_2m: u64,
+    /// the total number of 1g pages unmapped
+    pub total_unmapped_1g: u64,
+
+    /// the total number of 4k pages remapped
+    pub total_remapped_4k: u64,
+    /// the total number of 2m pages remapped
+    pub total_remapped_2m: u64,
+    /// the total number of 1g pages remapped
+    pub total_remapped_1g: u64,
+
+    /// the total number of pages mapped without the present flag
+    pub total_mapped_without_present: u64,
+
+    /// total count of pages mapped by [PageTableFlags] based on
+    /// the iter order: `PageTableFlags::all().iter_names()`
+    pub total_mapping_by_flag: [u64; 25],
+}
+
+impl PageTableStats {
+    /// register the flags used in a map or remap
+    fn register_flags(&mut self, flags: PageTableFlags) {
+        if !flags.contains(PageTableFlags::PRESENT) {
+            self.total_mapped_without_present += 1;
+        }
+
+        for (i, (_, flag)) in PageTableFlags::all().iter_names().enumerate() {
+            if flags.contains(flag) {
+                self.total_mapping_by_flag[i] += 1;
+            }
+        }
+    }
+
+    /// register that a page was mapped
+    pub fn register_map<S: PageSize>(&mut self, flags: PageTableFlags) {
+        match S::SIZE {
+            Size4KiB::SIZE => {
+                self.total_mapped_4k += 1;
+            }
+            Size2MiB::SIZE => {
+                self.total_mapped_2m += 1;
+            }
+            Size1GiB::SIZE => {
+                self.total_mapped_1g += 1;
+            }
+            _ => unreachable!("Page::SIZE not supported"),
+        }
+        self.register_flags(flags)
+    }
+
+    /// register that a page was remapped
+    pub fn register_remap<S: PageSize>(&mut self, flags: PageTableFlags) {
+        match S::SIZE {
+            Size4KiB::SIZE => {
+                self.total_remapped_4k += 1;
+            }
+            Size2MiB::SIZE => {
+                self.total_remapped_2m += 1;
+            }
+            Size1GiB::SIZE => {
+                self.total_remapped_1g += 1;
+            }
+            _ => unreachable!("Page::SIZE not supported"),
+        }
+        self.register_flags(flags)
+    }
+
+    /// register that a page was unmapped
+    pub fn register_unmap<S: PageSize>(&mut self, _flags: PageTableFlags) {
+        match S::SIZE {
+            Size4KiB::SIZE => {
+                self.total_unmapped_4k += 1;
+            }
+            Size2MiB::SIZE => {
+                self.total_unmapped_2m += 1;
+            }
+            Size1GiB::SIZE => {
+                self.total_unmapped_1g += 1;
+            }
+            _ => unreachable!("Page::SIZE not supported"),
+        }
+    }
+
+    /// Creates a snapshot from the current stats
+    pub fn snapshot(&self) -> PagetTableStatSnapshot {
+        PagetTableStatSnapshot {
+            count_4k: self.total_mapped_4k - self.total_unmapped_4k,
+            count_2m: self.total_mapped_2m - self.total_unmapped_2m,
+            count_1g: self.total_mapped_1g - self.total_unmapped_1g,
+        }
+    }
+
+    /// Log the stats
+    pub fn log(&self, level: log::Level) {
+        log::log!(level, "PageTableStats:\n\tmapped: {} 4k, {} 2m, {} 1g\n\tunmapped: {} 4k, {} 2m, {} 1g\n\tremapped: {} 4k, {} 2m, {} 1g\n\tnot present: {}",
+            self.total_mapped_4k, self.total_mapped_2m, self.total_mapped_1g,
+            self.total_unmapped_4k, self.total_unmapped_2m, self.total_unmapped_1g,
+            self.total_remapped_4k, self.total_remapped_2m, self.total_remapped_1g,
+            self.total_mapped_without_present);
+        for (i, (name, flag)) in PageTableFlags::all().iter_names().enumerate() {
+            let count = self.total_mapping_by_flag[i];
+            if count != 0 {
+                let name = if name.starts_with("BIT_") {
+                    flag.get_name()
+                } else {
+                    name
+                };
+                log::log!(level, "{} count: {}", name, count);
+            }
+        }
+    }
+}
+
+/// Statistics about mappings in a page table that is comparable
+///
+/// This only tracks current usage and does not include total counts
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PagetTableStatSnapshot {
+    /// total number of 4k pages currently mapped
+    pub count_4k: u64,
+    /// total number of 2m pages currently mapped
+    pub count_2m: u64,
+    /// total number of 1g pages currently mapped
+    pub count_1g: u64,
 }
