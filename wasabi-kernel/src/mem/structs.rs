@@ -76,7 +76,11 @@ where
     PageTableMapError: From<MapToError<Size4KiB>>,
 {
     /// allocates [PhysFrames] and maps `self` to the allocated frames.
-    pub fn map(self) -> Result<GuardedPages<S>, MemError> {
+    ///
+    /// # Safety
+    ///
+    /// caller must guaranteed that the pages are not yet mapped
+    pub unsafe fn map(self) -> Result<GuardedPages<S>, MemError> {
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_table = PageTable::get_for_kernel().lock();
 
@@ -264,7 +268,7 @@ mod test {
             .allocate_guarded_pages::<Size4KiB>(1, true, true)
             .texpect("failed to allocate guarded page")?;
 
-        let mapped = pages.map().texpect("failed to map guarded page")?;
+        let mapped = unsafe { pages.map() }.texpect("failed to map guarded page")?;
 
         {
             // lock page table for asserts.

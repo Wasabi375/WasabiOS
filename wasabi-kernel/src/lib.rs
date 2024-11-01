@@ -89,10 +89,12 @@ pub fn in_kernel_main() -> bool {
 pub unsafe fn enter_kernel_main() -> ! {
     KERNEL_MAIN_BARRIER.fetch_add(1, Ordering::SeqCst);
     let spin_start = timestamp_now_tsc();
+    let mut warn_send = false;
     while KERNEL_MAIN_BARRIER.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
         spin_loop();
-        if time_since_tsc(spin_start) > Duration::new_seconds(5) {
+        if time_since_tsc(spin_start) > Duration::new_seconds(5) && !warn_send {
             warn!("waiting for all cores to reach kernel_main");
+            warn_send = true;
         }
         if time_since_tsc(spin_start) > Duration::new_seconds(30) {
             panic!("cancel waiting fo rall cores to reach kernel_main");

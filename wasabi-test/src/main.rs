@@ -117,6 +117,7 @@ use wasabi_kernel::{
     core_local::{get_ready_core_count, CoreInterruptState},
     mem::{
         frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
+        page_table::PageTable,
     },
     serial::SERIAL2,
     testing::{panic::use_custom_panic_handler, qemu},
@@ -557,6 +558,8 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
     let page_usage_before = PageAllocator::get_for_kernel().lock().stats().snapshot();
     #[cfg(feature = "mem-stats")]
     let frame_usage_before = FrameAllocator::get_for_kernel().lock().stats().snapshot();
+    #[cfg(feature = "mem-stats")]
+    let mappings_before = PageTable::get_for_kernel().lock().stats().snapshot();
 
     let mut success = if panicing {
         trace!("run panic-expected test");
@@ -625,6 +628,20 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
                 warn!("Memory leak detected in frames! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
             } else {
                 error!("Memory leak detected in frames! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                mem_failure = true;
+            }
+        }
+
+        let mappings_after = PageTable::get_for_kernel().lock().stats().snapshot();
+        if mappings_before != mappings_after {
+            let leaked_4k = mappings_after.count_4k as i128 - mappings_before.count_4k as i128;
+            let leaked_2m = mappings_after.count_2m as i128 - mappings_before.count_2m as i128;
+            let leaked_1g = mappings_after.count_1g as i128 - mappings_before.count_1g as i128;
+
+            if test.allow_mapping_leak {
+                warn!("Memory leak detected in page table mappings! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+            } else {
+                error!("Memory leak detected in page table mappings! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
                 mem_failure = true;
             }
         }

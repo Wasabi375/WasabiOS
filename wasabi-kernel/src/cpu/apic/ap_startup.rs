@@ -278,7 +278,10 @@ impl ApStack {
             .lock()
             .allocate_guarded_pages(DEFAULT_STACK_PAGE_COUNT, true, true)
             .map_err(ApStackError::from)?;
-        let pages = pages.map().map_err(ApStackError::from)?;
+        let pages = unsafe {
+            // Safety: pages was just allocated
+            pages.map().map_err(ApStackError::from)?
+        };
 
         assert_eq!(pages.size(), DEFAULT_STACK_SIZE);
 
@@ -587,14 +590,14 @@ impl<S: SipiPayloadState> Drop for SipiPayload<S> {
     fn drop(&mut self) {
         // TODO: freeing this can lead to tripple fault if AP starts after
         //  the drop. Do I care? I mean they should all have started at this time.
+        let mut page_allocator = PageAllocator::get_for_kernel().lock();
         let mut table = PageTable::get_for_kernel().lock();
         let (_frame, _flags, flush) = table
             .unmap(self.page)
             .expect("Failed to unmap ap trampoline during drop");
         flush.flush();
         unsafe {
-            PageAllocator::get_for_kernel()
-                .lock()
+            page_allocator
                 // Safety: All aps are started and therefor won't access this page anymore
                 .free_page(self.page);
         }

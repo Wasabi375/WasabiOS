@@ -127,6 +127,9 @@ impl GDTInfo {
         let pages = PageAllocator::get_for_kernel()
             .lock()
             .allocate_guarded_pages(page_count, true, false)?;
-        pages.map()
+        unsafe {
+            // Safety: pages was just allocated
+            pages.map()
+        }
     }
 }

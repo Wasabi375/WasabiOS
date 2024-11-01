@@ -1534,7 +1534,7 @@ mod test {
         Ok(())
     }
 
-    #[kernel_test(allow_page_leak, allow_frame_leak)]
+    #[kernel_test(allow_page_leak, allow_frame_leak, allow_mapping_leak)]
     pub fn test_nvme_read_data() -> Result<(), KernelTestError> {
         let mut nvme_controller =
             unsafe { create_test_controller() }.texpect("failed to create controller")?;
