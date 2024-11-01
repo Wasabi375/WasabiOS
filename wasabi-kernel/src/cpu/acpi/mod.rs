@@ -10,7 +10,7 @@ use hashbrown::HashMap;
 use shared::sync::lockcell::LockCell;
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Mapper, Page, PageTableFlags, PhysFrame},
+    structures::paging::{Page, PageTableFlags, PhysFrame},
     PhysAddr,
 };
 
@@ -20,11 +20,8 @@ use log::{debug, error, info, trace, warn};
 use crate::{
     cpu::acpi::structs::{Header, RsdpV1, XSDT},
     mem::{
-        frame_allocator::FrameAllocator,
-        page_allocator::PageAllocator,
-        page_table::{PageTable, PageTableKernelFlags},
-        ptr::UntypedPtr,
-        MemError,
+        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
+        ptr::UntypedPtr, MemError,
     },
     utils::log_hex_dump,
 };
@@ -67,13 +64,7 @@ impl ACPI {
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
             // Safety: we are the only code mapping this frame
             page_table
-                .map_to_with_table_flags(
-                    page,
-                    frame,
-                    flags,
-                    PageTableFlags::KERNEL_TABLE_FLAGS,
-                    frame_allocator.as_mut(),
-                )
+                .map_kernel(page, frame, flags, frame_allocator.as_mut())
                 .map_err(MemError::from)?
                 .flush();
         }
@@ -174,11 +165,10 @@ impl ACPI {
                 // Safety: we are the only code mapping this frame
                 PageTable::get_for_kernel()
                     .lock()
-                    .map_to_with_table_flags(
+                    .map_kernel(
                         page,
                         frame,
                         flags,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
                         FrameAllocator::get_for_kernel().lock().as_mut(),
                     )?
                     .flush();

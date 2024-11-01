@@ -6,11 +6,8 @@ use crate::{
     cpu::{cpuid::cpuid, interrupts::register_interrupt_handler},
     locals,
     mem::{
-        frame_allocator::FrameAllocator,
-        page_allocator::PageAllocator,
-        page_table::{PageTable, PageTableKernelFlags},
-        ptr::UntypedPtr,
-        MemError,
+        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
+        ptr::UntypedPtr, MemError,
     },
     prelude::TicketLock,
     todo_warn,
@@ -27,7 +24,7 @@ use x86_64::{
     registers::model_specific::Msr,
     structures::{
         idt::InterruptStackFrame,
-        paging::{Mapper, PageTableFlags, PhysFrame, Size4KiB},
+        paging::{PageTableFlags, PhysFrame, Size4KiB},
     },
     PhysAddr,
 };
@@ -160,11 +157,10 @@ impl Apic {
             // Safety: new page with apic frame (only used here) and is therefor safe
             PageTable::get_for_kernel()
                 .lock()
-                .map_to_with_table_flags(
+                .map_kernel(
                     page,
                     phys_frame,
                     apic_table_flags,
-                    PageTableFlags::KERNEL_TABLE_FLAGS,
                     FrameAllocator::get_for_kernel().lock().as_mut(),
                 )
                 .map_err(MemError::from)?

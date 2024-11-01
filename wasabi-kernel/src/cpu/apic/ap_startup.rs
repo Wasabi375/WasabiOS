@@ -31,7 +31,7 @@ use crate::{
     mem::{
         frame_allocator::{FrameAllocator, PhysAllocator},
         page_allocator::PageAllocator,
-        page_table::{PageTable, PageTableKernelFlags},
+        page_table::PageTable,
         structs::GuardedPages,
         MemError,
     },
@@ -432,13 +432,7 @@ impl SipiPayload<Ready> {
             //  both frame and page were reserved for this
             let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
             page_table
-                .map_to_with_table_flags(
-                    page,
-                    frame,
-                    flags,
-                    PageTableFlags::KERNEL_TABLE_FLAGS,
-                    frame_allocator.as_mut(),
-                )
+                .map_kernel(page, frame, flags, frame_allocator.as_mut())
                 .expect("failed to identity map ap trampoline")
                 .flush();
         }
@@ -588,8 +582,6 @@ impl<S: SipiPayloadState> SipiPayload<S> {
         }
     }
 }
-
-use x86_64::structures::paging::mapper::Mapper;
 
 impl<S: SipiPayloadState> Drop for SipiPayload<S> {
     fn drop(&mut self) {

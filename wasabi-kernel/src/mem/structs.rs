@@ -72,7 +72,8 @@ where
     S: PageSize,
     for<'a> RecursivePageTable<'a>: Mapper<Size4KiB>,
     for<'a> RecursivePageTable<'a>: Mapper<S>,
-    MemError: From<MapToError<S>>,
+    PageTableMapError: From<MapToError<S>>,
+    PageTableMapError: From<MapToError<Size4KiB>>,
 {
     /// allocates [PhysFrames] and maps `self` to the allocated frames.
     pub fn map(self) -> Result<GuardedPages<S>, MemError> {
@@ -85,13 +86,7 @@ where
             unsafe {
                 // page is unmapped
                 page_table
-                    .map_to_with_table_flags(
-                        page,
-                        frame,
-                        flags,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
-                        frame_allocator.as_mut(),
-                    )?
+                    .map_kernel(page, frame, flags, frame_allocator.as_mut())?
                     .flush();
             }
         }
@@ -107,11 +102,10 @@ where
             if let Some(head_guard) = self.head_guard {
                 // head_guard is unmapped and we are mapping to the guard_frame
                 page_table
-                    .map_to_with_table_flags(
+                    .map_kernel::<Size4KiB>(
                         head_guard,
                         guard_frame,
                         PageTableFlags::GUARD,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
                         frame_allocator.as_mut(),
                     )?
                     .flush();
@@ -119,11 +113,10 @@ where
             if let Some(tail_guard) = self.tail_guard {
                 // tail_guard is unmapped and we are mapping to the guard_frame
                 page_table
-                    .map_to_with_table_flags(
+                    .map_kernel::<Size4KiB>(
                         tail_guard,
                         guard_frame,
                         PageTableFlags::GUARD,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
                         frame_allocator.as_mut(),
                     )?
                     .flush();

@@ -474,11 +474,10 @@ mod test {
             let frame = frame_allocator.alloc_4k().tunwrap()?;
             unsafe {
                 page_table
-                    .map_to_with_table_flags(
+                    .map_kernel(
                         page,
                         frame,
                         PageTableFlags::PRESENT,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
                         frame_allocator.as_mut(),
                     )
                     .map_err_debug_display()
@@ -525,13 +524,7 @@ mod test {
             let frame = frame_alloc.alloc().tunwrap()?;
 
             unsafe {
-                page_table.map_to_with_table_flags(
-                    page,
-                    frame,
-                    PageTableFlags::PRESENT,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                    frame_alloc.as_mut(),
-                )
+                page_table.map_kernel(page, frame, PageTableFlags::PRESENT, frame_alloc.as_mut())
             }
             .map_err_debug_display()
             .tunwrap()?

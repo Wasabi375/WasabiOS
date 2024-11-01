@@ -12,13 +12,18 @@ pub mod io_commands;
 pub mod properties;
 pub mod queue;
 
+pub use generic_command::{
+    CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
+    GenericCommandStatus,
+};
+
 use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
     locals,
     mem::{
         frame_allocator::FrameAllocator,
         page_allocator::PageAllocator,
-        page_table::{PageTable, PageTableKernelFlags, PageTableMapError},
+        page_table::{PageTable, PageTableMapError},
         ptr::UntypedPtr,
         MemError,
     },
@@ -37,26 +42,23 @@ use crate::{
     utils::log_hex_dump,
 };
 use admin_commands::{CompletionQueueCreationStatus, IdentifyNamespaceData};
+use generic_command::{COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
+use io_commands::LBA;
+use properties::{AdminQueueAttributes, Capabilities, ControllerConfiguration, ControllerStatus};
+use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
+
 use alloc::vec::Vec;
 use bit_field::BitField;
 use capabilities::{ControllerCapabilities, Fuses, OptionalAdminCommands};
 use core::{cmp::min, hint::spin_loop, sync::atomic::Ordering};
 use derive_where::derive_where;
-pub use generic_command::{
-    CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
-    GenericCommandStatus,
-};
-use generic_command::{COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
-use io_commands::LBA;
-use properties::{AdminQueueAttributes, Capabilities, ControllerConfiguration, ControllerStatus};
-use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
 use shared::{
     alloc_ext::{Strong, Weak},
     sync::lockcell::LockCell,
 };
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
+    structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
     PhysAddr,
 };
 
@@ -184,11 +186,10 @@ impl NVMEController {
         unsafe {
             // Safety: only called once for frame, assuming function safety
             page_table
-                .map_to_with_table_flags(
+                .map_kernel(
                     properties_page,
                     properties_frame,
                     no_cache_page_flags,
-                    PageTableFlags::KERNEL_TABLE_FLAGS,
                     frame_allocator.as_mut(),
                 )
                 .map_err(MemError::from)?
@@ -216,11 +217,10 @@ impl NVMEController {
         unsafe {
             // Safety: only called once for frame, assuming function safety
             page_table
-                .map_to_with_table_flags(
+                .map_kernel(
                     doorbell_page,
                     doorbell_frame,
                     no_cache_page_flags,
-                    PageTableFlags::KERNEL_TABLE_FLAGS,
                     frame_allocator.as_mut(),
                 )
                 .map_err(MemError::from)?
@@ -368,11 +368,10 @@ impl NVMEController {
             unsafe {
                 // Safety: we just allocated frame and page
                 page_table
-                    .map_to_with_table_flags(
+                    .map_kernel(
                         page,
                         frame,
                         identy_result_pt_flags,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
                         frame_allocator.as_mut(),
                     )
                     .map_err(MemError::from)?
@@ -428,11 +427,10 @@ impl NVMEController {
             unsafe {
                 // Safety: we just allocated frame and page
                 page_table
-                    .map_to_with_table_flags(
+                    .map_kernel(
                         page,
                         frame,
                         identy_result_pt_flags,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
                         frame_allocator.as_mut(),
                     )
                     .map_err(MemError::from)?
@@ -623,11 +621,10 @@ impl NVMEController {
             unsafe {
                 // Safety: we just allocated frame and page
                 page_table
-                    .map_to_with_table_flags(
+                    .map_kernel(
                         page,
                         frame,
                         identy_result_pt_flags,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
                         frame_allocator.as_mut(),
                     )
                     .map_err(MemError::from)?
@@ -1342,13 +1339,7 @@ pub fn experiment_nvme_device() {
             unsafe {
                 let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
                 page_table
-                    .map_to_with_table_flags(
-                        page,
-                        frame,
-                        flags,
-                        PageTableFlags::KERNEL_TABLE_FLAGS,
-                        frame_alloc.as_mut(),
-                    )
+                    .map_kernel(page, frame, flags, frame_alloc.as_mut())
                     .unwrap()
                     .flush();
             }
@@ -1448,13 +1439,11 @@ mod test {
     use testing::{
         kernel_test, t_assert, t_assert_eq, t_assert_matches, KernelTestError, TestUnwrapExt,
     };
-    use x86_64::structures::paging::{Mapper, PageTableFlags, Size4KiB};
+    use x86_64::structures::paging::{PageTableFlags, Size4KiB};
 
     use crate::{
         mem::{
-            frame_allocator::FrameAllocator,
-            page_allocator::PageAllocator,
-            page_table::{PageTable, PageTableKernelFlags},
+            frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
             MemError,
         },
         pages_required_for,
@@ -1582,10 +1571,9 @@ mod test {
             unsafe {
                 let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
                 let kernel_page_table = &mut PageTable::get_for_kernel().lock();
-                let table_flags = PageTableFlags::KERNEL_TABLE_FLAGS;
 
                 kernel_page_table
-                    .map_to_with_table_flags(page, frame, flags, table_flags, frame_alloc.as_mut())
+                    .map_kernel(page, frame, flags, frame_alloc.as_mut())
                     .map_err(MemError::from)
                     .tunwrap()?
                     .flush();

@@ -11,18 +11,13 @@ use shared::{math::WrappingValue, sync::lockcell::LockCell};
 use thiserror::Error;
 use volatile::{access::WriteOnly, Volatile};
 use x86_64::{
-    structures::paging::{
-        Mapper, Page, PageSize, PageTableFlags, PhysFrame, RecursivePageTable, Size4KiB,
-    },
+    structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
     PhysAddr,
 };
 
 use crate::mem::{
-    frame_allocator::FrameAllocator,
-    page_allocator::PageAllocator,
-    page_table::{PageTable, PageTableKernelFlags},
-    ptr::UntypedPtr,
-    MemError,
+    frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
+    ptr::UntypedPtr, MemError,
 };
 
 use super::{
@@ -194,7 +189,7 @@ impl CommandQueue {
     ///     alive.
     /// * Caller ensures that all needed allocations on the [NVMEController] outlive this.
     /// * Caller must also ensure that the queue on the controller is disabled before dropping this.
-    pub(super) unsafe fn allocate(
+    pub(super) unsafe fn allocate<PT>(
         queue_id: QueueIdentifier,
         submission_queue_size: u16,
         completion_queue_size: u16,
@@ -202,8 +197,11 @@ impl CommandQueue {
         queue_doorbell_stride: isize,
         frame_allocator: &mut FrameAllocator<'static>,
         page_allocator: &mut PageAllocator,
-        page_table: &mut RecursivePageTable,
-    ) -> Result<Self, NVMEControllerError> {
+        page_table: &mut PageTable<PT>,
+    ) -> Result<Self, NVMEControllerError>
+    where
+        PT: Mapper<Size4KiB>,
+    {
         if submission_queue_size < 2 {
             return Err(NVMEControllerError::InvalidQueueSize(submission_queue_size));
         }
@@ -249,24 +247,12 @@ impl CommandQueue {
         unsafe {
             // Safety: we just allocated page and frame
             page_table
-                .map_to_with_table_flags(
-                    sub_page,
-                    sub_frame,
-                    queue_pt_flags,
-                    PageTableFlags::KERNEL_TABLE_FLAGS,
-                    frame_allocator,
-                )
+                .map_kernel(sub_page, sub_frame, queue_pt_flags, frame_allocator)
                 .map_err(MemError::from)?
                 .flush();
             // Safety: we just allocated page and frame
             page_table
-                .map_to_with_table_flags(
-                    comp_page,
-                    comp_frame,
-                    queue_pt_flags,
-                    PageTableFlags::KERNEL_TABLE_FLAGS,
-                    frame_allocator,
-                )
+                .map_kernel(comp_page, comp_frame, queue_pt_flags, frame_allocator)
                 .map_err(MemError::from)?
                 .flush();
 
