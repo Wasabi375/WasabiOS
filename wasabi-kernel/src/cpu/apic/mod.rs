@@ -8,7 +8,7 @@ use crate::{
     mem::{
         frame_allocator::FrameAllocator,
         page_allocator::PageAllocator,
-        page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+        page_table::{PageTable, PageTableKernelFlags},
         ptr::UntypedPtr,
         MemError,
     },
@@ -158,7 +158,7 @@ impl Apic {
             .map_err(MemError::from)?;
         unsafe {
             // Safety: new page with apic frame (only used here) and is therefor safe
-            KERNEL_PAGE_TABLE
+            PageTable::get_for_kernel()
                 .lock()
                 .map_to_with_table_flags(
                     page,

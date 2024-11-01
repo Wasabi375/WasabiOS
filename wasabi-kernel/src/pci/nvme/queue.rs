@@ -20,7 +20,7 @@ use x86_64::{
 use crate::mem::{
     frame_allocator::FrameAllocator,
     page_allocator::PageAllocator,
-    page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+    page_table::{PageTable, PageTableKernelFlags},
     ptr::UntypedPtr,
     MemError,
 };
@@ -659,7 +659,7 @@ impl Drop for CommandQueue {
 
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_allocator = PageAllocator::get_for_kernel().lock();
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
 
         let (_, _, flush) = page_table
             .unmap(sub_page)

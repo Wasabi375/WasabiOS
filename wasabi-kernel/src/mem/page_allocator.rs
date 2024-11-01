@@ -435,7 +435,7 @@ mod test {
     use x86_64::structures::paging::{Page, PageTableIndex, RecursivePageTable, Size4KiB};
 
     use crate::mem::{
-        page_table::{RecursivePageTableExt, KERNEL_PAGE_TABLE},
+        page_table::{PageTable, RecursivePageTableExt},
         MemError,
     };
 
@@ -443,7 +443,7 @@ mod test {
 
     #[kernel_test]
     fn test_cannot_alloc_page_table_page() -> Result<(), KernelTestError> {
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
         let recursive_index = page_table.recursive_index();
         drop(page_table);
 

@@ -12,8 +12,8 @@ use super::stats::HeapStats;
 use super::{ptr::UntypedPtr, structs::Pages};
 use crate::{
     mem::{
-        frame_allocator::FrameAllocator, page_allocator::PageAllocator,
-        page_table::KERNEL_PAGE_TABLE, MemError, Result,
+        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
+        MemError, Result,
     },
     prelude::{LockCell, TicketLock, UnwrapTicketLock},
 };
@@ -70,7 +70,7 @@ pub fn init() {
         .expect("Out of pages setting up kernel heap");
 
     {
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
         trace!("page table lock aquired");
 
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();

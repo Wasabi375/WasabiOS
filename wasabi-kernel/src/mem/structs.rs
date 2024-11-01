@@ -7,18 +7,12 @@ use shared::sync::lockcell::LockCell;
 use x86_64::structures::paging::mapper::MapToError;
 use x86_64::structures::paging::{PageTableFlags, PhysFrame, RecursivePageTable};
 use x86_64::{
-    structures::paging::{
-        mapper::{UnmapError, UnmappedFrame},
-        Mapper, Page, PageSize, Size4KiB,
-    },
+    structures::paging::{mapper::UnmappedFrame, Mapper, Page, PageSize, Size4KiB},
     VirtAddr,
 };
 
-use super::{
-    frame_allocator::FrameAllocator,
-    page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
-    MemError,
-};
+use super::page_table::{PageTable, PageTableMapError};
+use super::{frame_allocator::FrameAllocator, page_table::PageTableKernelFlags, MemError};
 
 /// a number of consecutive pages in virtual memory.
 ///
@@ -83,7 +77,7 @@ where
     /// allocates [PhysFrames] and maps `self` to the allocated frames.
     pub fn map(self) -> Result<GuardedPages<S>, MemError> {
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
 
         let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE;
         for page in self.iter() {
@@ -143,9 +137,9 @@ where
     ///
     /// Safety:
     /// The caller must ensure that the pages are no longer used
-    pub unsafe fn unmap(self) -> Result<GuardedPages<S>, UnmapError> {
+    pub unsafe fn unmap(self) -> Result<GuardedPages<S>, PageTableMapError> {
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
 
         trace!("unmap guarded pages");
         for page in self.iter() {
@@ -246,9 +240,7 @@ mod test {
         PageSize, PageTableFlags, Size4KiB, Translate,
     };
 
-    use crate::mem::{
-        page_allocator::PageAllocator, page_table::KERNEL_PAGE_TABLE, ptr::UntypedPtr,
-    };
+    use crate::mem::{page_allocator::PageAllocator, page_table::PageTable, ptr::UntypedPtr};
 
     #[kernel_test]
     fn alloc_guarded_page() -> Result<(), KernelTestError> {
@@ -285,7 +277,7 @@ mod test {
             // lock page table for asserts.
             // Don't hold onto it for unmapping, as that might dead lock
             // with clearing the mapping from the page table
-            let page_table = KERNEL_PAGE_TABLE.lock();
+            let page_table = PageTable::get_for_kernel().lock();
             let addr_in_page = mapped.first_page.start_address() + 50;
 
             // assert that the mapping is valid
@@ -334,7 +326,7 @@ mod test {
         }
 
         {
-            let page_table = KERNEL_PAGE_TABLE.lock();
+            let page_table = PageTable::get_for_kernel().lock();
             let addr_in_page = mapped.first_page.start_address() + 50;
 
             t_assert_matches!(

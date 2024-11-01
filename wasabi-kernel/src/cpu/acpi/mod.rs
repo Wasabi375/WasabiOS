@@ -22,7 +22,7 @@ use crate::{
     mem::{
         frame_allocator::FrameAllocator,
         page_allocator::PageAllocator,
-        page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+        page_table::{PageTable, PageTableKernelFlags},
         ptr::UntypedPtr,
         MemError,
     },
@@ -61,7 +61,7 @@ impl ACPI {
 
         let page = PageAllocator::get_for_kernel().lock().allocate_page_4k()?;
         unsafe {
-            let mut page_table = KERNEL_PAGE_TABLE.lock();
+            let mut page_table = PageTable::get_for_kernel().lock();
             let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
             let flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
@@ -172,7 +172,7 @@ impl ACPI {
             let page = PageAllocator::get_for_kernel().lock().allocate_page_4k()?;
             unsafe {
                 // Safety: we are the only code mapping this frame
-                KERNEL_PAGE_TABLE
+                PageTable::get_for_kernel()
                     .lock()
                     .map_to_with_table_flags(
                         page,

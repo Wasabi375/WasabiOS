@@ -31,7 +31,7 @@ use crate::{
     mem::{
         frame_allocator::{FrameAllocator, PhysAllocator},
         page_allocator::PageAllocator,
-        page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+        page_table::{PageTable, PageTableKernelFlags},
         structs::GuardedPages,
         MemError,
     },
@@ -425,7 +425,7 @@ impl SipiPayload<Ready> {
             .expect("identity mapping for AP_START_VECTOR must be valid");
 
         unsafe {
-            let mut page_table = KERNEL_PAGE_TABLE.lock();
+            let mut page_table = PageTable::get_for_kernel().lock();
             let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
 
             // Safety:
@@ -595,7 +595,7 @@ impl<S: SipiPayloadState> Drop for SipiPayload<S> {
     fn drop(&mut self) {
         // TODO: freeing this can lead to tripple fault if AP starts after
         //  the drop. Do I care? I mean they should all have started at this time.
-        let mut table = KERNEL_PAGE_TABLE.lock();
+        let mut table = PageTable::get_for_kernel().lock();
         let (_frame, _flags, flush) = table
             .unmap(self.page)
             .expect("Failed to unmap ap trampoline during drop");

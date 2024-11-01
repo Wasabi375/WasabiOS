@@ -18,7 +18,7 @@ use crate::{
     mem::{
         frame_allocator::FrameAllocator,
         page_allocator::PageAllocator,
-        page_table::{PageTableKernelFlags, PageTableMapError, KERNEL_PAGE_TABLE},
+        page_table::{PageTable, PageTableKernelFlags, PageTableMapError},
         ptr::UntypedPtr,
         MemError,
     },
@@ -165,7 +165,7 @@ impl NVMEController {
 
         let mut page_allocator = PageAllocator::get_for_kernel().lock();
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
 
         let properties_base_paddr = get_controller_properties_address(pci, pci_dev, 0);
 
@@ -1001,7 +1001,7 @@ impl NVMEController {
 
         let mut page_alloc = PageAllocator::get_for_kernel().lock();
         let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
 
         let mut error = None;
         let queues: Vec<_> = queue_idents
@@ -1253,7 +1253,7 @@ impl Drop for NVMEController {
         }
         trace!("all io queues deleted");
 
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
         let mut page_allocator = PageAllocator::get_for_kernel().lock();
 
         match page_table.unmap(self.controller_page) {
@@ -1337,7 +1337,7 @@ pub fn experiment_nvme_device() {
         // TODO I don't think I need consecutive frames. PRP lists should support separate frames
         frames = frame_alloc.alloc_range(page_count).unwrap();
 
-        let mut page_table = KERNEL_PAGE_TABLE.lock();
+        let mut page_table = PageTable::get_for_kernel().lock();
         for (page, frame) in pages.iter().zip(frames) {
             unsafe {
                 let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
@@ -1454,7 +1454,7 @@ mod test {
         mem::{
             frame_allocator::FrameAllocator,
             page_allocator::PageAllocator,
-            page_table::{PageTableKernelFlags, KERNEL_PAGE_TABLE},
+            page_table::{PageTable, PageTableKernelFlags},
             MemError,
         },
         pages_required_for,
@@ -1581,7 +1581,7 @@ mod test {
         for (page, frame) in pages.iter().zip(frames) {
             unsafe {
                 let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
-                let kernel_page_table = &mut KERNEL_PAGE_TABLE.lock();
+                let kernel_page_table = &mut PageTable::get_for_kernel().lock();
                 let table_flags = PageTableFlags::KERNEL_TABLE_FLAGS;
 
                 kernel_page_table

@@ -50,7 +50,7 @@ use ptr::UntypedPtr;
 
 use crate::{
     kernel_info::KernelInfo,
-    mem::{page_table::KERNEL_PAGE_TABLE, page_table_debug_ext::PageTableDebugExt},
+    mem::{page_table::PageTable, page_table_debug_ext::PageTableDebugExt},
     prelude::LockCell,
 };
 use bootloader_api::{
@@ -63,7 +63,7 @@ use x86_64::{
     registers::{control::Cr3, read_rip},
     structures::paging::{
         mapper::{MapToError, UnmapError},
-        PageTable, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB, Translate,
+        PageTable as X86PageTable, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB, Translate,
     },
     PhysAddr, VirtAddr,
 };
@@ -150,7 +150,7 @@ pub unsafe fn init() {
 
     // Safety: assuming the bootloader doesn't lie to us, this is the valid page table vaddr
     // and we have mutable access, because we are in the boot process of the kernel
-    let bootloader_page_table: &'static mut PageTable =
+    let bootloader_page_table: &'static mut X86PageTable =
         unsafe { &mut *bootloader_page_table_vaddr.as_mut_ptr() };
 
     let recursive_page_table = RecursivePageTable::new(bootloader_page_table)
@@ -166,7 +166,7 @@ pub unsafe fn init() {
     page_table::init(recursive_page_table);
 
     {
-        let mut recursive_page_table = KERNEL_PAGE_TABLE.lock();
+        let mut recursive_page_table = PageTable::get_for_kernel().lock();
 
         if log::log_enabled!(log::Level::Debug) {
             print_debug_info(
