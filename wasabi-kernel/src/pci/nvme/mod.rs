@@ -1,6 +1,6 @@
 //! NVME pci device
 //!
-//! The specification documents can be found at https://nvmexpress.org/specifications/
+//! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //TODO move this module out of pci?
 
 #![allow(missing_docs)] // TODO temp
@@ -1182,7 +1182,7 @@ impl NVMEController {
         Ok(())
     }
 
-    /// The [Capabilites] of the controller
+    /// The [ControllerCapabilities] of the controller
     pub fn capabilities(&self) -> &ControllerCapabilities {
         &self.capabilities
     }

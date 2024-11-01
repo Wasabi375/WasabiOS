@@ -1,6 +1,6 @@
 //! A mathmatical group using multiplication modulus n.
 //!
-//! See https://en.wikipedia.org/wiki/Multiplicative_group_of_integers_modulo_n
+//! See <https://en.wikipedia.org/wiki/Multiplicative_group_of_integers_modulo_n>
 
 use core::{
     fmt::{LowerHex, UpperHex},

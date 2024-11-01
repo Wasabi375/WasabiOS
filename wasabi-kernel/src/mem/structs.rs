@@ -75,7 +75,7 @@ where
     PageTableMapError: From<MapToError<S>>,
     PageTableMapError: From<MapToError<Size4KiB>>,
 {
-    /// allocates [PhysFrames] and maps `self` to the allocated frames.
+    /// allocates [PhysFrame]s and maps `self` to the allocated frames.
     ///
     /// # Safety
     ///
@@ -130,7 +130,7 @@ where
         Ok(self)
     }
 
-    /// unmaps `self` and deallocates the corresponding [PhysFrames]
+    /// unmaps `self` and deallocates the corresponding [PhysFrame]s
     ///
     /// Safety:
     /// The caller must ensure that the pages are no longer used

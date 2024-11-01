@@ -1,6 +1,6 @@
 //! NVMe admin command set
 //!
-//! The specification documents can be found at https://nvmexpress.org/specifications/
+//! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //! specifically: NVM Express Base Specification
 
 use shared_derive::U8Enum;

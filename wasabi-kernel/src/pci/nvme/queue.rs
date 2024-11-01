@@ -1,6 +1,6 @@
 //! Data structures and functions for using NVME Command Queues.
 //!
-//! The specification documents can be found at https://nvmexpress.org/specifications/
+//! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //! specifically: NVM Express Base Specification
 
 use core::{hint::spin_loop, ops::Add};
@@ -64,6 +64,9 @@ impl Add<u16> for QueueIdentifier {
 /// [NVMEController::allocate_io_queues].
 /// The [NVMEController] must ensure that the queue on the nvme device is disabled
 /// before this is dropped.
+///
+/// [NVMEController]: super::NVMEController
+/// [NVMEController::allocate_io_queues]: super::NVMEController::allocate_io_queues
 #[derive_where(Debug)]
 pub struct CommandQueue {
     id: QueueIdentifier,
@@ -153,6 +156,8 @@ impl CommandQueue {
     /// `doorbell_base` must be valid to write to for all queue doorbells up to
     /// `queue_index`.
     /// Caller must also ensure that no alias exists for the returned unique references
+    ///
+    /// [Capabilites::doorbell_stride]: super::properties::Capabilities::doorbell_stride
     pub(super) unsafe fn get_doorbells(
         doorbell_base: UntypedPtr,
         stride: isize,
@@ -189,6 +194,8 @@ impl CommandQueue {
     ///     alive.
     /// * Caller ensures that all needed allocations on the [NVMEController] outlive this.
     /// * Caller must also ensure that the queue on the controller is disabled before dropping this.
+    ///
+    /// [NVMEController]: super::NVMEController
     pub(super) unsafe fn allocate<PT>(
         queue_id: QueueIdentifier,
         submission_queue_size: u16,
@@ -681,7 +688,7 @@ pub struct PollCompletionsResult {
     pub some_new_entries: bool,
     /// If `Some` then at least polling failed for at least 1 entry, meaning
     /// that an entry was found, but it is not yet possible to store it in the
-    /// completions list (see [CompletionPollError]).
+    /// completions list (see [PollCompletionError]).
     /// It is possible that other entries were polled successfully.
     pub error_on_any_entry: Option<PollCompletionError>,
 }

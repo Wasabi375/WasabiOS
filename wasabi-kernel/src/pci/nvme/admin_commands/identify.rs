@@ -154,7 +154,7 @@ impl IOCommandSetVector {
 
 /// Iterator for [IOCommandSetVector]s within a [Page]
 ///
-/// Must be constructed with the data-page for a [IdentifyNamespaceIdent::IOCommandSet] identify
+/// Must be constructed with the data-page for a [ControllerOrNamespace::IOCommandSet] identify
 /// command.
 pub struct IOCommandSetVectorIterator<'a> {
     base: VirtAddr,
@@ -169,7 +169,7 @@ impl IOCommandSetVectorIterator<'_> {
     /// # Safety
     ///
     /// `vaddr` must be a valid u64 aligned reference within a
-    /// page used for an identify command using the [IdentifyNamespaceIdent::IOCommandSet]
+    /// page used for an identify command using the [ControllerOrNamespace::IOCommandSet]
     /// cns.
     pub unsafe fn from_vaddr(vaddr: VirtAddr) -> Self {
         let page = Page::<Size4KiB>::containing_address(vaddr);

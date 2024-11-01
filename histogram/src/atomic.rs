@@ -45,7 +45,7 @@ impl AtomicHistogram {
         Ok(())
     }
 
-    // NOTE: once stabilized, `target_has_atomic_load_store` is more correct. https://github.com/rust-lang/rust/issues/94039
+    // NOTE: once stabilized, `target_has_atomic_load_store` is more correct. <https://github.com/rust-lang/rust/issues/94039>
     #[cfg(target_has_atomic = "64")]
     /// Drains the bucket values into a new Histogram
     ///

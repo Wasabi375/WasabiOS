@@ -2,7 +2,7 @@
 //!
 //! This describes the capabilites supported by this kernel
 //!
-//! The specification documents can be found at https://nvmexpress.org/specifications/
+//! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //! specifically: NVM Express Base Specification and NVM Command Set Specification
 
 use bitflags::bitflags;

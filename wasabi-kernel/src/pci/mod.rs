@@ -1,6 +1,6 @@
 //! PCI related structs and functions
 //!
-//! See  https://wiki.osdev.org/PCI for more information
+//! See <https://wiki.osdev.org/PCI> for more information
 //!
 
 // TODO temp
