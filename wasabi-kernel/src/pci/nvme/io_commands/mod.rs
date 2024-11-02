@@ -8,8 +8,10 @@ use core::fmt::{Debug, LowerHex, UpperHex};
 use shared_derive::U8Enum;
 
 mod read;
+mod write;
 
 pub use read::*;
+pub use write::*;
 
 /// Opcode for the different commands
 #[allow(missing_docs)]

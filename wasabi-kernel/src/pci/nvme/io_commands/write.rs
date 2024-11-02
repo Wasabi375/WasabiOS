@@ -8,10 +8,11 @@ use crate::pci::nvme::{
 
 use super::{CommandOpcode, LBA};
 
-/// Create the [CommonCommand] data structure for a read command
+/// Create the [CommonCommand] data structure for a write command
 ///
-/// See: NVM Command Spec: 3.2.4
-pub fn create_read_command(frame: PhysFrame, slba: LBA, block_count: u16) -> CommonCommand {
+/// See: NVM Command Spec: 3.2.6
+#[allow(unused)]
+pub fn create_write_command(frame: PhysFrame, slba: LBA, block_count: u16) -> CommonCommand {
     let mut cdw0 = CDW0::zero();
     cdw0.set_opcode(CommandOpcode::Read as u8);
     cdw0.set_prp_or_sgl(PrpOrSgl::Prp);
@@ -39,7 +40,7 @@ pub fn create_read_command(frame: PhysFrame, slba: LBA, block_count: u16) -> Com
 
     command.dword12 = dword12;
 
-    // bit 6 is used for sequential reads
+    // bit 6 is used for sequential writes
     // bit 0..=5 is used for access frequency and latency hints
     command.dword13 = 0;
 
