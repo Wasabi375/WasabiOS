@@ -50,6 +50,7 @@
             asm-lsp
             gdb
             elfutils
+            fuse3
           ];
         };
       });

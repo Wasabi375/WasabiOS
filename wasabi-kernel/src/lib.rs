@@ -29,6 +29,7 @@
 pub mod core_local;
 pub mod cpu;
 pub mod crossbeam_epoch;
+pub mod fs;
 pub mod graphics;
 pub mod kernel_info;
 pub mod logger;

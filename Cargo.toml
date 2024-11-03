@@ -7,7 +7,7 @@ edition.workspace = true
 anyhow = "1.0.75"
 bootloader.workspace = true
 cargo_toml = "0.15.3"
-clap = { version = "4.3.4", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 fs-err = "2.11.0"
 log.workspace = true
 lzma-rs = "0.3.0"
@@ -31,6 +31,8 @@ members = [
     "testing",
     "testing/derive",
     "testing/test-tests",
+    "wasabi-fs",
+    "wasabi-fs/fuse",
     "wasabi-kernel",
     "wasabi-test",
 ]
