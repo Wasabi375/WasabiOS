@@ -7,7 +7,7 @@ edition.workspace = true
 anyhow = "1.0.75"
 bootloader.workspace = true
 cargo_toml = "0.15.3"
-clap = { version = "4.3.4", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 fs-err = "2.11.0"
 log.workspace = true
 lzma-rs = "0.3.0"
@@ -30,6 +30,8 @@ members = [
     "staticvec",
     "testing",
     "testing/derive",
+    "wasabi-fs",
+    "wasabi-fs/fuse",
     "wasabi-kernel",
     "wasabi-test",
 ]
@@ -70,8 +72,8 @@ libm = "0.2.11"
 noto-sans-mono-bitmap = { version = "0.2.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
 
 # TODO use upstream once new version is released
-bootloader = { git = "https://github.com/Wasabi375/bootloader", rev = "bf950a4bee82764dac17b5e18f5c82f491c9799e", version = "0.11", default-features = false, features = ["uefi"] }
-# bootloader = { version = "0.11.8", default-features = false, features = ["uefi"] }
+# bootloader = { git = "https://github.com/Wasabi375/bootloader", rev = "bf950a4bee82764dac17b5e18f5c82f491c9799e", version = "0.11", default-features = false, features = ["uefi"] }
+bootloader = { version = "0.11.8", default-features = false, features = ["uefi"] }
 # bootloader = { path = "/home/burkhard/programming/forks/bootloader", default-features = false, features = ["uefi"]}
 bootloader_api = { version = "0.11" }
 
