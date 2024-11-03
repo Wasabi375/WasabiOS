@@ -48,6 +48,7 @@
             nasm
             nasmfmt
             asm-lsp
+            fuse3
           ];
         };
       });
