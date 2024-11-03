@@ -33,8 +33,6 @@ async fn main() -> Result<()> {
 
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
-        .with_module_level("gpt", LevelFilter::Warn)
-        .with_module_level("fatfs", LevelFilter::Warn)
         .env()
         .init()
         .unwrap();
