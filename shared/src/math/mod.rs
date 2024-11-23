@@ -2,10 +2,30 @@
 
 mod mod_group;
 
+use core::{
+    iter::Step,
+    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign},
+};
+
 pub use mod_group::*;
 
 /// A utility trait for all number types
-pub trait Number: Copy {
+pub trait Number:
+    Copy
+    + Add<Self, Output = Self>
+    + Sub<Self, Output = Self>
+    + Mul<Self, Output = Self>
+    + Div<Self, Output = Self>
+    + AddAssign
+    + SubAssign
+    + MulAssign
+    + DivAssign
+    + PartialEq
+    + Eq
+    + PartialOrd
+    + Ord
+    + Step
+{
     /// The lowest representable value
     const MIN: Self;
     /// The largest representable value
@@ -17,19 +37,27 @@ pub trait Number: Copy {
 }
 
 /// Types that implement this can be converted into a u64.
-///
-/// This is implemented for `T: Into<u64>` and `usize` which does not impl Into
 pub trait IntoU64 {
     /// Converts `self` into u64
     fn into(self) -> u64;
 }
 
 /// Types that implement this can be converted into a i64.
-///
-/// This is implemented for `T: Into<i64>` and `usize` which does not impl Into
 pub trait IntoI64 {
     /// Converts `self` into i64
     fn into(self) -> i64;
+}
+
+/// Types that implement this can be converted into a usize.
+pub trait IntoUSize {
+    /// Converts `self` into i64
+    fn into(self) -> usize;
+}
+
+/// Types that implement this can be converted into a usize.
+pub trait IntoISize {
+    /// Converts `self` into isize
+    fn into(self) -> isize;
 }
 
 macro_rules! impl_into_ui64 {
@@ -44,6 +72,17 @@ macro_rules! impl_into_ui64 {
                 self as i64
             }
         }
+
+        impl IntoUSize for $typ {
+            fn into(self) -> usize {
+                self as usize
+            }
+        }
+        impl IntoISize for $typ {
+            fn into(self) -> isize {
+                self as isize
+            }
+        }
     };
 }
 
@@ -52,11 +91,13 @@ impl_into_ui64!(u16);
 impl_into_ui64!(u32);
 impl_into_ui64!(u64);
 impl_into_ui64!(usize);
+impl_into_ui64!(u128);
 impl_into_ui64!(i8);
 impl_into_ui64!(i16);
 impl_into_ui64!(i32);
 impl_into_ui64!(i64);
 impl_into_ui64!(isize);
+impl_into_ui64!(i128);
 
 /// A utility trait for all unsinged number types
 pub trait UnsingedNumber: Number {}

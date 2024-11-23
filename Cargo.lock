@@ -1607,6 +1607,9 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "staticvec"
 version = "0.1.0"
+dependencies = [
+ "shared",
+]
 
 [[package]]
 name = "strsim"
@@ -2070,6 +2073,13 @@ dependencies = [
 [[package]]
 name = "wfs"
 version = "0.1.0"
+dependencies = [
+ "bit_field",
+ "bitflags 2.6.0",
+ "static_assertions",
+ "staticvec",
+ "thiserror-core",
+]
 
 [[package]]
 name = "winapi"
