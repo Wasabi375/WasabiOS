@@ -1,12 +1,13 @@
 //! Implementation shared by all kernel packages
 #![no_std]
 #![feature(
-    negative_impls,
-    maybe_uninit_uninit_array,
-    maybe_uninit_slice,
-    let_chains,
+    box_into_inner,
     downcast_unchecked,
-    box_into_inner
+    let_chains,
+    maybe_uninit_slice,
+    maybe_uninit_uninit_array,
+    negative_impls,
+    step_trait
 )]
 #![warn(missing_docs)]
 
