@@ -4,3 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+staticvec = { path = "../staticvec" }
+
+bit_field.workspace = true
+bitflags.workspace = true
+static_assertions.workspace = true
+thiserror.workspace = true
