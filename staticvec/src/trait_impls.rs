@@ -61,7 +61,7 @@ where
 {
     #[inline(always)]
     fn borrow(&self) -> &[T] {
-        &self[..]
+        self.as_slice()
     }
 }
 
@@ -73,7 +73,7 @@ where
 {
     #[inline(always)]
     fn borrow_mut(&mut self) -> &mut [T] {
-        &mut self[..]
+        self.as_mut_slice()
     }
 }
 
@@ -135,10 +135,10 @@ where
             0 => Self::new(),
             _ => Self {
                 data: {
-                    let mut res = Self::new_data_uninit();
+                    let mut res = StaticVec::new_data_uninit();
                     unsafe {
                         self.as_ptr()
-                            .copy_to_nonoverlapping(Self::first_ptr_mut(&mut res), length);
+                            .copy_to_nonoverlapping(StaticVec::first_ptr_mut(&mut res), length);
                         res
                     }
                 },
@@ -594,7 +594,7 @@ where
     }
 }
 
-impl<T, const N: usize, L> From<[T; N]> for StaticVec<T, N, usize> {
+impl<T, const N: usize> From<[T; N]> for StaticVec<T, N, usize> {
     #[inline(always)]
     fn from(values: [T; N]) -> Self {
         Self::new_from_const_array(values)
@@ -1053,7 +1053,12 @@ where
     }
 }
 
-impl<'a, T: 'a, L, const N: usize> IntoIterator for &'a StaticVec<T, N, L> {
+impl<'a, T: 'a, L, const N: usize> IntoIterator for &'a StaticVec<T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize> + Ord,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     type IntoIter = StaticVecIterConst<'a, T, N>;
     type Item = &'a T;
     /// Returns a [`StaticVecIterConst`](crate::iterators::StaticVecIterConst) over the StaticVec's
@@ -1064,7 +1069,12 @@ impl<'a, T: 'a, L, const N: usize> IntoIterator for &'a StaticVec<T, N, L> {
     }
 }
 
-impl<'a, T: 'a, L, const N: usize> IntoIterator for &'a mut StaticVec<T, N, L> {
+impl<'a, T: 'a, L, const N: usize> IntoIterator for &'a mut StaticVec<T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize> + Ord,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     type IntoIter = StaticVecIterMut<'a, T, N>;
     type Item = &'a mut T;
     /// Returns a [`StaticVecIterMut`](crate::iterators::StaticVecIterMut) over the StaticVec's
@@ -1075,27 +1085,32 @@ impl<'a, T: 'a, L, const N: usize> IntoIterator for &'a mut StaticVec<T, N, L> {
     }
 }
 
-impl<T, L, const N: usize> IntoIterator for StaticVec<T, N, L> {
+impl<T, L, const N: usize> IntoIterator for StaticVec<T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize> + Ord,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     type IntoIter = StaticVecIntoIter<T, N>;
     type Item = T;
     /// Returns a by-value [`StaticVecIntoIter`](crate::iterators::StaticVecIntoIter) over the
     /// StaticVec's inhabited area, which consumes the StaticVec.
     #[inline(always)]
     fn into_iter(self) -> Self::IntoIter {
-        let old_length = self.length;
+        let old_length: usize = self.length.try_into().unwrap();
         StaticVecIntoIter {
             start: 0,
             end: old_length,
             data: {
                 // Copy the inhabited part of `self` into the iterator.
-                let mut data = Self::new_data_uninit();
+                let mut data = StaticVec::new_data_uninit();
                 unsafe {
                     // The `MaybeUninit` wrapping prevents the values from being dropped locally, which
                     // is necessary since again they're being copied into the iterator.
                     MaybeUninit::new(self)
                         .assume_init_ref()
                         .as_ptr()
-                        .copy_to_nonoverlapping(Self::first_ptr_mut(&mut data), old_length)
+                        .copy_to_nonoverlapping(StaticVec::first_ptr_mut(&mut data), old_length)
                 };
                 data
             },
