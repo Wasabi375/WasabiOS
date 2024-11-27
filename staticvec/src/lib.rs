@@ -1956,7 +1956,7 @@ where
     /// assert_eq!(v2, [6, 5, 4]);
     /// ```
     #[inline]
-    pub fn drain_iter<R: RangeBounds<usize>>(&mut self, range: R) -> StaticVecDrain<T, N> {
+    pub fn drain_iter<R: RangeBounds<usize>>(&mut self, range: R) -> StaticVecDrain<T, N, L> {
         // Borrowed this part from normal Vec's implementation.
         let length = self.length;
         let start = match range.start_bound() {
@@ -2066,7 +2066,7 @@ where
         &mut self,
         range: R,
         replace_with: I,
-    ) -> StaticVecSplice<T, I::IntoIter, N> {
+    ) -> StaticVecSplice<T, I::IntoIter, N, L> {
         let length = self.length;
         let start = match range.start_bound() {
             Included(&idx) => idx,
@@ -2702,7 +2702,7 @@ impl<T: Copy, const N: usize> StaticVec<T, N, usize> {
             res
         } else {
             let mut res = StaticVec::new();
-            res.extend_from_slice(&self[..]);
+            res.extend_from_slice(self.as_slice());
             res
         }
     }
