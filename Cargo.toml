@@ -62,8 +62,8 @@ thiserror = { version = "1.0", package = "thiserror-core", default-features = fa
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
 walkdir = "2.5"
 # TODO use upstream once new version is released
-# x86_64 = 0.15"
-x86_64 = { version = "0.15", git = "https://github.com/Wasabi375/x86_64", branch = "patched" }
+# x86_64 = 0.16"
+x86_64 = { version = "0.15.1", git = "https://github.com/Wasabi375/x86_64", branch = "patched" }
 hashbrown = "0.14.5"
 derive-where = "1.2.7"
 libm = "0.2.11"
