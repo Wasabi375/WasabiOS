@@ -115,7 +115,7 @@ impl<T: Ord, const N: usize> StaticHeap<T, N> {
     /// heap.push(4);
     /// ```
     #[inline(always)]
-    const fn new() -> StaticHeap<T, N> {
+    pub const fn new() -> StaticHeap<T, N> {
         StaticHeap {
             data: StaticVec::new(),
         }
