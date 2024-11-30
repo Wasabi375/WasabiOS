@@ -66,7 +66,6 @@ walkdir = "2.5"
 
 #  TODO use upstream once new version is released
 derive_builder = { version = "0.20.0", git = "https://github.com/Wasabi375/rust-derive-builder", branch = "owned_custom_default", default-features = false}
-
 # TODO remove lazy_static as a dependency, in order to get rid of the external spin-lock
 lazy_static = { version = "1.4.0", features=["spin_no_std"] }
 
