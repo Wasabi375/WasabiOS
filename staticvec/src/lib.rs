@@ -31,6 +31,11 @@
     trusted_random_access
 )]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 use core::fmt::Debug;
 use core::intrinsics::assume;
 use core::marker::PhantomData;
@@ -1302,33 +1307,6 @@ where
         }
     }
 
-    /// Returns a separate, stable-sorted StaticVec of the contents of the StaticVec's inhabited area
-    /// without modifying the original data. Locally requires that `T` implements
-    /// [`Copy`](core::marker::Copy) to avoid soundness issues, and [`Ord`](core::cmp::Ord) to make
-    /// the sorting possible.
-    ///
-    /// # Example usage:
-    /// ```
-    /// # use staticvec::{staticvec, StaticVec};
-    /// const V: StaticVec<StaticVec<i32, 2>, 2> = staticvec![staticvec![1, 3], staticvec![4, 2]];
-    /// assert_eq!(
-    ///   V.iter().flatten().collect::<StaticVec<i32, 4>>().sorted(),
-    ///   [1, 2, 3, 4]
-    /// );
-    /// ```
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline]
-    pub fn sorted(&self) -> Self
-    where
-        T: Copy + Ord,
-    {
-        // StaticVec uses specialization to have an optimized version of `Clone` for copy types.
-        let mut res = self.clone();
-        res.sort();
-        res
-    }
-
     /// Returns a separate, unstable-sorted StaticVec of the contents of the StaticVec's inhabited
     /// area without modifying the original data. Locally requires that `T` implements
     /// [`Copy`](core::marker::Copy) to avoid soundness issues, and [`Ord`](core::cmp::Ord) to make
@@ -1820,7 +1798,7 @@ where
                     data
                 }
             },
-            length: item_count,
+            length: item_count.try_into().unwrap(),
         }
     }
 

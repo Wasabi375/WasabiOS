@@ -1,8 +1,5 @@
 use core::fmt::{Debug, Display, Formatter, Result};
 
-#[cfg(feature = "alloc")]
-use std::error::Error;
-
 /// This error indicates that an operation was attempted that would have increased the
 /// `length` value of a [`StaticVec`](crate::StaticVec), but the [`StaticVec`](crate::StaticVec) was
 /// already at its maximum capacity of `N`.
@@ -15,10 +12,6 @@ impl<const N: usize> Display for CapacityError<N> {
         write!(f, "Insufficient remaining capacity (limit is {})!", N)
     }
 }
-
-#[cfg(feature = "alloc")]
-#[doc(cfg(feature = "alloc"))]
-impl<const N: usize> Error for CapacityError<N> {}
 
 /// This error indicates that a push was attempted into a
 /// [`StaticVec`](crate::StaticVec) which failed because the
@@ -84,15 +77,5 @@ impl<T: Debug, const N: usize> Debug for PushCapacityError<T, N> {
             .field("N", &N)
             .field("value", &self.0)
             .finish()
-    }
-}
-
-#[cfg(feature = "alloc")]
-#[doc(cfg(feature = "alloc"))]
-impl<T: Debug, const N: usize> Error for PushCapacityError<T, N> {
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&CapacityError::<N>)
     }
 }
