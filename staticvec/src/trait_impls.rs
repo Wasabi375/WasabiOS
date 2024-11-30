@@ -15,6 +15,9 @@ use crate::string::StaticString;
 use crate::utils::partial_compare;
 use crate::StaticVec;
 
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 #[cfg(feature = "serde")]
 use core::marker::PhantomData;
 
@@ -1161,117 +1164,6 @@ impl_partial_ord_with_as_slice_against_slice!([T1], &mut StaticVec<T2, N, L>);
 impl_partial_ord_with_as_slice_against_slice!(&[T1], StaticVec<T2, N, L>);
 impl_partial_ord_with_as_slice_against_slice!(&mut [T1], StaticVec<T2, N, L>);
 
-/// Read from a StaticVec. This implementation operates by copying bytes into the destination
-/// buffers, then shifting the remaining bytes over.
-#[cfg(feature = "alloc")]
-#[doc(cfg(feature = "alloc"))]
-impl<const N: usize, L> Read for StaticVec<u8, N, L>
-where
-    L: Number + TryFrom<usize> + TryInto<usize>,
-    <L as TryFrom<usize>>::Error: Debug,
-    <L as TryInto<usize>>::Error: Debug,
-{
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let current_length = self.length;
-        let read_length = current_length.min(buf.len());
-        // Safety: `read_length` <= `buf.length` and `self.length`. Rust borrowing
-        // rules mean that `buf` is guaranteed not to overlap with self.
-        unsafe {
-            buf.as_mut_ptr()
-                .copy_from_nonoverlapping(self.as_ptr(), read_length);
-        }
-        if read_length < current_length {
-            // Safety: we just confirmed that `read_length` is less than our current length.
-            unsafe {
-                let mp = self.as_mut_ptr();
-                mp.add(read_length)
-                    .copy_to(mp, current_length - read_length)
-            };
-        }
-        // Safety: 0 <= `read_length` <= `current_length`.
-        unsafe { self.set_len(current_length - read_length) };
-        Ok(read_length)
-    }
-
-    #[inline]
-    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
-        let read_length = self.length;
-        buf.extend_from_slice(self.as_slice());
-        self.length = 0;
-        Ok(read_length)
-    }
-
-    #[inline]
-    fn read_to_string(&mut self, buf: &mut String) -> io::Result<usize> {
-        let read_length = self.length;
-        match str::from_utf8(self.as_slice()) {
-            Err(err) => return Err(io::Error::new(io::ErrorKind::InvalidData, err)),
-            Ok(self_str) => buf.push_str(self_str),
-        };
-        self.length = 0;
-        Ok(read_length)
-    }
-
-    #[inline]
-    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        if buf.len() > self.length {
-            Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Not enough data available to fill the provided buffer!",
-            ))
-        } else {
-            // read is guaranteed to fully read into the buf in a single call
-            self.read(buf).and(Ok(()))
-        }
-    }
-
-    #[inline]
-    fn read_vectored(&mut self, bufs: &mut [IoSliceMut]) -> io::Result<usize> {
-        // Minimize copies: copy to each output buffer in sequence, then shift the
-        // internal data only once. This as opposed to calling `read` in a loop,
-        // which shifts the inner data each time.
-        let mut start_ptr = self.as_ptr();
-        let old_length = self.length;
-        // We update `self.length` in place in the loop to track how many bytes
-        // have been written. This means that when we perform the shift at the
-        // end, `self.length` is already correct.
-        for buf in bufs {
-            if self.is_empty() {
-                break;
-            }
-            // Determine the number of bytes we'll be reading out of `self`.
-            let read_length = self.length.min(buf.len());
-            // Safety: `start_ptr` is known to point to the array in `self`, which
-            // is different than `buf`, and `read_length` <= `self.length`.
-            unsafe {
-                start_ptr.copy_to_nonoverlapping(buf.as_mut_ptr(), read_length);
-                start_ptr = start_ptr.add(read_length);
-                self.length -= read_length;
-            }
-        }
-        let current_length = self.length;
-        let total_read = old_length - current_length;
-        if current_length > 0 {
-            unsafe {
-                let mp = self.as_mut_ptr();
-                mp.add(total_read).copy_to(mp, current_length);
-            }
-        }
-        Ok(total_read)
-    }
-
-    #[inline]
-    fn read_buf(&mut self, mut cursor: BorrowedCursor<'_>) -> io::Result<()> {
-        // Here we directly adapt the implementation from &[u8].
-        let amount = core::cmp::min(cursor.capacity().try_into().unwrap(), self.len());
-        let b = self.split_off(amount);
-        cursor.append(&self);
-        *self = b;
-        Ok(())
-    }
-}
-
 impl<const N: usize, L> fmt::Write for StaticVec<u8, N, L>
 where
     L: Number + TryFrom<usize> + TryInto<usize>,
@@ -1298,71 +1190,6 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
-#[doc(cfg(feature = "alloc"))]
-impl<const N: usize, L> io::Write for StaticVec<u8, N, L>
-where
-    L: Number + TryFrom<usize> + TryInto<usize>,
-    <L as TryFrom<usize>>::Error: Debug,
-    <L as TryInto<usize>>::Error: Debug,
-{
-    #[inline]
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let old_length = self.length;
-        self.extend_from_slice(buf);
-        Ok(self.length - old_length)
-    }
-
-    #[inline]
-    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
-        let old_length = self.length;
-        for buf in bufs {
-            if self.is_full() {
-                break;
-            }
-            self.extend_from_slice(buf);
-        }
-        Ok(self.length - old_length)
-    }
-
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        if buf.len() <= self.remaining_capacity() {
-            self.extend_from_slice(buf);
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::WriteZero,
-                "Insufficient remaining capacity!",
-            ))
-        }
-    }
-
-    #[inline(always)]
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-#[cfg(feature = "alloc")]
-#[doc(cfg(feature = "alloc"))]
-impl<const N: usize, L> BufRead for StaticVec<u8, N, L>
-where
-    L: Number + TryFrom<usize> + TryInto<usize>,
-    <L as TryFrom<usize>>::Error: Debug,
-    <L as TryInto<usize>>::Error: Debug,
-{
-    #[inline(always)]
-    fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        Ok(&**self)
-    }
-
-    #[inline(always)]
-    fn consume(&mut self, amt: usize) {
-        *self = Self::new_from_slice(&self[amt..]);
-    }
-}
-
 #[cfg(feature = "serde")]
 #[doc(cfg(feature = "serde"))]
 impl<'de, T, const N: usize, L> Deserialize<'de> for StaticVec<T, N, L>
@@ -1377,11 +1204,17 @@ where
     where
         D: Deserializer<'de>,
     {
-        struct StaticVecVisitor<'de, T, const N: usize>(PhantomData<(&'de (), T)>);
+        struct StaticVecVisitor<'de, T, const N: usize, L>(
+            PhantomData<(&'de (), T)>,
+            PhantomData<L>,
+        );
 
-        impl<'de, T, const N: usize> Visitor<'de> for StaticVecVisitor<'de, T, N>
+        impl<'de, T, const N: usize, L> Visitor<'de> for StaticVecVisitor<'de, T, N, L>
         where
             T: Deserialize<'de>,
+            L: Number + TryFrom<usize> + TryInto<usize>,
+            <L as TryFrom<usize>>::Error: Debug,
+            <L as TryInto<usize>>::Error: Debug,
         {
             type Value = StaticVec<T, N, L>;
 
@@ -1396,7 +1229,7 @@ where
                 SA: SeqAccess<'de>,
             {
                 let mut res = Self::Value::new();
-                while res.length < N {
+                while res.length < N.try_into().unwrap() {
                     if let Some(val) = seq.next_element()? {
                         unsafe { res.push_unchecked(val) };
                     } else {
@@ -1406,7 +1239,7 @@ where
                 Ok(res)
             }
         }
-        deserializer.deserialize_seq(StaticVecVisitor::<T, N>(PhantomData))
+        deserializer.deserialize_seq(StaticVecVisitor::<T, N, L>(PhantomData, PhantomData))
     }
 }
 

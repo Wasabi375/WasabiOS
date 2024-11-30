@@ -71,30 +71,6 @@ where
 }
 
 impl<'a, T: 'a, const N: usize> StaticVecIterConst<'a, T, N> {
-    /// Returns a string displaying the current values of the
-    /// iterator's `start` and `end` elements on two separate lines.
-    /// Locally requires that `T` implements [Debug](core::fmt::Debug)
-    /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn bounds_to_string(&self) -> String
-    where
-        T: Debug,
-    {
-        match self.len() {
-            0 => String::from("Empty iterator!"),
-            _ => unsafe {
-                // Safety: `start` and `end` are never null.
-                format!(
-          "Current value of element at `start`: {:?}\nCurrent value of element at `end`: {:?}",
-          &*self.start,
-          &*self.end.offset(-1)
-        )
-            },
-        }
-    }
-
     /// Returns an immutable slice consisting of the elements in the range between the iterator's
     /// `start` and `end` pointers.
     #[inline(always)]
@@ -272,30 +248,6 @@ impl<'a, T: 'a + Debug, const N: usize> Debug for StaticVecIterConst<'a, T, N> {
 }
 
 impl<'a, T: 'a, const N: usize> StaticVecIterMut<'a, T, N> {
-    /// Returns a string displaying the current values of the
-    /// iterator's `start` and `end` elements on two separate lines.
-    /// Locally requires that `T` implements [Debug](core::fmt::Debug)
-    /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn bounds_to_string(&self) -> String
-    where
-        T: Debug,
-    {
-        match self.len() {
-            0 => String::from("Empty iterator!"),
-            _ => unsafe {
-                // Safety: `start` and `end` are never null.
-                format!(
-          "Current value of element at `start`: {:?}\nCurrent value of element at `end`: {:?}",
-          &*self.start,
-          &*self.end.offset(-1)
-        )
-            },
-        }
-    }
-
     /// Returns an immutable slice consisting of the elements in the range between the iterator's
     /// `start` and `end` pointers. Though this is a mutable iterator, the slice cannot be mutable
     /// as it would lead to aliasing issues.
@@ -455,30 +407,6 @@ impl<'a, T: 'a + Debug, const N: usize> Debug for StaticVecIterMut<'a, T, N> {
 }
 
 impl<T, const N: usize> StaticVecIntoIter<T, N> {
-    /// Returns a string displaying the current values of the
-    /// iterator's `start` and `end` elements on two separate lines.
-    /// Locally requires that `T` implements [Debug](core::fmt::Debug)
-    /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn bounds_to_string(&self) -> String
-    where
-        T: Debug,
-    {
-        match self.len() {
-            0 => String::from("Empty iterator!"),
-            _ => unsafe {
-                // Safety: `start` and `end` are never out of bounds.
-                format!(
-          "Current value of element at `start`: {:?}\nCurrent value of element at `end`: {:?}",
-          &*StaticVec::first_ptr(&self.data).add(self.start),
-          &*StaticVec::first_ptr(&self.data).add(self.end - 1)
-        )
-            },
-        }
-    }
-
     /// Returns an immutable slice consisting of the elements in the range between the iterator's
     /// `start` and `end` indices.
     #[inline(always)]
@@ -712,20 +640,6 @@ where
     <L as TryFrom<usize>>::Error: Debug,
     <L as TryInto<usize>>::Error: Debug,
 {
-    /// Returns a string displaying the current values of the
-    /// iterator's `start` and `end` elements on two separate lines.
-    /// Locally requires that `T` implements [Debug](core::fmt::Debug)
-    /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn bounds_to_string(&self) -> String
-    where
-        T: Debug,
-    {
-        self.iter.bounds_to_string()
-    }
-
     /// Returns an immutable slice consisting of the current range of elements the iterator has a view
     /// over.
     #[inline(always)]
