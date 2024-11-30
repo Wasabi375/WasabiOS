@@ -124,7 +124,7 @@ impl Sub<TscDuration> for TscTimestamp {
     type Output = TscTimestamp;
 
     fn sub(self, rhs: TscDuration) -> Self::Output {
-        let tsc = (self.as_u64() as i128) + (rhs.as_i64() as i128);
+        let tsc = (self.as_u64() as i128) - (rhs.as_i64() as i128);
         let tsc: u64 = tsc.try_into().expect("Tsc timestamp overflowed");
         tsc.into()
     }
