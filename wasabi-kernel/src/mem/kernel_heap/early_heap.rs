@@ -41,7 +41,7 @@ struct Aligned4K<const N: usize>([u8; N]);
 
 /// Allocate memory in the early boot heap
 ///
-/// # Safety:
+/// # Safety
 ///
 /// Must only be called during early boot process and with interrupts disabled
 pub(super) unsafe fn alloc(layout: Layout) -> *mut u8 {

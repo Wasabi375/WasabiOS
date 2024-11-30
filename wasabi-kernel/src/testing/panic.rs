@@ -12,7 +12,7 @@ pub type CustomPanicHandler = dyn (FnOnce(&PanicInfo) -> !) + Send + 'static;
 
 /// panic handler used during tests
 ///
-/// # Safety:
+/// # Safety
 ///
 /// requires all other cores to be disabled and that the logger and framebuffer are working
 pub unsafe fn test_panic_handler(info: &PanicInfo) -> ! {

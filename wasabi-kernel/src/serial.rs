@@ -23,7 +23,7 @@ pub static SERIAL2: TicketLock<Option<SerialPort>> = TicketLock::new_non_preemta
 ///
 /// This is COM1 for debug printing and also COM2 during testing
 ///
-/// # Safety:
+/// # Safety
 ///
 /// must only ever be called once at startup of the kernel boot process
 pub unsafe fn init_serial_ports() {
@@ -41,7 +41,7 @@ pub unsafe fn init_serial_ports() {
 
 /// Creates and initializes SerialPort
 ///
-/// # Safety:
+/// # Safety
 ///
 /// port must be a valid SerialPort address
 unsafe fn create_port(port: u16) -> Result<SerialPort, ()> {

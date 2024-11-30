@@ -15,7 +15,7 @@ const HEX_DUMP_SERIAL_BYTE_WIDTH: usize = 16;
 
 /// hex dumps the memory at `start` to the logger
 ///
-/// # Safety:
+/// # Safety
 ///
 /// `start` up to `start + length - 1` must be valid pointers
 pub unsafe fn log_hex_dump<M: AsRef<str>>(
@@ -66,7 +66,7 @@ pub fn log_hex_dump_struct<M: AsRef<str>, T>(
 
 /// hex dumps the memory at `start` to the SERIAL1
 ///
-/// # Safety:
+/// # Safety
 ///
 /// `start` up to `start + length - 1` must be valid pointers
 pub unsafe fn serial_hex_dump<M: AsRef<str>>(start: UntypedPtr, length: usize) {

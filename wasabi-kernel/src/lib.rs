@@ -83,7 +83,7 @@ pub fn in_kernel_main() -> bool {
 
 /// enters the main kernel function, specified by the [entry_point] macro.
 ///
-/// # Safety:
+/// # Safety
 ///
 /// the processor must be in a valid state that does not randomly cause UB
 pub unsafe fn enter_kernel_main() -> ! {

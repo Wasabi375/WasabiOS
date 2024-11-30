@@ -64,7 +64,7 @@ impl InterruptHandlerState {
 
     /// Initializes IDT
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// `&self` must be fullfill all guarantees of `&mut self`
     unsafe fn init(&self) {
@@ -95,7 +95,7 @@ impl InterruptHandlerState {
 
 /// setup idt and enable interrupts
 ///
-/// # Safety:
+/// # Safety
 ///
 /// must be called during processor startup, after logging and core_locals
 /// are initialized

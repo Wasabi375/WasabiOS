@@ -27,7 +27,7 @@ pub type DispatchLogger<'a, const N: usize, const L: usize> =
 ///
 /// After [init] is called, it can be assumed that this is Some.
 ///
-/// # Safety:
+/// # Safety
 /// this should not be modified outside of panics and [init].
 /// Accessing the [DispatchLogger] via shared ref is therefor safe.
 #[inline]
@@ -62,7 +62,7 @@ where
 
 /// initializes the logger piping all [log::log] calls into the first serial port.
 ///
-/// # Safety:
+/// # Safety
 ///
 /// must only ever be called once at the start of the kernel boot proces and after
 /// [SERIAL1] is initialized

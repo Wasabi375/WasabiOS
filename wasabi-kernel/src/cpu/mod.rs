@@ -53,7 +53,7 @@ mod instructions {
     /// [crate::core_local::CoreLocals]  
     /// [crate::locals]
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// caller must ensure that disbaled interrupts don't violate any safety guarantees
     #[inline(always)]
@@ -61,7 +61,7 @@ mod instructions {
         interrupts::disable();
     }
 
-    /// # Safety: caller must ensure that interrupts don't violate any safety guarantees
+    /// # Safety caller must ensure that interrupts don't violate any safety guarantees
     ///
     /// When possible `locals!().disbale_interrupts()` should be used instead.
     ///

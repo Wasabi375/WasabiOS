@@ -142,7 +142,7 @@ impl NVMEController {
     ///         queues, only allocates them on the controller.
     ///         The controller can decide to allocate a different amount than requested.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// This must only be called once on an NVMe [Device] until the controller is properly
     /// freed.
@@ -861,7 +861,7 @@ impl NVMEController {
     /// This will return `None` if no queues exist or if all queues are already
     /// given.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// the resulting [Strong] must be dropped before `self` can be dropped.
     pub fn get_io_queue(&mut self) -> Option<Strong<CommandQueue>> {
@@ -900,7 +900,7 @@ impl NVMEController {
 
     /// Tries to get an existing io queue, but will allocate a new queue if none is available
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// the resulting [Strong] must be dropped before `self` can be dropped.
     pub fn get_or_alloc_io_queue(&mut self) -> Result<Strong<CommandQueue>, NVMEControllerError> {
@@ -1459,7 +1459,7 @@ mod test {
     /// NOTE: device 0 is the boot device and should not be used
     /// for tests if possible.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// must only be called once until result is dropped
     unsafe fn create_test_controller() -> Result<NVMEController, KernelTestError> {

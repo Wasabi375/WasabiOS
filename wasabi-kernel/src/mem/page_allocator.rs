@@ -376,7 +376,7 @@ impl PageAllocator {
 
     /// frees a page
     ///
-    /// # Safety:
+    /// # Safety
     /// Call must guarantee that there are no pointers into the page.
     pub unsafe fn free_page<S: PageSize>(&mut self, page: Page<S>) {
         if self.vaddrs.len() as usize == self.vaddrs.capacity() {
@@ -393,7 +393,7 @@ impl PageAllocator {
 
     /// frees multiple pages
     ///
-    /// # Safety:
+    /// # Safety
     /// Call must guarantee that there are no pointers into the pages.
     pub unsafe fn free_pages<S: PageSize>(&mut self, pages: Pages<S>) {
         for p in pages.iter() {
@@ -405,7 +405,7 @@ impl PageAllocator {
 
     /// frees multiple pages
     ///
-    /// # Safety:
+    /// # Safety
     /// Call must guarantee that there are no pointers into the pages.
     pub unsafe fn free_guarded_pages<S: PageSize>(&mut self, pages: GuardedPages<S>) {
         unsafe {

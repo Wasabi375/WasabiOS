@@ -61,7 +61,7 @@ impl GDTInfo {
 
     /// Setup and load GDT
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// must only ever be called once for each processor during startup
     /// requires core_locals and logging and memory to be initialized

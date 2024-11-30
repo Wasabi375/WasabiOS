@@ -122,7 +122,7 @@ pub struct CoreLocals {
     /// A lock holding the local apic. This can be [None] if the apic has not been
     /// initialized.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// [cpu::apic::init] must be called before this can be used
     pub apic: UnwrapTicketLock<Apic>,
@@ -134,7 +134,7 @@ pub struct CoreLocals {
     ///
     /// Also contains memory for TSS.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// [GDTInfo::init_and_load] needs to be called before this is
     /// useable
@@ -199,7 +199,7 @@ impl CoreLocals {
     /// Also interrupts will never be enabled if we are currently inside an interrupt.
     /// In that case exiting the interrupt will reenable interrupts.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// * must only be called once for each call to [CoreLocals::disable_interrupts]
     /// * caller must ensure that interrupts are save
@@ -226,7 +226,7 @@ impl CoreLocals {
 
     /// Disable interrupts and increment [Self::interrupt_count]
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// caller must ensure that interrupts can be safely disabled
     pub unsafe fn disable_interrupts(&self) {

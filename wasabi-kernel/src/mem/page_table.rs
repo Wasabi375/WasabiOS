@@ -66,7 +66,7 @@ impl<T> PageTable<T> {
     ///
     /// See: [Mapper::map_to_with_table_flags]
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// The caller must ensure that by creating this page-frame mapping all
     /// of rusts safety guarantees are fullfilled
@@ -123,7 +123,7 @@ impl<T> PageTable<T> {
     ///
     /// To get the current flags of a mapping see [translate]
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// The caller must ensure that by creating this page-frame mapping all
     /// of rusts safety guarantees are fullfilled

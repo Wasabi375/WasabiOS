@@ -298,7 +298,7 @@ impl<'a> FrameAllocator<'a> {
     /// cached allocated frame. Otherwise it will be the frame
     /// starting at address 0
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// The Frame should only be used for guard pages and is not guaranteed to be a valid
     /// phyisical address

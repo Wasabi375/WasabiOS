@@ -58,13 +58,13 @@ where
 pub trait LockCellInternal<T> {
     /// Returns a reference to the data behind the mutex
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// this thread needs to hold the lock
     unsafe fn get(&self) -> &T;
     /// Returns a mutable reference to the data behind the mutex
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// this thread needs to hold the lock
     #[allow(clippy::mut_from_ref)]
@@ -72,7 +72,7 @@ pub trait LockCellInternal<T> {
 
     /// unlocks the mutex
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// this should only be called when the [LockCellGuard] corresponding to
     /// this [LockCell] is droped.
@@ -82,7 +82,7 @@ pub trait LockCellInternal<T> {
     ///
     /// This will reset the interrupt state, just like dropping [LockCellGuard] would.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// the caller ensures that there the guard from [LockCell::lock] is inaccessible.
     /// It is not save to call this, if there is no corresponding `lock` call.
@@ -132,7 +132,7 @@ pub struct LockCellGuard<'l, T, M: ?Sized + LockCellInternal<T>> {
 impl<'l, T, M: ?Sized + LockCellInternal<T>> LockCellGuard<'l, T, M> {
     /// creates a new guard. This should only be called if you implement a [LockCell].
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// The caller must ensure that only 1 LockClellGuard exists for any given
     /// `lockcell` at a time.
@@ -257,7 +257,7 @@ pub struct ReadCellGuard<'l, T, M: ?Sized + RWCellInternal<T>> {
 impl<'l, T, M: ?Sized + RWCellInternal<T>> ReadCellGuard<'l, T, M> {
     /// creates a new guard. This should only be called if you implement a [RWLockCell].
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// The caller must ensure that only 1 [LockCellGuard] exists for any given
     /// `rw_cell` at a time or multiple [ReadCellGuard]s
@@ -712,7 +712,7 @@ unsafe impl<T: Send, L: LockCell<MaybeUninit<T>>> Sync for UnwrapLock<T, L> {}
 impl<T: Send, L: LockCell<MaybeUninit<T>>> UnwrapLock<T, L> {
     /// creates a new [UnwrapLock] from the given `inner` [LockCell]
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// the caller ensures that the lock is initialized with a value, before
     /// [UnwrapLock::lock] is called.

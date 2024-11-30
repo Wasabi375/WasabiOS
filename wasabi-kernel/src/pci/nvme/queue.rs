@@ -664,7 +664,7 @@ impl Drop for CommandQueue {
         flush.flush();
 
         unsafe {
-            // # Safety:
+            // # Safety
             //
             // frames are no longer used, because we hold the only references
             // directly into the queue.

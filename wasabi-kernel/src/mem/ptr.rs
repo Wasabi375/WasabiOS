@@ -32,7 +32,7 @@ pub struct UntypedPtr(NonNull<u8>);
 impl UntypedPtr {
     /// Constructs a new [UntypedPtr]
     ///
-    /// # Safety:
+    /// # Safety
     /// The caller must guarantee that `ptr` is mapped in the current context
     pub unsafe fn new(vaddr: VirtAddr) -> Option<Self> {
         NonNull::new(vaddr.as_mut_ptr()).map(|ptr| ptr.into())
@@ -40,7 +40,7 @@ impl UntypedPtr {
 
     /// Constructs a new [UntypedPtr]
     ///
-    /// # Safety:
+    /// # Safety
     /// The caller must guarantee that `ptr` is mapped in the current context and not null
     pub unsafe fn new_unchecked(vaddr: VirtAddr) -> Self {
         unsafe { NonNull::new_unchecked(vaddr.as_mut_ptr()).into() }
@@ -48,7 +48,7 @@ impl UntypedPtr {
 
     /// Constructs a new [UntypedPtr]
     ///
-    /// # Safety:
+    /// # Safety
     /// The caller must guarantee that the page is mapped in the current context
     pub unsafe fn new_from_page<S: PageSize>(page: Page<S>) -> Option<Self> {
         unsafe { Self::new(page.start_address()) }
@@ -56,7 +56,7 @@ impl UntypedPtr {
 
     /// Constructs a new [UntypedPtr]
     ///
-    /// # Safety:
+    /// # Safety
     /// The caller must guarantee that `ptr` is mapped in the current context
     pub unsafe fn new_from_raw(ptr: *mut u8) -> Option<Self> {
         NonNull::new(ptr).map(|ptr| ptr.into())

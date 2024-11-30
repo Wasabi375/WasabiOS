@@ -74,7 +74,7 @@ pub trait InterruptState: CoreInfo + 'static {
     /// interrupts. This is also a prequisite for a lock to be taken within an
     /// interrupt.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// * Caller must call [InterruptState::exit_lock] exactly once with the
     ///     same parameter for `enable_interrupts`
@@ -85,7 +85,7 @@ pub trait InterruptState: CoreInfo + 'static {
     /// Signal the kernel that a lock was released. If `enable_interrupts` the
     /// kernel will reenable interrupts if possible.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// * caller must ensure that this function is called exactly once per invocation
     ///     of [InterruptState::enter_lock] with the same parameter.
@@ -113,7 +113,7 @@ pub trait InterruptState: CoreInfo + 'static {
     /// interrupts. This is also a prequisite for a lock to be taken within an
     /// interrupt.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// * Caller must call [InterruptState::exit_lock] exactly once with the
     ///     same parameter for `enable_interrupts`
@@ -129,7 +129,7 @@ pub trait InterruptState: CoreInfo + 'static {
     /// Signal the kernel that a lock was released. If `enable_interrupts` the
     /// kernel will reenable interrupts if possible.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// * caller must ensure that this function is called exactly once per invocation
     ///     of [InterruptState::enter_lock] with the same parameter.

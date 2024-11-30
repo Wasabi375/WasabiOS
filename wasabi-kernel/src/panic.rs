@@ -79,7 +79,7 @@ enum CoreDisableResult {
 
 /// Disables all other cores and interrupts.
 ///
-/// # Safety:
+/// # Safety
 ///
 /// This should only be called from panics.
 /// The caller must guarantee that `payload` has a static lifetime relative to
@@ -143,7 +143,7 @@ unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> CoreDisableResul
 /// This is done by recreating all resources that loggers depend on
 /// or if that is not possible, disabling that logger
 ///
-/// # Safety:
+/// # Safety
 ///
 /// This should onl be called from panics, after all multicore and interrupts are
 /// disabled and the framebuffer is useable
@@ -179,7 +179,7 @@ static mut SERIAL_LOGGER: Option<
 
 /// Ensures frambuffer is accessible during panic
 ///
-/// # Safety:
+/// # Safety
 ///
 /// This should onl be called from panics, after all multicore and interrupts are
 /// disabled. This function dose not require logging.

@@ -34,7 +34,7 @@ pub fn apic_id() -> u8 {
 /// This will fail with an invalid opcode exception (#UD) if we are not
 /// running on a valid intel cpu that supports apic.
 ///
-/// # Safety:
+/// # Safety
 ///
 /// This can always fault, depending on the hardware. No way around it.
 pub unsafe fn check_cpuid_usable() {

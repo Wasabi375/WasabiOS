@@ -146,7 +146,7 @@ impl From<UnmapError> for MemError {
 /// initialize memory: phys allocator, page allocator page table as well as
 /// kernel heap allocator.
 ///
-/// # Safety:
+/// # Safety
 ///
 /// Must be called only once during kernel boot process on bsp. Requires locks and logging
 pub unsafe fn init() {

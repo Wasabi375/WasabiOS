@@ -190,7 +190,7 @@ pub trait Allocator {
     /// free a pointer with a given [Layout]. This can fail with [MemError],
     /// e.g. when the `ptr` was not allocated by this [Allocator]
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// the caller must ensure that the ptr and layout match
     /// and that the ptr was allocated by this [Allocator]
@@ -205,7 +205,7 @@ pub trait MutAllocator {
     /// free a pointer with a given [Layout]. This can fail with [MemError],
     /// e.g. when the `ptr` was not allocated by this [Allocator]
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// the caller must ensure that the ptr and layout match
     /// and that the ptr was allocated by this [MutAllocator]
@@ -420,7 +420,7 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
 
     /// creates a new Slab Allocator
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// caller ensures that [SlabAllocator::init] is the first function called
     /// on self.

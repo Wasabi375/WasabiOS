@@ -12,7 +12,7 @@ use log::trace;
 
 /// Calculates the u8 sum, using wrapping addition
 ///
-/// # Safety:
+/// # Safety
 ///
 /// `start` to `start + (length -1)` must be safe to dereference
 unsafe fn wrapping_sum<T: ?Sized>(start: &T, length: usize) -> u8 {
@@ -75,7 +75,7 @@ pub struct XSDT {
 impl XSDT {
     /// converts vaddr to [XSDT] and checks that it is valid
     ///
-    /// # Safety: vaddr must point to valid XSDT struct
+    /// # Safety vaddr must point to valid XSDT struct
     pub unsafe fn from_ptr(ptr: UntypedPtr) -> Result<Self, AcpiError> {
         // see function definition
         let header: &Header = unsafe { ptr.as_ref() };
@@ -119,7 +119,7 @@ pub enum AcpiTable {
 impl AcpiTable {
     /// converts vaddr to [AcpiTable] and checks that it is valid
     ///
-    /// # Safety: vaddr must point to valid [Header] struct followed by its data
+    /// # Safety vaddr must point to valid [Header] struct followed by its data
     pub unsafe fn from_ptr(ptr: UntypedPtr) -> Result<Self, AcpiError> {
         // see function definition
         let header: &Header = unsafe { ptr.as_ref() };
