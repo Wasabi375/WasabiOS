@@ -1,9 +1,12 @@
 use core::char::{decode_utf16, REPLACEMENT_CHARACTER};
+use core::fmt::Debug;
 use core::ops::{Bound, RangeBounds};
 use core::str::{
     self, from_utf8, from_utf8_unchecked,
     pattern::{Pattern, Searcher},
 };
+
+use shared::math::Number;
 
 pub use self::string_errors::StringError;
 use self::string_utils::{
@@ -41,11 +44,21 @@ mod string_utils;
 ///   Ok(())
 /// }
 /// ```
-pub struct StaticString<const N: usize> {
-    pub(crate) vec: StaticVec<u8, N>,
+pub struct StaticString<const N: usize, L = usize>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+    pub(crate) vec: StaticVec<u8, N, L>,
 }
 
-impl<const N: usize> StaticString<N> {
+impl<const N: usize, L> StaticString<N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     /// Returns a new StaticString instance.
     ///
     /// # Example usage:
@@ -68,7 +81,7 @@ impl<const N: usize> StaticString<N> {
     /// docs and give it a two-underscore prefix as the next best thing.
     #[doc(hidden)]
     #[inline(always)]
-    pub const unsafe fn __new_from_staticvec(vec: StaticVec<u8, N>) -> Self {
+    pub const unsafe fn __new_from_staticvec(vec: StaticVec<u8, N, L>) -> Self {
         Self { vec }
     }
 
@@ -143,7 +156,7 @@ impl<const N: usize> StaticString<N> {
     /// Creates a new StaticString from the contents of an iterator, returning immediately if and when
     /// the StaticString reaches maximum capacity regardless of whether or not the iterator still has
     /// more items to yield.
-    ///
+    //
     /// # Example usage:
     /// ```
     /// # use staticvec::{StaticString, StringError};
@@ -162,7 +175,7 @@ impl<const N: usize> StaticString<N> {
         let mut res = Self::new();
         for s in iter {
             let s_ref = s.as_ref();
-            match res.remaining_capacity() < s_ref.len() {
+            match res.remaining_capacity().try_into().unwrap() < s_ref.len() {
                 false => unsafe { res.push_str_unchecked(s_ref) },
                 true => break,
             }
@@ -212,7 +225,7 @@ impl<const N: usize> StaticString<N> {
     pub fn from_chars<I: IntoIterator<Item = char>>(iter: I) -> Self {
         let mut res = Self::new();
         for c in iter {
-            match res.remaining_capacity() < c.len_utf8() {
+            match res.remaining_capacity().try_into().unwrap() < c.len_utf8() {
                 false => unsafe { res.push_unchecked(c) },
                 true => break,
             }
@@ -479,7 +492,7 @@ impl<const N: usize> StaticString<N> {
     /// assert_eq!(&bytes[..], &[104, 101, 108, 108, 111][..]);
     /// ```
     #[inline(always)]
-    pub fn into_bytes(self) -> StaticVec<u8, N> {
+    pub fn into_bytes(self) -> StaticVec<u8, N, L> {
         self.vec
     }
 
@@ -521,7 +534,7 @@ impl<const N: usize> StaticString<N> {
     /// # }
     /// ```
     #[inline(always)]
-    pub unsafe fn as_mut_staticvec(&mut self) -> &mut StaticVec<u8, N> {
+    pub unsafe fn as_mut_staticvec(&mut self) -> &mut StaticVec<u8, N, L> {
         &mut self.vec
     }
 
@@ -548,7 +561,7 @@ impl<const N: usize> StaticString<N> {
     /// assert_eq!(StaticString::<32>::from("abcd").remaining_capacity(), 28);
     /// ```
     #[inline(always)]
-    pub fn remaining_capacity(&self) -> usize {
+    pub fn remaining_capacity(&self) -> L {
         self.vec.remaining_capacity()
     }
 
@@ -570,8 +583,8 @@ impl<const N: usize> StaticString<N> {
     #[inline(always)]
     pub unsafe fn push_str_unchecked(&mut self, string: &str) {
         let string_length = string.len();
-        debug_assert!(string_length <= self.remaining_capacity());
-        let old_length = self.len();
+        debug_assert!(string_length <= self.remaining_capacity().try_into().unwrap());
+        let old_length = self.len().try_into().unwrap();
         push_str_unchecked_internal!(self, string, old_length, string_length);
     }
 
@@ -593,7 +606,7 @@ impl<const N: usize> StaticString<N> {
         // them while turning something *into* a `const fn` is fully backwards compatible, though.
         let string_ref = string.as_ref();
         let string_length = string_ref.len();
-        let old_length = self.vec.length;
+        let old_length: usize = self.vec.length.try_into().unwrap();
         assert!(
             string_length <= N - old_length,
             "Insufficient remaining capacity!"
@@ -621,7 +634,10 @@ impl<const N: usize> StaticString<N> {
     #[inline(always)]
     pub fn push_str_truncating<S: AsRef<str>>(&mut self, string: S) {
         unsafe {
-            self.push_str_unchecked(truncate_str(string.as_ref(), self.remaining_capacity()))
+            self.push_str_unchecked(truncate_str(
+                string.as_ref(),
+                self.remaining_capacity().try_into().unwrap(),
+            ))
         };
     }
 
@@ -643,7 +659,7 @@ impl<const N: usize> StaticString<N> {
     /// # }
     /// ```
     #[inline(always)]
-    pub fn as_truncating(&mut self) -> TruncatingWrite<'_, N> {
+    pub fn as_truncating(&mut self) -> TruncatingWrite<'_, N, L> {
         TruncatingWrite { string: self }
     }
 
@@ -663,7 +679,7 @@ impl<const N: usize> StaticString<N> {
     pub fn try_push_str<S: AsRef<str>>(&mut self, string: S) -> Result<(), CapacityError<N>> {
         let string_ref = string.as_ref();
         let string_length = string_ref.len();
-        let old_length = self.vec.length;
+        let old_length: usize = self.vec.length.try_into().unwrap();
         if N - old_length < string_length {
             Err(CapacityError {})
         } else {
@@ -715,7 +731,7 @@ impl<const N: usize> StaticString<N> {
     pub fn push(&mut self, character: char) {
         let char_len = character.len_utf8();
         assert!(
-            char_len <= self.remaining_capacity(),
+            char_len <= self.remaining_capacity().try_into().unwrap(),
             "Insufficient remaining capacity!"
         );
         push_char_unchecked_internal!(self, character as u32, char_len);
@@ -739,7 +755,7 @@ impl<const N: usize> StaticString<N> {
     #[inline(always)]
     pub fn try_push(&mut self, character: char) -> Result<(), StringError> {
         let char_len = character.len_utf8();
-        match self.remaining_capacity() < char_len {
+        match self.remaining_capacity() < char_len.try_into().unwrap() {
             false => {
                 push_char_unchecked_internal!(self, character as u32, char_len);
                 Ok(())
@@ -766,9 +782,9 @@ impl<const N: usize> StaticString<N> {
     /// // s2.truncate(1);
     /// ```
     #[inline(always)]
-    pub fn truncate(&mut self, new_len: usize) {
+    pub fn truncate(&mut self, new_len: L) {
         if new_len <= self.len() {
-            assert!(str_is_char_boundary(self, new_len));
+            assert!(str_is_char_boundary(self, new_len.try_into().unwrap()));
             unsafe { self.vec.set_len(new_len) };
         }
     }
@@ -790,7 +806,10 @@ impl<const N: usize> StaticString<N> {
     #[inline(always)]
     pub fn pop(&mut self) -> Option<char> {
         self.as_str().chars().last().map(|character| {
-            unsafe { self.vec.set_len(self.len() - character.len_utf8()) };
+            unsafe {
+                self.vec
+                    .set_len(self.len() - character.len_utf8().try_into().unwrap())
+            };
             character
         })
     }
@@ -816,7 +835,9 @@ impl<const N: usize> StaticString<N> {
             debug_assert!(index < bytes.len());
             unsafe { bytes.get_unchecked(index) == &b' ' }
         };
-        let (mut start, mut end, mut leave) = (0_usize, self.len(), 0_usize);
+        let mut start = 0_usize;
+        let mut end: usize = self.len().try_into().unwrap();
+        let mut leave = 0_usize;
         while start < end && leave < 2 {
             leave = 0;
             if is_whitespace(self.as_bytes(), start) {
@@ -834,8 +855,8 @@ impl<const N: usize> StaticString<N> {
             }
         }
         unsafe {
-            shift_left_unchecked!(self, start, 0usize);
-            self.vec.set_len(end - start)
+            shift_left_unchecked!(self, TryInto::<usize>::try_into(start).unwrap(), 0usize);
+            self.vec.set_len((end - start).try_into().unwrap())
         };
     }
 
@@ -852,7 +873,8 @@ impl<const N: usize> StaticString<N> {
     /// assert!(s == "BC🤔");
     /// ```
     #[inline]
-    pub fn remove(&mut self, index: usize) -> char {
+    pub fn remove(&mut self, index: L) -> char {
+        let index: usize = index.try_into().unwrap();
         assert!(
             self.as_str().is_char_boundary(index),
             "Out of bounds or invalid character boundary!"
@@ -863,7 +885,8 @@ impl<const N: usize> StaticString<N> {
         let char_length = character.len_utf8();
         unsafe {
             shift_left_unchecked!(self, index + char_length, index);
-            self.vec.set_len(old_length - char_length);
+            self.vec
+                .set_len(old_length - char_length.try_into().unwrap());
         }
         character
     }
@@ -890,7 +913,7 @@ impl<const N: usize> StaticString<N> {
     #[inline]
     pub fn remove_matches<'a, P: Pattern>(&'a mut self, pat: P) {
         let old_length = self.len();
-        if old_length == 0 {
+        if old_length == L::ZERO {
             return;
         }
         let mut matches = StaticVec::<(usize, usize), N>::new();
@@ -911,14 +934,15 @@ impl<const N: usize> StaticString<N> {
         for (start, end) in &matches {
             // Safety: `start` and `end` will be on UTF-8 byte boundaries per the `Searcher` docs.
             unsafe {
-                vec_ptr
-                    .add(end - shrunk_by)
-                    .copy_to(vec_ptr.add(start - shrunk_by), old_length - end);
+                vec_ptr.add(end - shrunk_by).copy_to(
+                    vec_ptr.add(start - shrunk_by),
+                    old_length.try_into().unwrap() - end,
+                );
             }
             shrunk_by += end - start;
         }
         unsafe {
-            self.vec.set_len(old_length - shrunk_by);
+            self.vec.set_len(old_length - shrunk_by.try_into().unwrap());
         }
     }
 
@@ -971,9 +995,10 @@ impl<const N: usize> StaticString<N> {
     /// # }
     /// ```
     #[inline(always)]
-    pub unsafe fn insert_unchecked(&mut self, index: usize, character: char) {
+    pub unsafe fn insert_unchecked(&mut self, index: L, character: char) {
         let char_length = character.len_utf8();
-        shift_right_unchecked!(self, index, index + char_length);
+        let index_u: usize = index.try_into().unwrap();
+        shift_right_unchecked!(self, index_u, index_u + char_length);
         encode_char_utf8_unchecked(self, character, index);
     }
 
@@ -1000,9 +1025,9 @@ impl<const N: usize> StaticString<N> {
     /// # }
     /// ```
     #[inline(always)]
-    pub fn try_insert(&mut self, index: usize, character: char) -> Result<(), StringError> {
-        is_inside_boundary(character.len_utf8() + self.len(), N)?;
-        is_char_boundary(self, index)?;
+    pub fn try_insert(&mut self, index: L, character: char) -> Result<(), StringError> {
+        is_inside_boundary(character.len_utf8() + self.len().try_into().unwrap(), N)?;
+        is_char_boundary(self, index.try_into().unwrap())?;
         unsafe { self.insert_unchecked(index, character) };
         Ok(())
     }
@@ -1023,7 +1048,7 @@ impl<const N: usize> StaticString<N> {
     /// assert_eq!(s, "foo");
     /// ```
     #[inline(always)]
-    pub fn insert(&mut self, index: usize, character: char) {
+    pub fn insert(&mut self, index: L, character: char) {
         self.try_insert(index, character).unwrap();
     }
 
@@ -1056,13 +1081,20 @@ impl<const N: usize> StaticString<N> {
     /// // unsafe { s.insert_str_unchecked(1, "0".repeat(20)) };
     /// ```
     #[inline]
-    pub unsafe fn insert_str_unchecked<S: AsRef<str>>(&mut self, index: usize, string: S) {
+    pub unsafe fn insert_str_unchecked<S: AsRef<str>>(&mut self, index: L, string: S) {
         let string_ref = string.as_ref();
-        let string_length = string_ref.len();
+        let string_length: L = string_ref.len().try_into().unwrap();
         debug_assert!(string_length <= self.remaining_capacity());
         let string_ptr = string_ref.as_ptr();
-        shift_right_unchecked!(self, index, index + string_length);
-        string_ptr.copy_to_nonoverlapping(self.vec.mut_ptr_at_unchecked(index), string_length);
+        shift_right_unchecked!(
+            self,
+            index.try_into().unwrap(),
+            (index + string_length).try_into().unwrap()
+        );
+        string_ptr.copy_to_nonoverlapping(
+            self.vec.mut_ptr_at_unchecked(index),
+            string_length.try_into().unwrap(),
+        );
         self.vec.set_len(self.len() + string_length);
     }
 
@@ -1082,11 +1114,12 @@ impl<const N: usize> StaticString<N> {
     /// assert_eq!(s.as_str(), "ABCABBCD🤔");
     /// ```
     #[inline(always)]
-    pub fn insert_str<S: AsRef<str>>(&mut self, index: usize, string: S) {
+    pub fn insert_str<S: AsRef<str>>(&mut self, index: L, string: S) {
         let string_ref = string.as_ref();
-        let string_length = string_ref.len();
+        let string_length: L = string_ref.len().try_into().unwrap();
         assert!(
-            string_length <= self.remaining_capacity() && self.as_str().is_char_boundary(index),
+            string_length <= self.remaining_capacity()
+                && self.as_str().is_char_boundary(index.try_into().unwrap()),
             "Insufficient remaining capacity or invalid character boundary!"
         );
         unsafe { self.insert_str_unchecked(index, string_ref) };
@@ -1116,12 +1149,12 @@ impl<const N: usize> StaticString<N> {
     #[inline]
     pub fn try_insert_str<S: AsRef<str>>(
         &mut self,
-        index: usize,
+        index: L,
         string: S,
     ) -> Result<(), StringError> {
         let string_ref = string.as_ref();
-        is_inside_boundary(self.len() + string_ref.len(), N)?;
-        is_char_boundary(self, index)?;
+        is_inside_boundary(self.len().try_into().unwrap() + string_ref.len(), N)?;
+        is_char_boundary(self, index.try_into().unwrap())?;
         unsafe { self.insert_str_unchecked(index, string_ref) };
         Ok(())
     }
@@ -1137,7 +1170,7 @@ impl<const N: usize> StaticString<N> {
     /// assert_eq!(s.len(), 8);
     /// ```
     #[inline(always)]
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> L {
         self.vec.len()
     }
 
@@ -1194,13 +1227,14 @@ impl<const N: usize> StaticString<N> {
     /// assert_eq!(cd, "CD");
     /// ```
     #[inline(always)]
-    pub fn split_off(&mut self, at: usize) -> Self {
+    pub fn split_off(&mut self, at: L) -> Self {
         assert!(
-            at <= self.len() && str_is_char_boundary(self.as_str(), at),
+            at <= self.len() && str_is_char_boundary(self.as_str(), at.try_into().unwrap()),
             "Out of bounds or invalid character boundary!"
         );
         unsafe {
-            let res = Self::from_utf8_unchecked(self.as_str().get_unchecked(at..));
+            let res =
+                Self::from_utf8_unchecked(self.as_str().get_unchecked(at.try_into().unwrap()..));
             self.vec.set_len(at);
             res
         }
@@ -1221,7 +1255,7 @@ impl<const N: usize> StaticString<N> {
     /// ```
     #[inline(always)]
     pub fn clear(&mut self) {
-        unsafe { self.vec.set_len(0) };
+        unsafe { self.vec.set_len(L::ZERO) };
     }
 
     /// Removes the specified range from the StaticString and replaces it with the provided input
@@ -1239,7 +1273,7 @@ impl<const N: usize> StaticString<N> {
     #[inline]
     pub fn replace_range<S: AsRef<str>, R: RangeBounds<usize>>(&mut self, range: R, with: S) {
         let replace_with = with.as_ref();
-        let old_length = self.len();
+        let old_length: usize = self.len().try_into().unwrap();
         let start = match range.start_bound() {
             Bound::Included(t) => *t,
             Bound::Excluded(t) => t + 1,
@@ -1267,7 +1301,8 @@ impl<const N: usize> StaticString<N> {
                 let mp = self.vec.as_mut_ptr();
                 mp.add(end)
                     .copy_to(mp.add(start), old_length.saturating_sub(end));
-                self.vec.set_len(old_length.saturating_sub(replaced));
+                self.vec
+                    .set_len(old_length.saturating_sub(replaced).try_into().unwrap());
             }
         } else {
             if start + replace_length > end {
@@ -1283,7 +1318,10 @@ impl<const N: usize> StaticString<N> {
             let dest = unsafe { self.vec.as_mut_ptr().add(start) };
             unsafe { ptr.copy_to_nonoverlapping(dest, replace_length) };
             let grow: isize = replace_length as isize - replaced as isize;
-            unsafe { self.vec.set_len((old_length as isize + grow) as usize) };
+            unsafe {
+                self.vec
+                    .set_len(((old_length as isize + grow) as usize).try_into().unwrap())
+            };
         }
     }
 }
@@ -1291,11 +1329,21 @@ impl<const N: usize> StaticString<N> {
 /// A wrapper for a [StaticString] that implements [core::fmt::Write]
 /// but unlike [StaticString] truncates if the string is full instead of
 /// failing.
-pub struct TruncatingWrite<'a, const N: usize> {
-    pub(crate) string: &'a mut StaticString<N>,
+pub struct TruncatingWrite<'a, const N: usize, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+    pub(crate) string: &'a mut StaticString<N, L>,
 }
 
-impl<const N: usize> core::fmt::Write for TruncatingWrite<'_, N> {
+impl<const N: usize, L> core::fmt::Write for TruncatingWrite<'_, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         self.string.push_str_truncating(s);
         Ok(())
