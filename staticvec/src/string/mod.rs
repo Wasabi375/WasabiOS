@@ -140,7 +140,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let string = StaticString::<20>::from("My String");
+    /// let string = StaticString::<20>::try_from("My String").unwrap();
     /// assert_eq!(string.as_str(), "My String");
     /// assert_eq!(StaticString::<20>::try_from_str("").unwrap().as_str(), "");
     /// let out_of_bounds = "0".repeat(21);
@@ -487,7 +487,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let s = StaticString::<5>::from("hello");
+    /// let s = StaticString::<5>::try_from("hello").unwrap();
     /// let bytes = s.into_bytes();
     /// assert_eq!(&bytes[..], &[104, 101, 108, 108, 111][..]);
     /// ```
@@ -558,7 +558,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// assert_eq!(StaticString::<32>::from("abcd").remaining_capacity(), 28);
+    /// assert_eq!(StaticString::<32>::try_from("abcd").unwrap().remaining_capacity(), 28);
     /// ```
     #[inline(always)]
     pub fn remaining_capacity(&self) -> L {
@@ -576,7 +576,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::{StaticString};
-    /// let mut s = StaticString::<6>::from("foo");
+    /// let mut s = StaticString::<6>::try_from("foo").unwrap();
     /// unsafe { s.push_str_unchecked("bar") };
     /// assert_eq!(s, "foobar");
     /// ```
@@ -594,7 +594,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::{StaticString};
-    /// let mut s = StaticString::<6>::from("foo");
+    /// let mut s = StaticString::<6>::try_from("foo").unwrap();
     /// s.push_str("bar");
     /// assert_eq!(s, "foobar");
     /// ```
@@ -626,8 +626,8 @@ where
     /// s.push_str_truncating(" My other String");
     /// assert_eq!(s.as_str(), "My String My other String");
     /// let mut s = StaticString::<20>::new();
-    /// s.push_str_truncating("0".repeat(21));
-    /// assert_eq!(s.as_str(), "0".repeat(20).as_str());
+    /// s.push_str_truncating("000000000000000000000");
+    /// assert_eq!(s.as_str(),"00000000000000000000");
     /// # Ok(())
     /// # }
     /// ```
@@ -648,13 +648,14 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::{StaticString, StringError};
+    /// # use core::fmt::Write;
     /// # fn main() -> Result<(), StringError> {
     /// let mut s = StaticString::<15>::try_from_str("My String")?;
     /// s.as_truncating().write_str("!123456789 everything after 5 will be truncated");
     /// assert_eq!(s.as_str(), "My String!12345");
-    /// let mut s = StaticSTring::<20>::new();
-    /// s.as_truncationg().write_str("0".repeate(21).as_strt());
-    /// assert_eq!(s.as_str(), "0".repeate(20).as_str());
+    /// let mut s = StaticString::<20>::new();
+    /// s.as_truncating().write_str("000000000000000000000");
+    /// assert_eq!(s.as_str(),       "00000000000000000000");
     /// # Ok(())
     /// # }
     /// ```
@@ -670,7 +671,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let mut s = StaticString::<300>::from("My String");
+    /// let mut s = StaticString::<300>::try_from("My String").unwrap();
     /// s.try_push_str(" My other String").unwrap();
     /// assert_eq!(s.as_str(), "My String My other String");
     /// assert!(s.try_push_str("0".repeat(300)).is_err());
@@ -771,14 +772,14 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let mut s = StaticString::<20>::from("My String");
+    /// let mut s = StaticString::<20>::try_from("My String").unwrap();
     /// s.truncate(5);
     /// assert_eq!(s, "My St");
     /// // Does nothing
     /// s.truncate(6);
     /// assert_eq!(s, "My St");
     /// // Would panic
-    /// // let mut s2 = StaticString::<20>::from("🤔");
+    /// // let mut s2 = StaticString::<20>::try_from("🤔").unwrap();
     /// // s2.truncate(1);
     /// ```
     #[inline(always)]
@@ -866,7 +867,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let mut s = StaticString::<20>::from("ABCD🤔");
+    /// let mut s = StaticString::<20>::try_from("ABCD🤔").unwrap();
     /// assert_eq!(s.remove(0), 'A');
     /// assert!(s == "BCD🤔");
     /// assert_eq!(s.remove(2), 'D');
@@ -952,7 +953,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let mut s = StaticString::<20>::from("ABCD🤔");
+    /// let mut s = StaticString::<20>::try_from("ABCD🤔").unwrap();
     /// s.retain(|c| c != '🤔');
     /// assert_eq!(s, "ABCD");
     /// ```
@@ -1108,7 +1109,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let mut s = StaticString::<20>::from("ABCD🤔");
+    /// let mut s = StaticString::<20>::try_from("ABCD🤔").unwrap();
     /// s.insert_str(1, "AB");
     /// s.insert_str(1, "BC");
     /// assert_eq!(s.as_str(), "ABCABBCD🤔");
@@ -1164,7 +1165,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let mut s = StaticString::<20>::from("ABCD");
+    /// let mut s = StaticString::<20>::try_from("ABCD").unwrap();
     /// assert_eq!(s.len(), 4);
     /// s.push('🤔');
     /// assert_eq!(s.len(), 8);
@@ -1221,7 +1222,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let mut ab = StaticString::<4>::from("ABCD");
+    /// let mut ab = StaticString::<4>::try_from("ABCD").unwrap();
     /// let cd = ab.split_off(2);
     /// assert_eq!(ab, "AB");
     /// assert_eq!(cd, "CD");
@@ -1266,7 +1267,7 @@ where
     /// # Example usage:
     /// ```
     /// # use staticvec::StaticString;
-    /// let mut s = StaticString::<20>::from("ABCD🤔");
+    /// let mut s = StaticString::<20>::try_from("ABCD🤔").unwrap();
     /// s.replace_range(2..4, "EFGHI");
     /// assert_eq!(s.as_str(), "ABEFGHI🤔");
     /// ```

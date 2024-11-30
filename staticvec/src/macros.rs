@@ -251,11 +251,12 @@ macro_rules! sortedstaticvec {
 /// # Examples
 ///
 /// ```
-/// format_static!("test");
-/// format_static!("hello {}", "world!");
-/// format_static!("x = {}, y = {y}", 10, y = 30);
+/// use staticvec::format_static;
+/// format_static!(4, "test");
+/// format_static!(12, "hello {}", "world!");
+/// format_static!(14, "x = {}, y = {y}", 10, y = 30);
 /// let (x, y) = (1, 2);
-/// format_static!("{x} + {y} = 3");
+/// format_static!(9, "{x} + {y} = 3");
 /// ```
 #[macro_export]
 macro_rules! format_static {
@@ -264,7 +265,7 @@ macro_rules! format_static {
         use core::fmt::Write;
         use $crate::StaticString;
 
-        fn format_inner(args: Arguments<'_>) -> StaticString<$len> {
+        fn format_inner(args: Arguments<'_>) -> StaticString<$len, usize> {
             let mut string = StaticString::new();
             string.write_fmt(args).unwrap();
             string
