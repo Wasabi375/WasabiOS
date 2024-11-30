@@ -56,6 +56,12 @@ impl Barrier {
     }
 
     /// set the number of processors that are currently waiting at the barrier
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee that changing the target won't invalidate the barrier for
+    /// waiting processors. This generally means that this has to be called when only 1
+    /// processor has access to the barrier and the barrier is not yet in use.
     pub unsafe fn set_target(&self, target: u32, ordering: Ordering) {
         self.target.store(target, ordering)
     }
@@ -251,7 +257,7 @@ impl<T, I> DataBarrier<T, I> {
 
     /// set the number of processors that are currently waiting at the barrier
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// Caller must guarantee that changing the target won't invalidate the barrier for
     /// waiting processors
@@ -328,7 +334,7 @@ impl<T: Send, I: InterruptState> DataBarrier<T, I> {
     }
 }
 
-impl<'l, T, I: InterruptState> DataBarrierGuard<'l, T, I> {
+impl<T, I: InterruptState> DataBarrierGuard<'_, T, I> {
     /// returns `true` if this was created on the processor that first
     /// reached the barrier
     pub fn is_leader(&self) -> bool {

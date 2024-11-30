@@ -67,6 +67,7 @@ pub trait LockCellInternal<T> {
     /// # Safety:
     ///
     /// this thread needs to hold the lock
+    #[allow(clippy::mut_from_ref)]
     unsafe fn get_mut(&self) -> &mut T;
 
     /// unlocks the mutex

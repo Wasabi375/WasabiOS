@@ -361,7 +361,7 @@ impl Display for Duration {
             unit_type = unit_type.or(Some(Duration::new_seconds(0).multiplier_name()));
         }
 
-        if (scaled > 0 && scaled >= Duration::MILLIS_MUL) || write_rest {
+        if (scaled >= Duration::MILLIS_MUL) || write_rest {
             let millis = scaled / Duration::MILLIS_MUL;
             f.write_fmt(format_args!("{:0>3}", millis))?;
             scaled -= millis * Duration::MILLIS_MUL;

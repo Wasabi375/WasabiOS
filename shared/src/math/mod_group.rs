@@ -72,6 +72,7 @@ where
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl<T> Add<T> for WrappingValue<T>
 where
     T: UnsingedNumber,

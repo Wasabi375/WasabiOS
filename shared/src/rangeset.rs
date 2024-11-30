@@ -26,6 +26,7 @@
 //! `u64` inclusive ranges. The `RangeSet` can be used to insert or remove
 //! ranges of `u64`s and thus is very useful for physical memory management.
 
+#![allow(clippy::all)]
 use core::cmp;
 
 /// An inclusive range. We do not use `RangeInclusive` as it does not implement
@@ -403,10 +404,7 @@ impl<const N: usize> RangeSet<N> {
 
         allocation.map(|(base, end, ptr)| {
             // Remove this range from the available set
-            self.remove(Range {
-                start: base,
-                end: end,
-            });
+            self.remove(Range { start: base, end });
 
             // Return out the pointer!
             ptr
