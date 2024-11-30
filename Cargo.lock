@@ -2075,10 +2075,10 @@ name = "wfs"
 version = "0.1.0"
 dependencies = [
  "bit_field",
- "bitflags 2.6.0",
+ "bitflags 2.8.0",
  "static_assertions",
  "staticvec",
- "thiserror-core",
+ "thiserror",
 ]
 
 [[package]]
