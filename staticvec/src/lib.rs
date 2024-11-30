@@ -2711,10 +2711,10 @@ where
     /// # Example usage
     /// ```
     /// # use staticvec::StaticVec;
-    /// let v = StaticVec::<i32, u8, 4>::new();
+    /// let mut v = StaticVec::<i32, 4, u8>::new();
     /// v.push(1);
     /// assert_eq!(v.len(), 1u8);
-    /// let v = v.cast_length::<usize>();
+    /// let mut v = v.cast_length::<usize, _>().unwrap();
     /// assert_eq!(v.len(), 1usize);
     /// ```
     pub fn cast_length<L2, E>(self) -> Result<StaticVec<T, N, L2>, E>
@@ -2752,15 +2752,15 @@ where
 {
     /// Clone the vector and also casts the lenght type to `L2`
     ///
-    /// This will panic if `TryInto::<L2>(length)` panics for any `length < N`.
+    /// This may panic if `TryInto::<L2>(length)` panics for any `length < N`.
     ///
     /// # Example usage
     /// ```
     /// # use staticvec::StaticVec;
-    /// let v = StaticVec::<i32, u8, 4>::new();
+    /// let mut v = StaticVec::<i32, 4, u8>::new();
     /// v.push(1);
     /// assert_eq!(v.len(), 1u8);
-    /// let v2 = v.clone_cast_length::<usize>();
+    /// let mut v2 = v.clone_cast_length::<usize, _>().unwrap();
     /// v2.push(2);
     /// assert_eq!(v.len(), 1u8);
     /// assert_eq!(v2.len(), 2usize);
@@ -2791,18 +2791,13 @@ where
     }
 }
 
-impl<L, const N: usize> StaticVec<u8, N, L>
-where
-    L: Number + TryFrom<usize> + TryInto<usize>,
-    <L as TryFrom<usize>>::Error: Debug,
-    <L as TryInto<usize>>::Error: Debug,
-{
+impl<const N: usize> StaticVec<u8, N, usize> {
     /// Called solely in `__new_from_const_str`, where the input `MaybeUninit` is guaranteed to have
     /// been properly initialized starting at the beginning with the bytes of an `&str` literal,
     /// and the input `length` is the known-at-compile-time length of said literal.
     #[doc(hidden)]
     #[inline(always)]
-    pub(crate) fn new_from_str_data(data: MaybeUninit<[u8; N]>, length: L) -> Self {
+    pub(crate) const fn new_from_str_data(data: MaybeUninit<[u8; N]>, length: usize) -> Self {
         Self { data, length }
     }
 
@@ -2810,7 +2805,7 @@ where
     /// representation of a proper `&str` literal.
     #[doc(hidden)]
     #[inline]
-    pub(crate) fn bytes_to_data(values: &[u8]) -> MaybeUninit<[u8; N]> {
+    pub(crate) const fn bytes_to_data(values: &[u8]) -> MaybeUninit<[u8; N]> {
         // Get an uninitialized array of bytes, with `N` capacity.
         let mut res = MaybeUninit::uninit_array::<N>();
         // Move `values.len()` worth of bytes from `values` to `res`. I'm unaware of any other way that
@@ -2841,15 +2836,12 @@ where
     /// prefix and hide it from `rustdoc` anyways just so no one thinks it's for general use.
     #[doc(hidden)]
     #[inline(always)]
-    pub fn __new_from_const_str(values: &str) -> Self {
+    pub const fn __new_from_const_str(values: &str) -> Self {
         // This works at compile time too, of course, thanks to the `const_panic` feature.
         assert!(
       values.len() <= N,
       "Attempted to create a `StaticString` with insufficient capacity from an `&str` literal!"
     );
-        Self::new_from_str_data(
-            Self::bytes_to_data(values.as_bytes()),
-            values.len().try_into().unwrap(),
-        )
+        Self::new_from_str_data(Self::bytes_to_data(values.as_bytes()), values.len())
     }
 }
