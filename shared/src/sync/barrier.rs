@@ -342,13 +342,13 @@ impl<T, I: InterruptState> DataBarrierGuard<'_, T, I> {
     }
 }
 
-impl<'l, T, I: InterruptState> AsRef<T> for DataBarrierGuard<'l, T, I> {
+impl<T, I: InterruptState> AsRef<T> for DataBarrierGuard<'_, T, I> {
     fn as_ref(&self) -> &T {
         self.data.as_ref().unwrap()
     }
 }
 
-impl<'l, T, I: InterruptState> Deref for DataBarrierGuard<'l, T, I> {
+impl<T, I: InterruptState> Deref for DataBarrierGuard<'_, T, I> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -356,13 +356,13 @@ impl<'l, T, I: InterruptState> Deref for DataBarrierGuard<'l, T, I> {
     }
 }
 
-impl<'l, T: Debug, I: InterruptState> Debug for DataBarrierGuard<'l, T, I> {
+impl<T: Debug, I: InterruptState> Debug for DataBarrierGuard<'_, T, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_ref().fmt(f)
     }
 }
 
-impl<'l, T: fmt::Display, I: InterruptState> fmt::Display for DataBarrierGuard<'l, T, I> {
+impl<T: fmt::Display, I: InterruptState> fmt::Display for DataBarrierGuard<'_, T, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_ref().fmt(f)
     }

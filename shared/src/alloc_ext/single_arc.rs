@@ -99,7 +99,7 @@ impl<T: ?Sized> SingleArc<T> {
         let inner = self.inner();
         inner.ref_count.fetch_add(1, Ordering::SeqCst);
         WeakSingleArc {
-            inner: self.inner.clone(),
+            inner: self.inner,
             phantom: PhantomData,
         }
     }

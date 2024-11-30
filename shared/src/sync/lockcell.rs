@@ -140,7 +140,7 @@ impl<'l, T, M: ?Sized + LockCellInternal<T>> LockCellGuard<'l, T, M> {
         LockCellGuard {
             lockcell,
             shattered: false,
-            _t: PhantomData::default(),
+            _t: PhantomData,
         }
     }
 
@@ -269,9 +269,9 @@ impl<'l, T, M: ?Sized + RWCellInternal<T>> ReadCellGuard<'l, T, M> {
     }
 }
 
-impl<'l, T, M: ?Sized + RWCellInternal<T>> !Sync for ReadCellGuard<'l, T, M> {}
+impl<T, M: ?Sized + RWCellInternal<T>> !Sync for ReadCellGuard<'_, T, M> {}
 
-impl<'l, T, M: ?Sized + RWCellInternal<T>> Deref for ReadCellGuard<'l, T, M> {
+impl<T, M: ?Sized + RWCellInternal<T>> Deref for ReadCellGuard<'_, T, M> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -281,13 +281,13 @@ impl<'l, T, M: ?Sized + RWCellInternal<T>> Deref for ReadCellGuard<'l, T, M> {
     }
 }
 
-impl<'l, T: Display, M: ?Sized + RWCellInternal<T>> Display for ReadCellGuard<'l, T, M> {
+impl<T: Display, M: ?Sized + RWCellInternal<T>> Display for ReadCellGuard<'_, T, M> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         (**self).fmt(f)
     }
 }
 
-impl<'l, T, M: ?Sized + RWCellInternal<T>> Drop for ReadCellGuard<'l, T, M> {
+impl<T, M: ?Sized + RWCellInternal<T>> Drop for ReadCellGuard<'_, T, M> {
     fn drop(&mut self) {
         unsafe {
             self.rw_cell.release_read(self);
@@ -358,9 +358,9 @@ impl<T, I> TicketLock<T, I> {
         let next = self.next_ticket.load(Ordering::Acquire);
         let owner = self.owner.load(Ordering::Acquire);
         let shattered = self.shattered.load(Ordering::Acquire);
-        let _ = write!(
+        let _ = writeln!(
             writer,
-            "[TicketLock(c: {}, n: {}, o: {}, s: {})]\n",
+            "[TicketLock(c: {}, n: {}, o: {}, s: {})]",
             current, next, owner, shattered
         );
     }
@@ -413,7 +413,7 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
     }
 
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
-        assert!(self as *const _ == guard.lockcell as *const _);
+        assert!(core::ptr::eq(self, guard.lockcell));
 
         self.unlock_no_guard()
     }
@@ -586,7 +586,7 @@ impl<T: Send, I: InterruptState> LockCell<T> for ReadWriteCell<T, I> {
 
 impl<T, I: InterruptState> RWCellInternal<T> for ReadWriteCell<T, I> {
     unsafe fn release_read<'s, 'l: 's>(&'s self, guard: &mut ReadCellGuard<'l, T, Self>) {
-        assert!(self as *const _ == guard.rw_cell as *const _);
+        assert!(core::ptr::eq(self, guard.rw_cell));
 
         self.force_release_read()
     }
@@ -614,7 +614,7 @@ impl<T, I: InterruptState> LockCellInternal<T> for ReadWriteCell<T, I> {
     }
 
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
-        assert!(self as *const _ == guard.lockcell as *const _);
+        assert!(core::ptr::eq(self, guard.lockcell));
 
         self.unlock_no_guard()
     }
@@ -751,7 +751,7 @@ impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T,
     }
 
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
-        assert!(self as *const _ == guard.lockcell as *const _);
+        assert!(core::ptr::eq(self, guard.lockcell));
         self.lockcell.unlock_no_guard();
     }
 
@@ -812,7 +812,7 @@ impl<T: Send, L: RWLockCell<MaybeUninit<T>>> RWLockCell<T> for UnwrapLock<T, L> 
 
 impl<T: Send, L: RWLockCell<MaybeUninit<T>>> RWCellInternal<T> for UnwrapLock<T, L> {
     unsafe fn release_read<'s, 'l: 's>(&'s self, guard: &mut ReadCellGuard<'l, T, Self>) {
-        assert!(self as *const _ == guard.rw_cell as *const _);
+        assert!(core::ptr::eq(self, guard.rw_cell));
         self.force_release_read();
     }
 

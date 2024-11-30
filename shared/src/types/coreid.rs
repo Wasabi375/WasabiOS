@@ -35,9 +35,9 @@ impl From<u8> for CoreId {
     }
 }
 
-impl Into<u8> for CoreId {
-    fn into(self) -> u8 {
-        self.0
+impl From<CoreId> for u8 {
+    fn from(val: CoreId) -> Self {
+        val.0
     }
 }
 
