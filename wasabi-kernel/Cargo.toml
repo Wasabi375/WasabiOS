@@ -27,7 +27,6 @@ bit_field.workspace = true
 crossbeam-epoch.workspace = true
 bootloader_api.workspace = true
 derive_builder.workspace = true
-iced-x86.workspace = true
 linked_list_allocator = { version = "0.10.5", default-features = false }
 linkme.workspace = true
 log.workspace = true
