@@ -30,10 +30,34 @@ pub trait Number:
     const MIN: Self;
     /// The largest representable value
     const MAX: Self;
-    /// the zero value
+    /// the value zero
     const ZERO: Self;
-    /// the 1 value
+    /// the value one
     const ONE: Self;
+}
+
+/// A helper trait to generate constants for [Number]s.
+#[const_trait]
+pub trait NumberConstants {
+    /// Creates a [Number] of `value`.
+    ///
+    /// This can be used instead of literals
+    fn constant(value: usize) -> Self;
+}
+
+impl<T> const NumberConstants for T
+where
+    T: Number + ~const core::ops::Add,
+{
+    fn constant(value: usize) -> Self {
+        let mut res = Self::ZERO;
+        let mut count = 0;
+        while count < value {
+            res = res + Self::ONE;
+            count += 1;
+        }
+        res
+    }
 }
 
 /// Types that implement this can be converted into a u64.
@@ -262,3 +286,15 @@ impl_number!(i32);
 impl_number!(i64);
 impl_number!(i128);
 impl_number!(isize);
+
+#[cfg(test)]
+mod test {
+    use super::NumberConstants;
+    #[test]
+    fn test_const_number_literals() {
+        assert_eq!(0u8, u8::constant(0));
+        assert_eq!(1u16, u16::constant(1));
+        assert_eq!(5u8, u8::constant(5));
+        assert_eq!(4321u64, u64::constant(4321));
+    }
+}
