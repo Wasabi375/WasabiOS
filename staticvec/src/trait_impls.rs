@@ -4,7 +4,8 @@ use core::fmt::{self, Debug, Formatter};
 use core::hash::{Hash, Hasher};
 use core::mem::MaybeUninit;
 use core::ops::{
-    Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive,
+    Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo,
+    RangeToInclusive,
 };
 use core::ptr;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
@@ -895,14 +896,7 @@ where
     }
 }
 
-// TODO this relies on neg impls which does not really exist in rust yet
-/*
-impl<T, const N: usize, L> Index<RangeFull> for StaticVec<T, N, L>
-where
-    L: Number + TryFrom<usize> + TryInto<usize> + Ord,
-    <L as TryFrom<usize>>::Error: Debug,
-    <L as TryInto<usize>>::Error: Debug,
-{
+impl<T, const N: usize> Index<RangeFull> for StaticVec<T, N, usize> {
     type Output = [T];
     /// Returns a constant reference to a slice consisting of `0..self.length`
     /// elements of the StaticVec, using [as_slice](crate::StaticVec::as_slice) internally.
@@ -912,12 +906,7 @@ where
     }
 }
 
-impl<T, const N: usize, L> IndexMut<RangeFull> for StaticVec<T, N, L>
-where
-    L: Number + TryFrom<usize> + TryInto<usize> + Ord,
-    <L as TryFrom<usize>>::Error: Debug,
-    <L as TryInto<usize>>::Error: Debug,
-{
+impl<T, const N: usize> IndexMut<RangeFull> for StaticVec<T, N, usize> {
     /// Returns a mutable reference to a slice consisting of `0..self.length`
     /// elements of the StaticVec, using [as_mut_slice](crate::StaticVec::as_mut_slice) internally.
     #[inline(always)]
@@ -925,7 +914,6 @@ where
         self.as_mut_slice()
     }
 }
-*/
 
 impl<T, const N: usize, L> Index<RangeInclusive<L>> for StaticVec<T, N, L>
 where
