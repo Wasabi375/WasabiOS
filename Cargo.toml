@@ -58,6 +58,7 @@ syn = { version = "2.0.16", features = ["full", "extra-traits"] }
 thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
 # TODO: why am I using my fork?
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
+uuid = { version = "1.11.0", default-features = false }
 walkdir = "2.5"
 # TODO use upstream once new version is released
 # x86_64 = 0.16"

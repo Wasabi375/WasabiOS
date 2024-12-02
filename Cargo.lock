@@ -843,7 +843,10 @@ dependencies = [
  "fuser",
  "libc",
  "log",
+ "shared",
  "simple_logger",
+ "thiserror-core",
+ "uuid",
  "wfs",
 ]
 
@@ -2075,6 +2078,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "paste",
+ "static_assertions",
  "thiserror-core",
  "x86_64",
 ]
@@ -2703,9 +2707,12 @@ version = "0.1.0"
 dependencies = [
  "bit_field",
  "bitflags 2.6.0",
+ "log",
+ "shared",
  "static_assertions",
  "staticvec",
  "thiserror-core",
+ "uuid",
 ]
 
 [[package]]
