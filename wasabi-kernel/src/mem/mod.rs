@@ -229,12 +229,7 @@ macro_rules! pages_required_for {
         crate::pages_required_for!(size: <$size as x86_64::structures::paging::PageSize>::SIZE, $bytes)
     };
     (size: $size:expr, $bytes:expr) => {
-        ($bytes as u64 / $size as u64)
-            + if ($bytes as u64 % $size as u64 != 0) {
-                1
-            } else {
-                0
-            }
+        shared::counts_required_for!($size, $bytes)
     };
 }
 
