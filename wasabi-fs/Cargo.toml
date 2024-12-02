@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+shared = { path = "../shared" }
 staticvec = { path = "../staticvec" }
 
 bit_field.workspace = true
 bitflags.workspace = true
+log.workspace = true
 static_assertions.workspace = true
 thiserror.workspace = true
+uuid.workspace = true

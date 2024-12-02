@@ -1,66 +1,237 @@
 #![no_std]
+#![deny(unsafe_op_in_unsafe_fn)]
 #![allow(unused)] // TODO temp
 
-// FIXME: StaticVec and StaticString have 2 problems that I need to fix
-//   1. It uses usize for the length, wasting a lot of memory
-//   2. It has a undetermined memory layout
+use core::{
+    mem::{size_of, transmute},
+    num::{NonZeroU16, NonZeroU64},
+    ops::{Add, AddAssign, Deref, DerefMut, Sub},
+    ptr::NonNull,
+};
 
-use core::marker::PhantomData;
-
+use shared::math::IntoU64;
 use static_assertions::const_assert;
-use staticvec::{StaticString, StaticVec};
 
 extern crate alloc;
 
+pub mod fs;
+pub mod fs_structs;
+pub mod interface;
+pub mod mem_structs;
+
+/// Logical Block Address
 #[repr(transparent)]
-struct LBA(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LBA(NonZeroU64);
 
-#[repr(transparent)]
-struct INode(u64);
+impl TryFrom<u64> for LBA {
+    type Error = <NonZeroU64 as TryFrom<u64>>::Error;
 
-#[repr(u8)]
-enum INodeType {
-    File,
-    Directory,
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Ok(LBA(value.try_into()?))
+    }
 }
 
-#[repr(C)]
-struct Timestamp(u64);
+impl LBA {
+    pub const fn new(addr: u64) -> Option<Self> {
+        if addr == 0 {
+            None
+        } else {
+            unsafe { Some(Self::new_unchecked(addr)) }
+        }
+    }
 
-const I_NODE_INLINE_BLOCK_ADDRS: usize = 3;
-const I_NODE_MAX_NAME_LEN: usize = 40;
-#[repr(C)]
-struct INodeData {
-    inode: INode,
-    parent: INode,
-    typ: INodeType,
-    created_at: Timestamp,
-    modified_at: Timestamp,
-    name: StaticString<I_NODE_MAX_NAME_LEN>,
-    total_block_count: u32,
-    block_counts: [u16; I_NODE_INLINE_BLOCK_ADDRS],
-    block_addrs: [LBA; I_NODE_INLINE_BLOCK_ADDRS],
+    pub const unsafe fn new_unchecked(addr: u64) -> Self {
+        assert!(addr != 0);
+        Self(unsafe { NonZeroU64::new_unchecked(addr) })
+    }
+
+    pub fn from_byte_offset(offset: u64) -> Option<LBA> {
+        LBA::new(offset / BLOCK_SIZE as u64)
+    }
+
+    pub fn addr(self) -> NonZeroU64 {
+        self.0
+    }
+
+    pub fn get(self) -> u64 {
+        self.0.get()
+    }
 }
 
-#[repr(transparent)]
-struct NodePointer(LBA);
+impl Add<u64> for LBA {
+    type Output = LBA;
 
-#[repr(C)]
-struct MainHeader {
-    uuid: [u8; 16],
-    root: NodePointer,
+    fn add(self, rhs: u64) -> Self::Output {
+        unsafe { LBA::new_unchecked(self.get() + rhs) }
+    }
 }
-const_assert!(size_of::<MainHeader>() <= 512);
 
-#[repr(C)]
-enum TreeNode {
-    Leave {
-        parent: NodePointer,
-        nodes: StaticVec<INodeData, 3>,
-    },
-    Node {
-        parent: NodePointer,
-        children: StaticVec<(INode, NodePointer), 30>,
-    },
+impl AddAssign<u64> for LBA {
+    fn add_assign(&mut self, rhs: u64) {
+        *self = *self + rhs;
+    }
 }
-const_assert!(size_of::<TreeNode>() <= 512);
+
+impl Sub<LBA> for LBA {
+    type Output = u64;
+
+    fn sub(self, rhs: LBA) -> Self::Output {
+        assert!(self >= rhs);
+
+        self.get() - rhs.get()
+    }
+}
+
+/// A group of contigous logical blocks
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlockGroup {
+    /// The fist block in the group
+    pub start: LBA,
+    /// The number of blocks in the group minus 1
+    ///
+    /// A group will always have at least 1 block. Therefor we can store
+    /// this as `0`. 2 blocks will be represented as `1`, etc.
+    pub count_minus_one: u64,
+}
+
+impl BlockGroup {
+    pub fn new(start: LBA, end: LBA) -> Self {
+        Self {
+            start,
+            count_minus_one: end - start,
+        }
+    }
+
+    pub fn end(&self) -> LBA {
+        self.start + self.count_minus_one
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count_minus_one + 1
+    }
+
+    pub fn contains(&self, lba: LBA) -> bool {
+        self.start <= lba && lba <= self.end()
+    }
+}
+
+/// Type alias for `[u8; BLOCK_SIZE]`
+///
+/// See [BLOCK_SIZE]
+pub type BlockSlice = [u8; BLOCK_SIZE];
+
+/// The size of any block used to store data on the disc
+pub const BLOCK_SIZE: usize = 512;
+
+/// Calculate the number of BLOCKs required for `bytes` memory.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[macro_use] extern crate wfs;
+/// # fn main() {
+/// # use static_assertions::const_assert_eq;
+/// use wfs::blocks_required_for;
+/// const_assert_eq!(1, blocks_required_for!( u8));
+/// const_assert_eq!(1, blocks_required_for!( 512));
+/// const_assert_eq!(1, blocks_required_for!( 8));
+/// const_assert_eq!(2, blocks_required_for!( 1024));
+/// const_assert_eq!(1, blocks_required_for!( size_of::<u32>() * 5));
+/// # }
+/// ```
+#[macro_export]
+macro_rules! blocks_required_for {
+    (type: $type:ty) => {
+        $crate::blocks_required_for!(core::mem::size_of::<$type>())
+    };
+    ($bytes:expr) => {
+        shared::counts_required_for!($crate::BLOCK_SIZE as u64, $bytes as u64)
+    };
+}
+
+/// The current version of the fs
+///
+/// See [fs_structs::MainHeader::version]
+pub const FS_VERSION: [u8; 4] = [0, 1, 0, 0];
+
+/// Align `T` on block boundaries
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C, align(512))]
+pub struct BlockAligned<T>(pub T);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ZST {}
+
+/// Align `T` on block boundaries and ensure it is padded to fill the entire block
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C, align(512))]
+pub struct Block<T> {
+    pub data: BlockAligned<T>,
+    pad: BlockAligned<ZST>,
+}
+
+impl<T> Block<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            data: BlockAligned(data),
+            pad: BlockAligned(ZST {}),
+        }
+    }
+
+    pub fn block_data(&self) -> NonNull<[u8; BLOCK_SIZE]> {
+        assert!(size_of::<Self>() == 512);
+
+        NonNull::from(self).cast()
+    }
+
+    pub fn multiblock_data(&self) -> NonNull<[u8]> {
+        assert!(size_of::<Self>() % 512 == 0);
+
+        NonNull::slice_from_raw_parts(NonNull::from(self).cast(), size_of::<Self>())
+    }
+}
+
+impl<T> Deref for Block<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.data.deref()
+    }
+}
+
+impl<T> DerefMut for Block<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data.deref_mut()
+    }
+}
+
+impl<T> Deref for BlockAligned<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for BlockAligned<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{BlockGroup, LBA};
+
+    #[test]
+    fn test_block_from_start_end() {
+        let start = LBA::new(1).unwrap();
+        let end = LBA::new(10).unwrap();
+
+        let group = BlockGroup::new(start, end);
+        assert_eq!(start, group.start);
+        assert_eq!(end, group.end());
+    }
+}
