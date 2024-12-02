@@ -79,6 +79,7 @@ pub mod utils;
 /// time it's recommended that you refer directly to the source code of this crate if unsure of
 /// whether a given trait has been implemented as `const` in conjunction with the `const_trait_impl`
 /// feature.
+#[repr(C)]
 pub struct StaticVec<T, const N: usize, L = usize>
 where
     L: Number + TryFrom<usize> + TryInto<usize>,

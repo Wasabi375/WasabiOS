@@ -44,6 +44,7 @@ mod string_utils;
 ///   Ok(())
 /// }
 /// ```
+#[repr(C)]
 pub struct StaticString<const N: usize, L = usize>
 where
     L: Number + TryFrom<usize> + TryInto<usize>,
