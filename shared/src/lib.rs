@@ -46,3 +46,54 @@ macro_rules! GiB {
         $v * 1024 * 1024 * 1024
     };
 }
+
+/// A macro logging and returning the result of any expression.
+/// The result of the expression is logged using the [log::debug] macro.
+///
+/// ```
+/// assert_eq!(5 + 3, dbg!(8)); // also calls log::debug("5 + 3 = 8")
+/// ```
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! dbg {
+    ($v:expr) => {{
+        let value = $v;
+        log::debug!("{} = {:?}", core::stringify($v), value);
+        value
+    }};
+}
+
+/// Same as [todo!] but only calls a [log::warn] instead of [panic].
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! todo_warn {
+    () => {
+        log::warn!("not yet implemented")
+    };
+    ($($arg:tt)+) => {
+        log::warn!(
+            "not yet implemented: {}",
+            $crate::__macro_internals::format_args!($($arg)+)
+        )
+    };
+}
+
+/// Same as [todo!] but only calls a [log::error] instead of [panic].
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! todo_error {
+    () => {
+        log::error!("not yet implemented")
+    };
+    ($($arg:tt)+) => {
+        log::error!(
+            "not yet implemented: {}",
+            $crate::__macro_internals::format_args!($($arg)+)
+        )
+    };
+}
+
+#[doc(hidden)]
+pub mod __macro_internals {
+    pub use core::format_args;
+}
