@@ -20,9 +20,9 @@ use x86_64::{
 use crate::{prelude::UnwrapTicketLock, utils::log_hex_dump_buf};
 
 #[allow(unused_imports)]
-use crate::todo_warn;
-#[allow(unused_imports)]
 use log::{debug, info, trace, warn};
+#[allow(unused_imports)]
+use shared::todo_warn;
 
 const CONFIG_PORT_ADR: u16 = 0xcf8;
 const DATA_PORT_ADR: u16 = 0xcfc;
