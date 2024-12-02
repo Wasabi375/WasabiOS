@@ -10,10 +10,9 @@ use crate::{
         ptr::UntypedPtr, MemError,
     },
     prelude::TicketLock,
-    todo_warn,
 };
 use bit_field::BitField;
-use shared::sync::lockcell::LockCell;
+use shared::{sync::lockcell::LockCell, todo_warn};
 use thiserror::Error;
 use volatile::{
     access::{ReadOnly, ReadWrite},

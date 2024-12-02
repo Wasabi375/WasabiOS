@@ -38,7 +38,6 @@ use crate::{
         },
         CommonRegisterOffset, Device, RegisterAddress, PCI_ACCESS,
     },
-    todo_error,
     utils::log_hex_dump,
 };
 use admin_commands::{CompletionQueueCreationStatus, IdentifyNamespaceData};
@@ -63,9 +62,9 @@ use x86_64::{
 };
 
 #[allow(unused_imports)]
-use crate::todo_warn;
-#[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+#[allow(unused_imports)]
+use shared::{todo_error, todo_warn};
 
 #[allow(missing_docs)]
 #[derive(Debug, PartialEq, Error, Clone)]
@@ -1435,7 +1434,7 @@ impl Into<u64> for QueueBaseAddress {
 
 #[cfg(feature = "test")]
 mod test {
-    use shared::sync::lockcell::LockCell;
+    use shared::{sync::lockcell::LockCell, todo_warn};
     use testing::{
         kernel_test, t_assert, t_assert_eq, t_assert_matches, KernelTestError, TestUnwrapExt,
     };
@@ -1451,7 +1450,6 @@ mod test {
             nvme::io_commands::{self, LBA},
             Class, StorageSubclass, PCI_ACCESS,
         },
-        todo_warn,
     };
 
     use super::NVMEController;
