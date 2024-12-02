@@ -4,6 +4,7 @@
 tmp/
 latest/
 
+wasabi-fs/fuse/test_fs.img
 
 
 /target/
