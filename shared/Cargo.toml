@@ -8,8 +8,8 @@ default= []
 no-unicode-log = []
 
 [dependencies]
-x86_64.workspace = true
 log.workspace = true
 paste.workspace = true
+static_assertions.workspace = true
 thiserror.workspace = true
-
+x86_64.workspace = true

@@ -47,6 +47,31 @@ macro_rules! GiB {
     };
 }
 
+/// Calculates the total number of *entries* to cover a *total size*
+///
+/// # Example
+/// ```no_run
+/// # #[macro_use] extern crate shared;
+/// # fn main() {
+/// # use static_assertions::const_assert_eq;
+/// const_assert_eq!(1, counts_required_for!(512, 512));
+/// const_assert_eq!(1, counts_required_for!(512, 8));
+/// const_assert_eq!(2, counts_required_for!(512, 1024));
+/// const_assert_eq!(1, counts_required_for!(512, size_of::<u32>() * 5));
+/// # }
+/// ```
+#[macro_export]
+macro_rules! counts_required_for {
+    ($entry_size:expr, $total_size:expr) => {
+        ($total_size / $entry_size)
+            + if ($total_size % $entry_size != 0) {
+                1
+            } else {
+                0
+            }
+    };
+}
+
 /// A macro logging and returning the result of any expression.
 /// The result of the expression is logged using the [log::debug] macro.
 ///
