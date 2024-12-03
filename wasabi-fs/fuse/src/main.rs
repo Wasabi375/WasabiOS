@@ -120,7 +120,7 @@ fn create(args: CreateOptions) {
 
     let fs = FileSystem::<_, FsReadWrite>::create(device, override_check, uuid, name).unwrap();
 
-    fs.close().close();
+    fs.close().unwrap().close();
 }
 
 fn mount(args: MountOptions) {

@@ -7,13 +7,16 @@ use core::{
     num::{NonZeroU16, NonZeroU64},
     ops::{Add, AddAssign, Deref, DerefMut, Sub},
     ptr::NonNull,
+    u64,
 };
 
+use nonmax::NonMaxU64;
 use shared::math::IntoU64;
 use static_assertions::const_assert;
 
 extern crate alloc;
 
+pub mod existing_fs_check;
 pub mod fs;
 pub mod fs_structs;
 pub mod interface;
@@ -22,10 +25,10 @@ pub mod mem_structs;
 /// Logical Block Address
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LBA(NonZeroU64);
+pub struct LBA(NonMaxU64);
 
 impl TryFrom<u64> for LBA {
-    type Error = <NonZeroU64 as TryFrom<u64>>::Error;
+    type Error = <NonMaxU64 as TryFrom<u64>>::Error;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         Ok(LBA(value.try_into()?))
@@ -34,7 +37,7 @@ impl TryFrom<u64> for LBA {
 
 impl LBA {
     pub const fn new(addr: u64) -> Option<Self> {
-        if addr == 0 {
+        if addr == u64::MAX {
             None
         } else {
             unsafe { Some(Self::new_unchecked(addr)) }
@@ -42,15 +45,15 @@ impl LBA {
     }
 
     pub const unsafe fn new_unchecked(addr: u64) -> Self {
-        assert!(addr != 0);
-        Self(unsafe { NonZeroU64::new_unchecked(addr) })
+        assert!(addr != u64::MAX);
+        Self(unsafe { NonMaxU64::new_unchecked(addr) })
     }
 
     pub fn from_byte_offset(offset: u64) -> Option<LBA> {
         LBA::new(offset / BLOCK_SIZE as u64)
     }
 
-    pub fn addr(self) -> NonZeroU64 {
+    pub fn addr(self) -> NonMaxU64 {
         self.0
     }
 
