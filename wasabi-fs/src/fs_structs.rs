@@ -5,13 +5,12 @@ use core::{
     num::{NonZeroU16, NonZeroU64, NonZeroU8},
 };
 
+use simple_endian::LittleEndian;
 use static_assertions::const_assert;
 use staticvec::{StaticString, StaticVec};
 use uuid::Uuid;
 
 use crate::{fs::MAIN_HEADER_BLOCK, BlockGroup, BLOCK_SIZE, LBA};
-
-// TODO mark endianness of all numbers
 
 /// Either a single [BlockGroup] or a [NodePointer] to a [BlockList]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +48,7 @@ pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct BlockString {
-    pub length: u32,
+    pub length: LittleEndian<u32>,
     pub data: [u8; BLOCK_STRING_DATA_LENGTH],
     pub next: Option<NodePointer<BlockStringPart>>,
 }
@@ -81,7 +80,7 @@ const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
 /// It is possible if not likely for INodes to be the same on different file systems
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct INode(u64);
+pub struct INode(LittleEndian<u64>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -96,7 +95,7 @@ pub enum INodeType {
 /// It'll probably end up as unix epoch time in ms, but this might change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
-pub struct Timestamp(u64);
+pub struct Timestamp(LittleEndian<u64>);
 
 const I_NODE_MAX_NAME_LEN: usize = 40;
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,7 +217,7 @@ pub(crate) const BLOCK_RANGES_COUNT_PER_BLOCK: usize = 31;
 #[repr(C)]
 pub struct FreeBlockGroups {
     /// Unused [BlockGroup]s
-    pub free: StaticVec<BlockGroup, BLOCK_RANGES_COUNT_PER_BLOCK, u64>,
+    pub free: StaticVec<BlockGroup, BLOCK_RANGES_COUNT_PER_BLOCK, u8>,
     /// A [NodePointer] to the next [FreeBlockGroups] of unused [BlockGroup]s.
     ///
     /// This might be `Some` even if [Self::free] is not full.

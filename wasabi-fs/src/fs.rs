@@ -455,9 +455,9 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
         }
         .map_err(map_device_error)?;
 
-        string.reserve_exact(head_block.length as usize);
+        string.reserve_exact(head_block.length.to_native() as usize);
 
-        let mut length_remaining = head_block.length as usize;
+        let mut length_remaining = head_block.length.to_native() as usize;
         let mut next_ptr = head_block.next;
 
         let length_in_block = min(length_remaining, BLOCK_STRING_DATA_LENGTH);
@@ -509,7 +509,9 @@ impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
 
         let head_lba = blocks.next().expect("we just allocated at least 1 block");
         let mut string_head = Block::new(BlockString {
-            length: string.len().try_into().map_err(|_| FsError::StringToLong)?,
+            length: TryInto::<u32>::try_into(string.len())
+                .map_err(|_| FsError::StringToLong)?
+                .into(),
             data: [0; BLOCK_STRING_DATA_LENGTH],
             next: blocks.peek().map(|lba| NodePointer::new(*lba)),
         });

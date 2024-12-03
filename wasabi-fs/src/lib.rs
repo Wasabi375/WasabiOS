@@ -1,7 +1,7 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![feature(assert_matches, slice_take)]
-#![allow(unused)] // TODO temp
+#![allow(unused, dead_code)] // TODO temp
 
 use core::{
     mem::{size_of, transmute},
@@ -13,6 +13,7 @@ use core::{
 
 use nonmax::NonMaxU64;
 use shared::math::IntoU64;
+use simple_endian::{LittleEndian, SpecificEndian};
 use static_assertions::const_assert;
 
 extern crate alloc;
@@ -23,16 +24,42 @@ pub mod fs_structs;
 pub mod interface;
 pub mod mem_structs;
 
-/// Logical Block Address
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LBA(NonMaxU64);
+struct LbaInternal(NonMaxU64);
+
+impl SpecificEndian<LbaInternal> for LbaInternal {
+    fn to_big_endian(&self) -> LbaInternal {
+        // Safety self is not max and endianness does not change that
+        unsafe { LbaInternal(NonMaxU64::new_unchecked(self.0.get().to_be())) }
+    }
+
+    fn to_little_endian(&self) -> LbaInternal {
+        // Safety self is not max and endianness does not change that
+        unsafe { LbaInternal(NonMaxU64::new_unchecked(self.0.get().to_le())) }
+    }
+
+    fn from_big_endian(&self) -> LbaInternal {
+        // Safety self is not max and endianness does not change that
+        unsafe { LbaInternal(NonMaxU64::new_unchecked(u64::from_be(self.0.get()))) }
+    }
+
+    fn from_little_endian(&self) -> LbaInternal {
+        // Safety self is not max and endianness does not change that
+        unsafe { LbaInternal(NonMaxU64::new_unchecked(u64::from_le(self.0.get()))) }
+    }
+}
+
+/// Logical Block Address
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LBA(LittleEndian<LbaInternal>);
 
 impl TryFrom<u64> for LBA {
     type Error = <NonMaxU64 as TryFrom<u64>>::Error;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Ok(LBA(value.try_into()?))
+        Ok(LBA(LbaInternal(value.try_into()?).into()))
     }
 }
 
@@ -47,7 +74,9 @@ impl LBA {
 
     pub const unsafe fn new_unchecked(addr: u64) -> Self {
         assert!(addr != u64::MAX);
-        Self(unsafe { NonMaxU64::new_unchecked(addr) })
+        Self(LittleEndian::from_bits(LbaInternal(unsafe {
+            NonMaxU64::new_unchecked(addr.to_le())
+        })))
     }
 
     pub fn from_byte_offset(offset: u64) -> Option<LBA> {
@@ -55,11 +84,11 @@ impl LBA {
     }
 
     pub fn addr(self) -> NonMaxU64 {
-        self.0
+        self.0.to_native().0
     }
 
     pub fn get(self) -> u64 {
-        self.0.get()
+        self.0.to_native().0.get()
     }
 }
 
@@ -98,6 +127,18 @@ impl Sub<u64> for LBA {
 impl SubAssign<u64> for LBA {
     fn sub_assign(&mut self, rhs: u64) {
         *self = *self - rhs;
+    }
+}
+
+impl PartialOrd for LBA {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.get().partial_cmp(&other.get())
+    }
+}
+
+impl Ord for LBA {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.get().cmp(&other.get())
     }
 }
 

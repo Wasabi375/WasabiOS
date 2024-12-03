@@ -59,6 +59,7 @@ noto-sans-mono-bitmap = { version = "0.3.0", features = ["unicode-latin-1-supple
 paste = "1.0.12"
 proc-macro2 = "1.0.92"
 quote = "1.0.37"
+simple_endian = { version = "0.3.2", git = "https://github.com/Wasabi375/simple-endian-rs.git", branch = "const" }
 static_assertions = "1.1"
 syn = { version = "2.0.90", features = ["full", "extra-traits"] }
 thiserror = { version = "2.0.4",  default-features = false }

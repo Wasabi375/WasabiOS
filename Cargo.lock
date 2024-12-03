@@ -1538,6 +1538,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "paste",
+ "simple_endian",
  "static_assertions",
  "thiserror",
  "x86_64",
@@ -1568,6 +1569,11 @@ checksum = "a9e9e0b4211b72e7b8b6e85c807d36c212bdb33ea8587f7569562a84df5465b1"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "simple_endian"
+version = "0.3.2"
+source = "git+https://github.com/Wasabi375/simple-endian-rs.git?branch=const#afe3f8f20c88f78ecf7040f2fc7c686f8232bf25"
 
 [[package]]
 name = "simple_logger"
@@ -2090,6 +2096,7 @@ dependencies = [
  "log",
  "nonmax",
  "shared",
+ "simple_endian",
  "static_assertions",
  "staticvec",
  "thiserror",

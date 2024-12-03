@@ -14,3 +14,4 @@ nonmax.workspace = true
 static_assertions.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+simple_endian.workspace = true
