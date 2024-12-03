@@ -9,7 +9,7 @@ use static_assertions::const_assert;
 use staticvec::{StaticString, StaticVec};
 use uuid::Uuid;
 
-use crate::{BlockGroup, BLOCK_SIZE, LBA};
+use crate::{fs::MAIN_HEADER_BLOCK, BlockGroup, BLOCK_SIZE, LBA};
 
 /// Either a single [BlockGroup] or a [NodePointer] to a [BlockList]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +148,7 @@ pub struct MainHeader {
     // _unused1: [u8; 4],
     pub root: NodePointer<TreeNode>,
     pub free_blocks: NodePointer<FreeBlockGroups>,
+    pub backup_header: NodePointer<MainHeader>,
     pub name: Option<NodePointer<BlockString>>,
     pub transient: Option<MainTransientHeader>,
 }
@@ -156,6 +157,17 @@ const_assert!(size_of::<MainHeader>() <= BLOCK_SIZE);
 impl MainHeader {
     /// A magic string that must be part of the header
     pub const MAGIC: [u8; 8] = *b"WasabiFs";
+
+    pub fn matches_backup(&self, backup: &Self) -> bool {
+        assert!(self.transient.is_some());
+        assert_ne!(self.backup_header.lba, MAIN_HEADER_BLOCK);
+
+        let mut main_copy = self.clone();
+        main_copy.backup_header = NodePointer::new(MAIN_HEADER_BLOCK);
+        main_copy.transient = None;
+
+        main_copy == *backup
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -172,7 +184,7 @@ pub enum FsStatus {
 #[repr(C)]
 pub struct MainTransientHeader {
     pub mount_count: u8,
-    pub writeable: bool,
+    pub open_in_write_mode: bool,
     pub status: FsStatus,
 }
 
