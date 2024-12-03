@@ -1,7 +1,7 @@
 use core::{cmp::max, num::NonZeroU64, usize};
 
 use alloc::{boxed::Box, vec::Vec};
-use shared::counts_required_for;
+use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
 
 use crate::{
@@ -26,6 +26,7 @@ pub struct BlockAllocator {
 }
 
 impl BlockAllocator {
+    /// Creates a new [BlockAllocator] that is free, except for `initial_usage`.
     pub fn empty(inital_usage: &[LBA], max_lba: LBA) -> Self {
         let mut this = Self {
             free: Vec::new(),
@@ -35,8 +36,8 @@ impl BlockAllocator {
         };
 
         this.free.push(BlockGroup {
-            start: LBA::new(1).unwrap(),
-            count_minus_one: max_lba.get() - 2,
+            start: LBA::new(0).unwrap(),
+            count_minus_one: max_lba.get() - 1,
         });
 
         for block in inital_usage {
@@ -45,6 +46,11 @@ impl BlockAllocator {
         }
 
         this
+    }
+
+    /// `true` if there are changes that have not been saved to the device
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
     }
 
     pub fn write<D: BlockDevice>(&mut self, device: &mut D) -> Result<LBA, FsError> {
@@ -333,6 +339,25 @@ impl BlockAllocator {
         } else {
             Err(())
         }
+    }
+
+    /// Check that allocator state matches the on device data structures
+    ///
+    /// This only checks that the free list in the [crate::fs_structs::MainHeader]
+    /// matches this allocator.
+    /// It does not check that the free list is actually free.
+    ///
+    /// This will error if the allocator is dirty. See [Self::is_dirty]
+    pub fn check_matches_device<D: BlockDevice>(&self, device: &D) -> Result<(), ()> {
+        if self.is_dirty() {
+            return Err(());
+        }
+
+        self.check_consistent()?;
+
+        todo_warn!("block allocator: check matches device");
+
+        Ok(())
     }
 }
 

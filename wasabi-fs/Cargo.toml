@@ -10,6 +10,7 @@ staticvec = { path = "../staticvec" }
 bit_field.workspace = true
 bitflags.workspace = true
 log.workspace = true
+nonmax.workspace = true
 static_assertions.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

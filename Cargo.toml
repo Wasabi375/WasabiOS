@@ -54,6 +54,7 @@ itertools = { version = "0.14.0", default-features = false, features = ["use_all
 libm = "0.2.11"
 linkme = "0.3.31"
 log = "0.4.22"
+nonmax = { version = "0.5.5", default-features = false }
 noto-sans-mono-bitmap = { version = "0.3.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
 paste = "1.0.12"
 proc-macro2 = "1.0.92"

@@ -7,26 +7,29 @@ use core::{
 };
 
 use alloc::boxed::Box;
-use shared::{rangeset::RangeSet, todo_error, todo_warn};
+use log::{error, warn};
+use shared::{dbg, rangeset::RangeSet, todo_error};
 use static_assertions::const_assert;
 use staticvec::StaticVec;
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
+    existing_fs_check::{check_for_filesystem, FsFound},
     fs_structs::{FsStatus, MainHeader, MainTransientHeader, NodePointer, TreeNode},
     interface::BlockDevice,
     mem_structs::BlockAllocator,
     Block, BLOCK_SIZE, FS_VERSION, LBA,
 };
 
-const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(1) };
-const ROOT_BLOCK: LBA = unsafe { LBA::new_unchecked(2) };
-const FREE_BLOCKS_BLOCK: LBA = unsafe { LBA::new_unchecked(3) };
+pub(crate) const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(0) };
+pub(crate) const ROOT_BLOCK: LBA = unsafe { LBA::new_unchecked(1) };
+pub(crate) const FREE_BLOCKS_BLOCK: LBA = unsafe { LBA::new_unchecked(2) };
 
 const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, ROOT_BLOCK, FREE_BLOCKS_BLOCK];
 
-const MIN_BLOCK_COUNT: u64 = 5;
+// initially used blocks does not have the backup header, as it has a dynamic address
+const MIN_BLOCK_COUNT: u64 = INITALLY_USED_BLOCKS.len() as u64 + 1;
 
 #[derive(Error, Debug)]
 #[allow(missing_docs)]
@@ -103,9 +106,22 @@ impl<D, S> FileSystem<D, S>
 where
     D: BlockDevice,
 {
-    pub fn close(self) -> D {
-        todo_error!("properly close file system");
-        self.device
+    pub fn close(mut self) -> Result<D, FsError> {
+        if self.block_allocator.is_dirty() {
+            self.block_allocator.write(&mut self.device)?;
+        } else {
+            // TODO disable check outside of debug builds
+            if self
+                .block_allocator
+                .check_matches_device(&self.device)
+                .is_err()
+            {
+                error!("That allocator said it is not dirty, but this is wrong!");
+                self.block_allocator.write(&mut self.device)?;
+            }
+        }
+
+        Ok(self.device)
     }
 
     fn create_fs_device_access(device: D) -> Result<FileSystem<D, FsDuringCreation>, FsError> {
@@ -134,10 +150,22 @@ where
         device: D,
         uuid: Uuid,
         name: Option<&str>,
-        _override_check: OverrideCheck,
+        override_check: OverrideCheck,
         access: AccessMode,
     ) -> Result<Self, FsError> {
-        todo_warn!("Override check missing");
+        let fs_found =
+            check_for_filesystem(&device).map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+        if fs_found != FsFound::None {
+            match override_check {
+                OverrideCheck::Check => {
+                    error!("File system of type {fs_found:?} already exists!");
+                    return Err(FsError::OverrideCheck);
+                }
+                OverrideCheck::IgnoreExisting => {
+                    warn!("File system of type {fs_found:?} already exists! It will be overridden");
+                }
+            }
+        }
 
         let mut fs = Self::create_fs_device_access(device)?;
 
@@ -218,7 +246,7 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
 impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
     fn write_header(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
         self.device
-            .write_block_atomic(LBA::new(1).unwrap(), header.block_data())
+            .write_block_atomic(MAIN_HEADER_BLOCK, header.block_data())
             .map_err(|e| FsError::BlockDevice(Box::new(e)))
     }
 
