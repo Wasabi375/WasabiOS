@@ -1,12 +1,19 @@
 use core::{
     any::Any,
+    assert_matches::assert_matches,
+    cmp::min,
     error::{self, Error},
     marker::PhantomData,
     mem::{size_of, transmute},
     ptr::NonNull,
+    usize,
 };
 
-use alloc::boxed::Box;
+use alloc::{
+    boxed::Box,
+    string::{FromUtf8Error, String},
+    vec::Vec,
+};
 use log::{error, warn};
 use shared::{dbg, rangeset::RangeSet, todo_error};
 use static_assertions::const_assert;
@@ -16,7 +23,10 @@ use uuid::Uuid;
 
 use crate::{
     existing_fs_check::{check_for_filesystem, FsFound},
-    fs_structs::{FsStatus, MainHeader, MainTransientHeader, NodePointer, TreeNode},
+    fs_structs::{
+        BlockString, FsStatus, MainHeader, MainTransientHeader, NodePointer, TreeNode,
+        BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH,
+    },
     interface::BlockDevice,
     mem_structs::BlockAllocator,
     Block, BLOCK_SIZE, FS_VERSION, LBA,
@@ -58,6 +68,10 @@ pub enum FsError {
     CompareExchangeFailedToOften,
     #[error("Fs is already mounted by someone else")]
     AlreadyMounted,
+    #[error("Malformed string encountered. String did not match specified length")]
+    MalformedStringLength,
+    #[error("Malformed string encountered. String must be utf-8 encoded: {0:?}")]
+    MalformedStringUtf8(#[from] FromUtf8Error),
 }
 
 pub trait FsRead {}
@@ -139,6 +153,7 @@ where
 {
     pub fn close(mut self) -> Result<D, FsError> {
         if self.block_allocator.is_dirty() {
+            assert_matches!(self.access_mode, AccessMode::ReadWrite);
             self.block_allocator.write(&mut self.device)?;
         } else {
             // TODO disable check outside of debug builds
@@ -343,8 +358,10 @@ where
             return Err(FsError::HeaderMismatch);
         }
 
+        let name = header.name.map(|name| fs.read_string(name)).transpose()?;
+
         fs.header_data = HeaderData {
-            name: None, // TODO
+            name,
             version: header.version,
             uuid: header.uuid,
         };
@@ -385,7 +402,7 @@ where
         }
     }
 
-    pub fn header(&self) -> Result<Box<Block<MainHeader>>, FsError> {
+    fn header(&self) -> Result<Box<Block<MainHeader>>, FsError> {
         let data = self
             .device
             .read_block(MAIN_HEADER_BLOCK)
@@ -421,6 +438,46 @@ where
 impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
     pub fn header_data(&self) -> &HeaderData {
         &self.header_data
+    }
+
+    pub fn read_header(&self) -> Result<Box<Block<MainHeader>>, FsError> {
+        self.header()
+    }
+
+    pub fn read_string(&self, string_ptr: NodePointer<BlockString>) -> Result<Box<str>, FsError> {
+        let mut string: Vec<u8> = Vec::new();
+
+        let mut head_block = unsafe {
+            // We are reading a string
+            self.device.read_pointer(string_ptr)
+        }
+        .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+
+        string.reserve_exact(head_block.length as usize);
+
+        let mut length_remaining = head_block.length as usize;
+        let mut next_ptr = head_block.next;
+
+        let length_in_block = min(length_remaining, BLOCK_STRING_DATA_LENGTH);
+        string.extend(&head_block.data[..length_in_block]);
+        length_remaining -= length_in_block;
+
+        while length_remaining > 0 {
+            let block = unsafe {
+                // We are reading a string
+                self.device
+                    .read_pointer(next_ptr.ok_or(FsError::MalformedStringLength)?)
+            }
+            .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+            next_ptr = block.next;
+
+            let length_in_block = min(length_remaining, BLOCK_STRING_PART_DATA_LENGTH);
+
+            string.extend(&block.data[..length_in_block]);
+            length_remaining -= length_in_block;
+        }
+
+        Ok(String::from_utf8(string)?.into_boxed_str())
     }
 }
 
