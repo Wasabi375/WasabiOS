@@ -2,12 +2,10 @@
 
 mod mod_group;
 
-use core::{
-    iter::Step,
-    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign},
-};
+use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 pub use mod_group::*;
+use simple_endian::LittleEndian;
 
 /// A utility trait for all number types
 pub trait Number:
@@ -24,7 +22,6 @@ pub trait Number:
     + Eq
     + PartialOrd
     + Ord
-    + Step
 {
     /// The lowest representable value
     const MIN: Self;
@@ -199,14 +196,21 @@ pub trait CheckedMul<T>: Sized {
 }
 
 macro_rules! impl_number {
-    ($t:ident) => {
+    ($t:ty, $min:expr, $max:expr, $zero:expr, $one:expr) => {
         impl Number for $t {
-            const MIN: Self = Self::MIN;
-            const MAX: Self = Self::MAX;
-            const ZERO: Self = 0;
-            const ONE: Self = 1;
+            const MIN: Self = $min;
+            const MAX: Self = $max;
+            const ZERO: Self = $zero;
+            const ONE: Self = $one;
         }
+    };
+    ($t:ty) => {
+        impl_number!($t, Self::MIN, Self::MAX, 0, 1);
+    };
+}
 
+macro_rules! impl_number_ops {
+    ($t:ty) => {
         impl WrappingAdd<$t> for $t {
             type Output = $t;
 
@@ -266,8 +270,13 @@ macro_rules! impl_number {
         }
     };
 }
+
 macro_rules! impl_unsinged {
-    ($t:ident) => {
+    ($t:ty, $min:expr, $max:expr, $zero:expr, $one:expr) => {
+        impl_number!($t, $min, $max, $zero, $one);
+        impl UnsingedNumber for $t {}
+    };
+    ($t:ty) => {
         impl_number!($t);
         impl UnsingedNumber for $t {}
     };
@@ -286,6 +295,28 @@ impl_number!(i32);
 impl_number!(i64);
 impl_number!(i128);
 impl_number!(isize);
+
+impl_number_ops!(u8);
+impl_number_ops!(u16);
+impl_number_ops!(u32);
+impl_number_ops!(u64);
+impl_number_ops!(u128);
+impl_number_ops!(usize);
+
+impl_number_ops!(i8);
+impl_number_ops!(i16);
+impl_number_ops!(i32);
+impl_number_ops!(i64);
+impl_number_ops!(i128);
+impl_number_ops!(isize);
+
+impl_unsinged!(
+    LittleEndian<u64>,
+    LittleEndian::from_bits(u64::MIN.to_le()),
+    LittleEndian::from_bits(u64::MAX.to_le()),
+    LittleEndian::from_bits(0u64.to_le()),
+    LittleEndian::from_bits(1u64.to_le())
+);
 
 #[cfg(test)]
 mod test {

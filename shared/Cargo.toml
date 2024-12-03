@@ -10,6 +10,7 @@ no-unicode-log = []
 [dependencies]
 log.workspace = true
 paste.workspace = true
+simple_endian.workspace = true
 static_assertions.workspace = true
 thiserror.workspace = true
 x86_64.workspace = true
