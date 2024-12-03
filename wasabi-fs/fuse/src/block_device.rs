@@ -16,7 +16,12 @@ pub struct FileDevice {
 
 impl FileDevice {
     pub fn open(path: &Path, block_count: u64) -> FileDevice {
-        let mut file = File::options().write(true).create(true).open(path).unwrap();
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)
+            .unwrap();
 
         let old_size = file.seek(SeekFrom::End(0)).unwrap();
         let new_size = max(old_size, block_count * BLOCK_SIZE as u64);
