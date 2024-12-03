@@ -3,6 +3,7 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
+    ptr::NonNull,
     sync::Mutex,
 };
 
@@ -15,7 +16,7 @@ pub struct FileDevice {
 }
 
 impl FileDevice {
-    pub fn open(path: &Path, block_count: u64) -> FileDevice {
+    pub fn create(path: &Path, block_count: u64) -> FileDevice {
         let mut file = File::options()
             .read(true)
             .write(true)
@@ -28,6 +29,20 @@ impl FileDevice {
         file.seek(SeekFrom::Start(0)).unwrap();
 
         file.set_len(new_size).unwrap();
+
+        FileDevice {
+            max_block_count: block_count,
+            file: Mutex::new(file),
+        }
+    }
+
+    pub fn open(path: &Path) -> FileDevice {
+        let mut file = File::options().read(true).write(true).open(path).unwrap();
+
+        let size = file.seek(SeekFrom::End(0)).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+
+        let block_count = size / BLOCK_SIZE as u64;
 
         FileDevice {
             max_block_count: block_count,
@@ -89,7 +104,7 @@ impl BlockDevice for FileDevice {
     fn write_block(
         &mut self,
         lba: LBA,
-        data: std::ptr::NonNull<BlockSlice>,
+        data: NonNull<BlockSlice>,
     ) -> Result<(), Self::BlockDeviceError> {
         let mut file = self.file.lock().unwrap();
 
@@ -107,7 +122,7 @@ impl BlockDevice for FileDevice {
     fn write_blocks(
         &mut self,
         start: LBA,
-        data: std::ptr::NonNull<[u8]>,
+        data: NonNull<[u8]>,
     ) -> Result<(), Self::BlockDeviceError> {
         let mut file = self.file.lock().unwrap();
 
@@ -129,7 +144,7 @@ impl BlockDevice for FileDevice {
     fn write_block_atomic(
         &mut self,
         lba: LBA,
-        data: std::ptr::NonNull<BlockSlice>,
+        data: NonNull<BlockSlice>,
     ) -> Result<(), Self::BlockDeviceError> {
         self.write_block(lba, data)
     }
@@ -137,9 +152,12 @@ impl BlockDevice for FileDevice {
     fn compare_exchange_block(
         &mut self,
         lba: LBA,
-        current: &BlockSlice,
-        new: &BlockSlice,
+        current: NonNull<BlockSlice>,
+        new: NonNull<BlockSlice>,
     ) -> Result<Result<(), Box<BlockSlice>>, Self::BlockDeviceError> {
+        let current = unsafe { current.as_ref() };
+        let new = unsafe { new.as_ref() };
+
         let mut file = self.file.lock().unwrap();
         file.seek(SeekFrom::Start(lba.get() * BLOCK_SIZE as u64))?;
 
@@ -152,7 +170,8 @@ impl BlockDevice for FileDevice {
             return Ok(Err(Box::new(block)));
         }
 
-        if file.write(new.as_ref())? != BLOCK_SIZE {
+        file.seek(SeekFrom::Start(lba.get() * BLOCK_SIZE as u64))?;
+        if file.write(new)? != BLOCK_SIZE {
             return Err(Self::BlockDeviceError::other(
                 FileDevicError::IncompleteWrite,
             ));
