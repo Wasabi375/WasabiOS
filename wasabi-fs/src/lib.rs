@@ -1,6 +1,6 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
-#![feature(assert_matches)]
+#![feature(assert_matches, slice_take)]
 #![allow(unused)] // TODO temp
 
 use core::{
@@ -186,16 +186,20 @@ struct ZST {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C, align(512))]
 pub struct Block<T> {
-    pub data: BlockAligned<T>,
-    pad: BlockAligned<ZST>,
+    _data: BlockAligned<T>,
+    _pad: BlockAligned<ZST>,
 }
 
 impl<T> Block<T> {
     pub fn new(data: T) -> Self {
         Self {
-            data: BlockAligned(data),
-            pad: BlockAligned(ZST {}),
+            _data: BlockAligned(data),
+            _pad: BlockAligned(ZST {}),
         }
+    }
+
+    pub fn into_inner(self) -> T {
+        self._data.0
     }
 
     pub fn block_data(&self) -> NonNull<[u8; BLOCK_SIZE]> {
@@ -215,13 +219,13 @@ impl<T> Deref for Block<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.data.deref()
+        self._data.deref()
     }
 }
 
 impl<T> DerefMut for Block<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.data.deref_mut()
+        self._data.deref_mut()
     }
 }
 
