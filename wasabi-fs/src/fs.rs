@@ -15,7 +15,7 @@ use alloc::{
     vec::Vec,
 };
 use log::{error, warn};
-use shared::{dbg, rangeset::RangeSet, todo_error};
+use shared::{counts_required_for, dbg, rangeset::RangeSet, todo_error};
 use static_assertions::const_assert;
 use staticvec::StaticVec;
 use thiserror::Error;
@@ -24,8 +24,8 @@ use uuid::Uuid;
 use crate::{
     existing_fs_check::{check_for_filesystem, FsFound},
     fs_structs::{
-        BlockString, FsStatus, MainHeader, MainTransientHeader, NodePointer, TreeNode,
-        BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH,
+        BlockString, BlockStringPart, FsStatus, MainHeader, MainTransientHeader, NodePointer,
+        TreeNode, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH,
     },
     interface::BlockDevice,
     mem_structs::BlockAllocator,
@@ -72,6 +72,12 @@ pub enum FsError {
     MalformedStringLength,
     #[error("Malformed string encountered. String must be utf-8 encoded: {0:?}")]
     MalformedStringUtf8(#[from] FromUtf8Error),
+    #[error("String length must fit within a u32")]
+    StringToLong,
+}
+
+fn map_device_error<E: Error + 'static>(e: E) -> FsError {
+    FsError::BlockDevice(Box::new(e))
 }
 
 pub trait FsRead {}
@@ -189,7 +195,7 @@ where
                 open_header.block_data(),
                 dbg!(closed_header).block_data(),
             )
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))?
+            .map_err(map_device_error)?
         {
             Ok(()) => Ok(self.device),
             Err(_) => Err(FsError::CompareExchangeFailedToOften), // TODO loop a few times
@@ -200,9 +206,7 @@ where
         device: D,
         access: AccessMode,
     ) -> Result<FileSystem<D, FsDuringCreation>, FsError> {
-        let max_block_count = device
-            .max_block_count()
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+        let max_block_count = device.max_block_count().map_err(map_device_error)?;
         if max_block_count < MIN_BLOCK_COUNT {
             return Err(FsError::BlockDeviceToSmall(
                 max_block_count,
@@ -235,8 +239,7 @@ where
         override_check: OverrideCheck,
         access: AccessMode,
     ) -> Result<Self, FsError> {
-        let fs_found =
-            check_for_filesystem(&device).map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+        let fs_found = check_for_filesystem(&device).map_err(map_device_error)?;
         if fs_found != FsFound::None {
             match override_check {
                 OverrideCheck::Check => {
@@ -279,8 +282,10 @@ where
 
         fs.block_allocator.write(&mut fs.device);
 
-        // TODO create file system name
-        let name_block: Option<LBA> = None;
+        let name_block: Option<LBA> = name
+            .as_ref()
+            .map(|name| fs.write_string(&name))
+            .transpose()?;
         if let Some(name_block) = name_block {
             header.name = Some(NodePointer::new(name_block));
         }
@@ -336,10 +341,7 @@ where
         fs.max_usable_lba = fs.backup_header_lba - 1;
         fs.max_block_count = fs.backup_header_lba.get() + 1;
 
-        let block_device_max_block_count = fs
-            .device
-            .max_block_count()
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+        let block_device_max_block_count = fs.device.max_block_count().map_err(map_device_error)?;
         if block_device_max_block_count < fs.max_block_count {
             return Err(FsError::BlockDeviceToSmall(
                 block_device_max_block_count,
@@ -351,7 +353,7 @@ where
             // Safety: we are reading a [MainHeader] from the reported backup location
             fs.device
                 .read_pointer(header.backup_header)
-                .map_err(|e| FsError::BlockDevice(Box::new(e)))?
+                .map_err(map_device_error)?
         };
 
         if !header.matches_backup(&backup_header) {
@@ -390,7 +392,7 @@ where
                 header.block_data(),
                 new_header.block_data(),
             )
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))?
+            .map_err(map_device_error)?
         {
             Ok(()) => {}
             Err(_) => return Err(FsError::CompareExchangeFailedToOften), // TODO loop a few times
@@ -406,7 +408,7 @@ where
         let data = self
             .device
             .read_block(MAIN_HEADER_BLOCK)
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+            .map_err(map_device_error)?;
 
         let data: Box<Block<MainHeader>> = unsafe {
             // Safety: Block<MainHeader> is exactly 1 block in size and can be copy constructed.
@@ -422,7 +424,7 @@ where
     fn write_header(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
         self.device
             .write_block_atomic(MAIN_HEADER_BLOCK, header.block_data())
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))
+            .map_err(map_device_error)
     }
 
     fn copy_header_to_backup(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
@@ -431,7 +433,7 @@ where
         backup_header.backup_header = NodePointer::new(MAIN_HEADER_BLOCK);
         self.device
             .write_block_atomic(self.backup_header_lba, backup_header.block_data())
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))
+            .map_err(map_device_error)
     }
 }
 
@@ -451,7 +453,7 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
             // We are reading a string
             self.device.read_pointer(string_ptr)
         }
-        .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+        .map_err(map_device_error)?;
 
         string.reserve_exact(head_block.length as usize);
 
@@ -468,7 +470,7 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
                 self.device
                     .read_pointer(next_ptr.ok_or(FsError::MalformedStringLength)?)
             }
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+            .map_err(map_device_error)?;
             next_ptr = block.next;
 
             let length_in_block = min(length_remaining, BLOCK_STRING_PART_DATA_LENGTH);
@@ -484,9 +486,61 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
 impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
     fn write_tree_node(&mut self, lba: LBA, node: &Block<TreeNode>) -> Result<(), FsError> {
         let data: NonNull<[u8; BLOCK_SIZE]> = NonNull::from(node).cast();
+        self.device.write_block(lba, data).map_err(map_device_error)
+    }
+
+    fn write_string(&mut self, string: &str) -> Result<LBA, FsError> {
+        let length_in_parts = if string.len() > BLOCK_STRING_DATA_LENGTH {
+            string.len() - BLOCK_STRING_DATA_LENGTH
+        } else {
+            0
+        };
+
+        let part_block_count =
+            counts_required_for!(BLOCK_STRING_PART_DATA_LENGTH, length_in_parts) as u64;
+
+        let blocks = self
+            .block_allocator
+            .allocate(part_block_count + 1)
+            .ok_or(FsError::Full)?;
+        let mut blocks = blocks.block_iter().peekable();
+
+        let mut bytes = string.as_bytes();
+
+        let head_lba = blocks.next().expect("we just allocated at least 1 block");
+        let mut string_head = Block::new(BlockString {
+            length: string.len().try_into().map_err(|_| FsError::StringToLong)?,
+            data: [0; BLOCK_STRING_DATA_LENGTH],
+            next: blocks.peek().map(|lba| NodePointer::new(*lba)),
+        });
+        let head_data = bytes
+            .take(..min(BLOCK_STRING_DATA_LENGTH, bytes.len()))
+            .expect("we take at max the remaining length");
+        string_head.data[..head_data.len()].copy_from_slice(head_data);
         self.device
-            .write_block(lba, data)
-            .map_err(|e| FsError::BlockDevice(Box::new(e)))
+            .write_block(head_lba, string_head.block_data())
+            .map_err(map_device_error)?;
+
+        while bytes.len() > 0 {
+            let part_lba = blocks
+                .next()
+                .expect("There should be enough blocks allocated for the string");
+            let mut string_part = Block::new(BlockStringPart {
+                data: [0; BLOCK_STRING_PART_DATA_LENGTH],
+                next: blocks.peek().map(|lba| NodePointer::new(*lba)),
+            });
+            let part_data = bytes
+                .take(..min(BLOCK_STRING_PART_DATA_LENGTH, bytes.len()))
+                .expect("we take at max the remaining length");
+            string_part.data[..part_data.len()].copy_from_slice(part_data);
+            self.device
+                .write_block(part_lba, string_part.block_data())
+                .map_err(map_device_error)?;
+        }
+
+        assert!(blocks.next().is_none());
+
+        Ok(head_lba)
     }
 }
 
