@@ -11,6 +11,8 @@ use uuid::Uuid;
 
 use crate::{fs::MAIN_HEADER_BLOCK, BlockGroup, BLOCK_SIZE, LBA};
 
+// TODO mark endianness of all numbers
+
 /// Either a single [BlockGroup] or a [NodePointer] to a [BlockList]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
@@ -37,6 +39,9 @@ pub struct BlockList {
 }
 const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
 
+/// The maximum size of the string data that can be stored in the initial [BlockString].
+///
+/// The rest of the string data is stored in [BlockStringPart]s
 pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
     512 - (size_of::<u32>() + size_of::<Option<NodePointer<BlockStringPart>>>());
 
@@ -50,6 +55,7 @@ pub struct BlockString {
 }
 const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
 
+/// The maximum size of the string data that can be stored in a [BlockStringPart]
 pub(crate) const BLOCK_STRING_PART_DATA_LENGTH: usize =
     512 - size_of::<Option<NodePointer<BlockStringPart>>>();
 
