@@ -83,7 +83,7 @@ macro_rules! counts_required_for {
 macro_rules! dbg {
     ($v:expr) => {{
         let value = $v;
-        log::debug!("{} = {:?}", core::stringify($v), value);
+        log::debug!("{} = {:?}", core::stringify!($v), value);
         value
     }};
 }
