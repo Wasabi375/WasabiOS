@@ -36,14 +36,28 @@ const MIN_BLOCK_COUNT: u64 = INITALLY_USED_BLOCKS.len() as u64 + 1;
 pub enum FsError {
     #[error("Block device error: {0}")]
     BlockDevice(Box<dyn Error>),
-    #[error("Block device too small. Max block count is {0}")]
-    BlockDeviceToSmall(u64),
+    #[error("Block device too small. Max block count is {0}, required: {1}")]
+    BlockDeviceToSmall(u64, u64),
     #[error("Override check failed")]
     OverrideCheck,
     #[error("File system is full")]
     Full,
     #[error("Write allocator failed to allocate blocks for free list")]
     WriteAllocatorFreeList,
+    #[error("Main header and backup header did not match")]
+    HeaderMismatch,
+    #[error("Header version is {0:?} but fs is at version {FS_VERSION:?}")]
+    HeaderVersionMismatch([u8; 4]),
+    #[error("Header did not start with the magic string \"WasabiFs\"")]
+    HeaderMagicInvalid,
+    #[error("The main header does not include the transient block")]
+    HeaderWithoutTransient,
+    #[error("The file sytem is not fully initialized")]
+    NotInitialized,
+    #[error("Failed to compare exchange block to often. Giving up")]
+    CompareExchangeFailedToOften,
+    #[error("Fs is already mounted by someone else")]
+    AlreadyMounted,
 }
 
 pub trait FsRead {}
@@ -68,7 +82,19 @@ pub struct FileSystem<D, S> {
 
     block_allocator: BlockAllocator,
 
+    header_data: HeaderData,
+
+    access_mode: AccessMode,
+
     _state: PhantomData<S>,
+}
+
+/// Data from the header about the fs that generally does not change
+#[derive(Default, Debug)]
+pub struct HeaderData {
+    pub name: Option<Box<str>>,
+    pub version: [u8; 4],
+    pub uuid: Uuid,
 }
 
 pub enum OverrideCheck {
@@ -76,6 +102,7 @@ pub enum OverrideCheck {
     IgnoreExisting,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum AccessMode {
     ReadOnly,
     ReadWrite,
@@ -96,6 +123,10 @@ impl<D> FileSystem<D, FsDuringCreation> {
             backup_header_lba: self.backup_header_lba,
 
             block_allocator: self.block_allocator,
+
+            header_data: self.header_data,
+
+            access_mode: self.access_mode,
 
             _state: PhantomData,
         }
@@ -121,15 +152,47 @@ where
             }
         }
 
-        Ok(self.device)
+        let open_header = self.header()?;
+        let mut closed_header = open_header.clone();
+        let closed_transient = &mut closed_header
+            .transient
+            .as_mut()
+            .expect("Main header should always have transient data");
+        match self.access_mode {
+            AccessMode::ReadOnly => {
+                closed_transient.mount_count -= 1;
+            }
+            AccessMode::ReadWrite => {
+                closed_transient.mount_count -= 1;
+                closed_transient.open_in_write_mode = false;
+            }
+        }
+        match self
+            .device
+            .compare_exchange_block(
+                MAIN_HEADER_BLOCK,
+                open_header.block_data(),
+                dbg!(closed_header).block_data(),
+            )
+            .map_err(|e| FsError::BlockDevice(Box::new(e)))?
+        {
+            Ok(()) => Ok(self.device),
+            Err(_) => Err(FsError::CompareExchangeFailedToOften), // TODO loop a few times
+        }
     }
 
-    fn create_fs_device_access(device: D) -> Result<FileSystem<D, FsDuringCreation>, FsError> {
+    fn create_fs_device_access(
+        device: D,
+        access: AccessMode,
+    ) -> Result<FileSystem<D, FsDuringCreation>, FsError> {
         let max_block_count = device
             .max_block_count()
             .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
         if max_block_count < MIN_BLOCK_COUNT {
-            return Err(FsError::BlockDeviceToSmall(max_block_count));
+            return Err(FsError::BlockDeviceToSmall(
+                max_block_count,
+                MIN_BLOCK_COUNT,
+            ));
         }
         let max_usable_lba = LBA::new(max_block_count - 2).expect("max_block_count > 2");
         let backup_header_lba = LBA::new(max_block_count - 1).expect("max_block_count > 2");
@@ -140,6 +203,10 @@ where
             max_usable_lba,
             backup_header_lba,
 
+            header_data: Default::default(),
+
+            access_mode: access,
+
             block_allocator: BlockAllocator::empty(INITALLY_USED_BLOCKS, max_usable_lba),
 
             _state: PhantomData,
@@ -149,7 +216,7 @@ where
     fn create_internal(
         device: D,
         uuid: Uuid,
-        name: Option<&str>,
+        name: Option<Box<str>>,
         override_check: OverrideCheck,
         access: AccessMode,
     ) -> Result<Self, FsError> {
@@ -167,7 +234,7 @@ where
             }
         }
 
-        let mut fs = Self::create_fs_device_access(device)?;
+        let mut fs = Self::create_fs_device_access(device, AccessMode::ReadWrite)?;
 
         // create basic header and backup header
         let root_block = ROOT_BLOCK;
@@ -178,10 +245,11 @@ where
             uuid,
             root: NodePointer::new(root_block),
             free_blocks: NodePointer::new(free_blocks),
+            backup_header: NodePointer::new(fs.backup_header_lba),
             name: None,
             transient: Some(MainTransientHeader {
                 mount_count: 1,
-                writeable: true,
+                open_in_write_mode: true,
                 status: FsStatus::Uninitialized,
             }),
         });
@@ -209,23 +277,114 @@ where
         transient.status = FsStatus::Ready;
         match access {
             AccessMode::ReadOnly => {
-                transient.writeable = false;
+                transient.open_in_write_mode = false;
             }
-            AccessMode::ReadWrite => {}
+            AccessMode::ReadWrite => {
+                transient.open_in_write_mode = true;
+            }
         }
 
         // write backup and main header
         fs.copy_header_to_backup(&header);
         fs.write_header(&header);
+        fs.header_data = HeaderData {
+            name,
+            version: FS_VERSION,
+            uuid,
+        };
 
         unsafe {
             // Safety: we just created an initialized the file system
             Ok(fs.created())
         }
     }
-}
 
-impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
+    fn open_internal(device: D, access: AccessMode) -> Result<Self, FsError> {
+        let mut fs = Self::create_fs_device_access(device, access)?;
+
+        let header = dbg!(fs.header()?);
+
+        if header.magic != MainHeader::MAGIC {
+            return Err(FsError::HeaderMagicInvalid);
+        }
+        if header.version != FS_VERSION {
+            return Err(FsError::HeaderVersionMismatch(header.version));
+        }
+        if header.transient.is_none() {
+            return Err(FsError::HeaderWithoutTransient);
+        }
+        if header.transient.unwrap().status != FsStatus::Ready {
+            return Err(FsError::NotInitialized);
+        }
+
+        fs.backup_header_lba = header.backup_header.lba;
+        fs.max_usable_lba = fs.backup_header_lba - 1;
+        fs.max_block_count = fs.backup_header_lba.get() + 1;
+
+        let block_device_max_block_count = fs
+            .device
+            .max_block_count()
+            .map_err(|e| FsError::BlockDevice(Box::new(e)))?;
+        if block_device_max_block_count < fs.max_block_count {
+            return Err(FsError::BlockDeviceToSmall(
+                block_device_max_block_count,
+                fs.max_block_count,
+            ));
+        }
+
+        let backup_header = unsafe {
+            // Safety: we are reading a [MainHeader] from the reported backup location
+            fs.device
+                .read_pointer(header.backup_header)
+                .map_err(|e| FsError::BlockDevice(Box::new(e)))?
+        };
+
+        if !header.matches_backup(&backup_header) {
+            return Err(FsError::HeaderMismatch);
+        }
+
+        fs.header_data = HeaderData {
+            name: None, // TODO
+            version: header.version,
+            uuid: header.uuid,
+        };
+
+        let on_device_transient = header.transient.unwrap();
+        if on_device_transient.open_in_write_mode {
+            return Err(FsError::AlreadyMounted);
+        }
+
+        let mut new_header = header.as_ref().clone();
+        let new_transient = new_header.transient.as_mut().unwrap();
+
+        match access {
+            AccessMode::ReadOnly => {
+                new_transient.mount_count += 1;
+            }
+            AccessMode::ReadWrite => {
+                new_transient.mount_count += 1;
+                new_transient.open_in_write_mode = true;
+            }
+        }
+        match fs
+            .device
+            .compare_exchange_block(
+                MAIN_HEADER_BLOCK,
+                header.block_data(),
+                new_header.block_data(),
+            )
+            .map_err(|e| FsError::BlockDevice(Box::new(e)))?
+        {
+            Ok(()) => {}
+            Err(_) => return Err(FsError::CompareExchangeFailedToOften), // TODO loop a few times
+        }
+
+        unsafe {
+            // Safety: we checked that the fs is valid, and ensured that read/write access is ok
+            Ok(fs.created())
+        }
+    }
+
     pub fn header(&self) -> Result<Box<Block<MainHeader>>, FsError> {
         let data = self
             .device
@@ -242,8 +401,7 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
 
         Ok(data)
     }
-}
-impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
+
     fn write_header(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
         self.device
             .write_block_atomic(MAIN_HEADER_BLOCK, header.block_data())
@@ -253,11 +411,20 @@ impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
     fn copy_header_to_backup(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
         let mut backup_header = Block::new(header.clone());
         backup_header.transient = None;
+        backup_header.backup_header = NodePointer::new(MAIN_HEADER_BLOCK);
         self.device
             .write_block_atomic(self.backup_header_lba, backup_header.block_data())
             .map_err(|e| FsError::BlockDevice(Box::new(e)))
     }
+}
 
+impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
+    pub fn header_data(&self) -> &HeaderData {
+        &self.header_data
+    }
+}
+
+impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
     fn write_tree_node(&mut self, lba: LBA, node: &Block<TreeNode>) -> Result<(), FsError> {
         let data: NonNull<[u8; BLOCK_SIZE]> = NonNull::from(node).cast();
         self.device
@@ -271,9 +438,13 @@ impl<D: BlockDevice> FileSystem<D, FsReadOnly> {
         device: D,
         override_check: OverrideCheck,
         uuid: Uuid,
-        name: Option<&str>,
+        name: Option<Box<str>>,
     ) -> Result<Self, FsError> {
         Self::create_internal(device, uuid, name, override_check, AccessMode::ReadOnly)
+    }
+
+    pub fn open(device: D) -> Result<Self, FsError> {
+        Self::open_internal(device, AccessMode::ReadOnly)
     }
 }
 
@@ -282,8 +453,12 @@ impl<D: BlockDevice> FileSystem<D, FsReadWrite> {
         device: D,
         override_check: OverrideCheck,
         uuid: Uuid,
-        name: Option<&str>,
+        name: Option<Box<str>>,
     ) -> Result<Self, FsError> {
         Self::create_internal(device, uuid, name, override_check, AccessMode::ReadWrite)
+    }
+
+    pub fn open(device: D) -> Result<Self, FsError> {
+        Self::open_internal(device, AccessMode::ReadWrite)
     }
 }
