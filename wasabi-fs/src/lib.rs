@@ -1,5 +1,6 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![feature(assert_matches)]
 #![allow(unused)] // TODO temp
 
 use core::{

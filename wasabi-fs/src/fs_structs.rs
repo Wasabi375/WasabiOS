@@ -37,7 +37,7 @@ pub struct BlockList {
 }
 const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
 
-const BLOCK_STRING_DATA_LENGTH: usize =
+pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
     512 - (size_of::<u32>() + size_of::<Option<NodePointer<BlockStringPart>>>());
 
 /// A string stored over 1 or multiple blocks.
@@ -50,7 +50,7 @@ pub struct BlockString {
 }
 const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
 
-const BLOCK_STRING_PART_DATA_LENGTH: usize =
+pub(crate) const BLOCK_STRING_PART_DATA_LENGTH: usize =
     512 - size_of::<Option<NodePointer<BlockStringPart>>>();
 
 /// A part of a [BlockString].
