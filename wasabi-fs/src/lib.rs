@@ -5,7 +5,7 @@
 use core::{
     mem::{size_of, transmute},
     num::{NonZeroU16, NonZeroU64},
-    ops::{Add, AddAssign, Deref, DerefMut, Sub},
+    ops::{Add, AddAssign, Deref, DerefMut, Sub, SubAssign},
     ptr::NonNull,
     u64,
 };
@@ -83,6 +83,20 @@ impl Sub<LBA> for LBA {
         assert!(self >= rhs);
 
         self.get() - rhs.get()
+    }
+}
+
+impl Sub<u64> for LBA {
+    type Output = LBA;
+
+    fn sub(self, rhs: u64) -> Self::Output {
+        unsafe { LBA::new_unchecked(self.get() - rhs) }
+    }
+}
+
+impl SubAssign<u64> for LBA {
+    fn sub_assign(&mut self, rhs: u64) {
+        *self = *self - rhs;
     }
 }
 

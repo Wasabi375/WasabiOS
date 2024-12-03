@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use fuse::WasabiFuseTest;
 use fuser::MountOption;
-use log::{debug, LevelFilter};
+use log::{debug, info, LevelFilter};
 use simple_logger::SimpleLogger;
 use wfs::{
     blocks_required_for,
-    fs::{FileSystem, FsReadWrite, OverrideCheck},
+    fs::{FileSystem, FsReadOnly, FsReadWrite, OverrideCheck},
 };
 
 use crate::block_device::FileDevice;
@@ -33,6 +33,12 @@ struct Arguments {
 enum Command {
     Mount(MountOptions),
     Create(CreateOptions),
+    Info(InfoOptions),
+}
+
+#[derive(Args, Debug)]
+struct InfoOptions {
+    image_file: PathBuf,
 }
 
 #[derive(Args, Debug)]
@@ -95,10 +101,18 @@ fn main() {
     match args.command {
         Command::Mount(args) => mount(args),
         Command::Create(args) => create(args),
+        Command::Info(args) => info(args),
     }
 }
 
-fn create(args: CreateOptions) {
+fn info(args: InfoOptions) {
+    let device = FileDevice::open(&args.image_file);
+    let fs = FileSystem::<_, FsReadOnly>::open(device).unwrap();
+
+    info!("Header: {:?}", fs.header_data());
+}
+
+fn create(mut args: CreateOptions) {
     let size_in_bytes = args.size * 1024u64.pow(args.size_magnitude);
     let block_count = blocks_required_for!(size_in_bytes);
     let size_in_bytes = block_count * 512;
@@ -114,9 +128,9 @@ fn create(args: CreateOptions) {
         OverrideCheck::Check
     };
     let uuid = uuid::Uuid::new_v4();
-    let name = args.name.as_ref().map(|n| n.as_str());
+    let name: Option<Box<str>> = args.name.take().map(|n| n.into_boxed_str());
 
-    let device = FileDevice::open(&args.image_file, block_count);
+    let device = FileDevice::create(&args.image_file, block_count);
 
     let fs = FileSystem::<_, FsReadWrite>::create(device, override_check, uuid, name).unwrap();
 

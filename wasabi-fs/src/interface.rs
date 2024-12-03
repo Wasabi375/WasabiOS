@@ -61,8 +61,8 @@ pub trait BlockDevice {
     fn compare_exchange_block(
         &mut self,
         lba: LBA,
-        current: &BlockSlice,
-        new: &BlockSlice,
+        current: NonNull<BlockSlice>,
+        new: NonNull<BlockSlice>,
     ) -> Result<Result<(), Box<BlockSlice>>, Self::BlockDeviceError>;
 
     /// Read a [BlockGroup] from the device
