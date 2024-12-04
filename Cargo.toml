@@ -4,16 +4,16 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-anyhow = "1.0.75"
+anyhow.workspace = true
 bootloader.workspace = true
-cargo_toml = "0.15.3"
+cargo_toml = "0.20.5"
 clap = { version = "4.5", features = ["derive"] }
-fs-err = "2.11.0"
+fs-err = "3.0.0"
 log.workspace = true
 lzma-rs = "0.3.0"
 nix = { version = "0.29.0", features = [ "term" ] }
 sha2 = "0.10.8"
-simple_logger = { version = "4.2.0", default-features = false, features = ["colors"]}
+simple_logger = { version = "4.3.3", default-features = false, features = ["colors"]}
 tar = "0.4.41"
 tempfile = "3.12.0"
 tokio = { version = "1.32.0", features = ["full"] }
@@ -68,6 +68,7 @@ walkdir = "2.5"
 
 #  TODO use upstream once new version is released
 derive_builder = { version = "0.20.0", git = "https://github.com/Wasabi375/rust-derive-builder", branch = "owned_custom_default", default-features = false}
+
 # TODO remove lazy_static as a dependency, in order to get rid of the external spin-lock
 lazy_static = { version = "1.4.0", features=["spin_no_std"] }
 
