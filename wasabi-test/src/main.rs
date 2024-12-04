@@ -321,7 +321,7 @@ fn run_single_test(serial: &mut SerialPort, test_to_run: usize, panicing: bool) 
 
     for module in &KERNEL_TESTS
         .iter()
-        .group_by(|desc| desc.test_location.module)
+        .chunk_by(|desc| desc.test_location.module)
     {
         for test in module.1 {
             if (test.expected_exit == TestExitState::Panic) != panicing {
@@ -411,7 +411,7 @@ fn run_tests_with_serial(serial: &mut SerialPort, start_at: usize) -> bool {
 
     for module in &KERNEL_TESTS
         .iter()
-        .group_by(|desc| desc.test_location.module)
+        .chunk_by(|desc| desc.test_location.module)
     {
         let mut count = 0;
         let mut success = 0;
@@ -489,7 +489,7 @@ fn run_tests_no_serial() -> bool {
 
     for module in &KERNEL_TESTS
         .iter()
-        .group_by(|desc| desc.test_location.module)
+        .chunk_by(|desc| desc.test_location.module)
     {
         info!("Running tests in module {}", module.0);
         let mut count = 0;
