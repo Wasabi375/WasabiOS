@@ -185,12 +185,29 @@ pub enum FsStatus {
     Ready,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct MainTransientHeader {
+    pub magic: [u8; 4],
     pub mount_count: u8,
     pub open_in_write_mode: bool,
     pub status: FsStatus,
+}
+
+impl MainTransientHeader {
+    /// Magic at the start of the [MainTransientHeader]
+    pub const MAGIC: [u8; 4] = *b"WaTh";
+}
+
+impl Default for MainTransientHeader {
+    fn default() -> Self {
+        Self {
+            magic: Self::MAGIC,
+            mount_count: Default::default(),
+            open_in_write_mode: Default::default(),
+            status: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -16,42 +16,41 @@ pub struct FileDevice {
 }
 
 impl FileDevice {
-    pub fn create(path: &Path, block_count: u64) -> FileDevice {
+    pub fn create(path: &Path, block_count: u64) -> Result<FileDevice, std::io::Error> {
         let mut file = File::options()
             .read(true)
             .write(true)
             .create(true)
-            .open(path)
-            .unwrap();
+            .open(path)?;
 
-        let old_size = file.seek(SeekFrom::End(0)).unwrap();
+        let old_size = file.seek(SeekFrom::End(0))?;
         let new_size = max(old_size, block_count * BLOCK_SIZE as u64);
-        file.seek(SeekFrom::Start(0)).unwrap();
+        file.seek(SeekFrom::Start(0))?;
 
-        file.set_len(new_size).unwrap();
+        file.set_len(new_size)?;
 
-        FileDevice {
+        Ok(FileDevice {
             max_block_count: block_count,
             file: Mutex::new(file),
-        }
+        })
     }
 
-    pub fn open(path: &Path) -> FileDevice {
-        let mut file = File::options().read(true).write(true).open(path).unwrap();
+    pub fn open(path: &Path) -> Result<FileDevice, std::io::Error> {
+        let mut file = File::options().read(true).write(true).open(path)?;
 
-        let size = file.seek(SeekFrom::End(0)).unwrap();
-        file.seek(SeekFrom::Start(0)).unwrap();
+        let size = file.seek(SeekFrom::End(0))?;
+        file.seek(SeekFrom::Start(0))?;
 
         let block_count = size / BLOCK_SIZE as u64;
 
-        FileDevice {
+        Ok(FileDevice {
             max_block_count: block_count,
             file: Mutex::new(file),
-        }
+        })
     }
 
-    pub fn close(self) {
-        self.file.lock().unwrap().flush().unwrap();
+    pub fn close(self) -> Result<(), std::io::Error> {
+        self.file.lock().expect("We never shatter the lock").flush()
     }
 }
 
