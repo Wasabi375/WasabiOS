@@ -22,13 +22,13 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
+    block_allocator::BlockAllocator,
     existing_fs_check::{check_for_filesystem, FsFound},
     fs_structs::{
         BlockString, BlockStringPart, FsStatus, INode, INodeData, MainHeader, MainTransientHeader,
         NodePointer, TreeNode, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH,
     },
     interface::BlockDevice,
-    mem_structs::BlockAllocator,
     Block, BLOCK_SIZE, FS_VERSION, LBA,
 };
 

@@ -249,7 +249,13 @@ pub enum TreeNode {
     Node {
         /// The parent of this Node or `None` if this is the root node
         parent: Option<NodePointer<TreeNode>>,
+        /// a list of [TreeNode] pointers and their maximum [INode] value.
+        ///
+        /// `children[i].0 == children[i].1.follow().max`
         children: StaticVec<(INode, NodePointer<TreeNode>), 30, u8>,
+        /// The maximum inode in this subtree
+        ///
+        /// This must be the `INode` in the parents `childeren` list.
         max: INode,
     },
 }

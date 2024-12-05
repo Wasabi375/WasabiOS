@@ -18,11 +18,11 @@ use static_assertions::const_assert;
 
 extern crate alloc;
 
+pub mod block_allocator;
 pub mod existing_fs_check;
 pub mod fs;
 pub mod fs_structs;
 pub mod interface;
-pub mod mem_structs;
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
