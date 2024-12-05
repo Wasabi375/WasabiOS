@@ -1,57 +1,90 @@
-use std::{
-    ffi::OsStr,
-    time::{Duration, UNIX_EPOCH},
-};
+use anyhow::Context;
+use anyhow::Result;
+use fuser::Request;
+use log::debug;
+use log::error;
+use std::path::Path;
+use std::time::Duration;
+use uuid::Uuid;
+use wfs::fs::FsWrite;
+use wfs::fs::OverrideCheck;
 
-use fuser::{
-    FileAttr, FileType, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
-};
-use libc::{c_int, ENOENT, ENOTDIR};
-use log::{debug, warn};
+use wfs::fs::{FileSystem, FsRead, FsReadOnly, FsReadWrite};
 
-pub struct WasabiFuseTest;
+use crate::block_device::FileDevice;
 
-const ROOT: FileAttr = FileAttr {
-    ino: 1,
-    size: 0,
-    blocks: 0,
-    atime: UNIX_EPOCH,
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    blksize: 0,
-    flags: 0,
-};
+pub mod fake;
 
-const HELLO_TXT_CONTENT: &str = "Hello World!\n";
-const HELLO: FileAttr = FileAttr {
-    ino: 2,
-    size: 13,
-    blocks: 1,
-    atime: UNIX_EPOCH,
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::RegularFile,
-    perm: 0o755,
-    nlink: 1,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    blksize: 512,
-    flags: 0,
-};
+pub struct WasabiFuse<S> {
+    file_system: Option<FileSystem<FileDevice, S>>,
+}
 
-const TTL: Duration = Duration::from_secs(1);
+impl<S> WasabiFuse<S> {
+    pub fn fs(&self) -> &FileSystem<FileDevice, S> {
+        self.file_system.as_ref().expect("Only none during drop")
+    }
 
-impl fuser::Filesystem for WasabiFuseTest {
-    fn init(&mut self, req: &Request<'_>, config: &mut KernelConfig) -> Result<(), c_int> {
+    pub fn fs_mut(&mut self) -> &mut FileSystem<FileDevice, S> {
+        self.file_system.as_mut().expect("Only none during drop")
+    }
+}
+
+impl WasabiFuse<FsReadOnly> {
+    pub fn open(image: &Path) -> Result<Self> {
+        let device = FileDevice::open(image).context("failed to open image file")?;
+        let fs = FileSystem::<_, FsReadOnly>::open(device).context("open filesystem readonly")?;
+
+        Ok(WasabiFuse {
+            file_system: Some(fs),
+        })
+    }
+}
+
+impl WasabiFuse<FsReadWrite> {
+    pub fn open(image: &Path) -> Result<Self> {
+        let device = FileDevice::open(image).context("failed to open image file")?;
+        let fs = FileSystem::<_, FsReadWrite>::open(device).context("open filesystem readwrite")?;
+
+        Ok(WasabiFuse {
+            file_system: Some(fs),
+        })
+    }
+
+    pub fn force_open(image: &Path) -> Result<Self> {
+        let device = FileDevice::open(image).context("failed to open image file")?;
+        let fs = FileSystem::<_, FsReadWrite>::force_open(device)
+            .context("open filesystem readwrite")?;
+
+        Ok(WasabiFuse {
+            file_system: Some(fs),
+        })
+    }
+
+    pub fn create(
+        image: &Path,
+        block_count: u64,
+        override_check: OverrideCheck,
+        uuid: Uuid,
+        name: Option<Box<str>>,
+    ) -> Result<Self> {
+        let device =
+            FileDevice::create(image, block_count).context("Failed to create file device")?;
+
+        let fs = FileSystem::<_, FsReadWrite>::create(device, override_check, uuid, name)
+            .expect("Failed to create filesystem");
+
+        Ok(WasabiFuse {
+            file_system: Some(fs),
+        })
+    }
+}
+
+impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
+    fn init(
+        &mut self,
+        req: &Request<'_>,
+        config: &mut fuser::KernelConfig,
+    ) -> std::prelude::v1::Result<(), libc::c_int> {
         debug!("init request: config: {config:?}");
         debug!("gid: {}, uid: {}, pid: {}", req.gid(), req.uid(), req.pid());
         Ok(())
@@ -59,78 +92,28 @@ impl fuser::Filesystem for WasabiFuseTest {
 
     fn destroy(&mut self) {
         debug!("Shutdown");
+        self.fs_mut().flush().unwrap();
     }
+}
 
-    /// Get file attributes.
-    fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
-        debug!("getattr ino {ino}");
-        match ino {
-            1 => reply.attr(&TTL, &ROOT),
-            2 => reply.attr(&TTL, &HELLO),
-            _ => reply.error(ENOENT),
-        }
-    }
-
-    fn readdir(
-        &mut self,
-        _req: &Request,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
-        mut reply: ReplyDirectory,
-    ) {
-        if ino != 1 {
-            reply.error(ENOENT);
-            return;
-        }
-
-        let entries = vec![
-            (1, FileType::Directory, "."),
-            (1, FileType::Directory, ".."),
-            (2, FileType::RegularFile, "hello.txt"),
-        ];
-
-        for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {
-            // i + 1 means the index of the next entry
-            if reply.add(entry.0, (i + 1) as i64, entry.1, entry.2) {
-                break;
+impl<S> Drop for WasabiFuse<S> {
+    fn drop(&mut self) {
+        let mut fs = self.file_system.take().unwrap();
+        for i in 0..10 {
+            if i > 0 {
+                error!("retry FS.close()");
             }
+            match fs.close() {
+                Ok(block_device) => {
+                    block_device.close().unwrap();
+                    return;
+                }
+                Err((fs_back, e)) => {
+                    fs = fs_back;
+                    error!("Close FS failed with: {:?}", e);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
-        reply.ok();
-    }
-
-    fn read(
-        &mut self,
-        _req: &Request,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
-        _size: u32,
-        _flags: i32,
-        _lock: Option<u64>,
-        reply: ReplyData,
-    ) {
-        if ino == 2 {
-            reply.data(&HELLO_TXT_CONTENT.as_bytes()[offset as usize..]);
-        } else {
-            reply.error(ENOENT);
-        }
-    }
-
-    /// Look up a directory entry by name and get its attributes.
-    fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        if parent != 1 {
-            warn!("parent not dir");
-            reply.error(ENOTDIR);
-            return;
-        }
-
-        if name != OsStr::new("hello.txt") {
-            debug!("file {} does not exist", name.to_string_lossy());
-            reply.error(ENOENT);
-            return;
-        }
-
-        reply.entry(&TTL, &HELLO, 0);
     }
 }
