@@ -833,13 +833,14 @@ dependencies = [
 name = "fuse"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "fuser",
  "libc",
  "log",
  "shared",
  "simple_logger",
- "thiserror-core",
+ "thiserror",
  "uuid",
  "wfs",
 ]
@@ -1101,7 +1102,7 @@ dependencies = [
  "rand",
  "schemars",
  "serde",
- "thiserror-core",
+ "thiserror",
 ]
 
 [[package]]
@@ -2084,7 +2085,7 @@ dependencies = [
  "paste",
  "simple_endian",
  "static_assertions",
- "thiserror-core",
+ "thiserror",
  "x86_64",
 ]
 
@@ -2258,7 +2259,7 @@ dependencies = [
  "shared",
  "staticvec",
  "testing-derive",
- "thiserror-core",
+ "thiserror",
  "x86_64",
 ]
 
@@ -2273,19 +2274,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "thiserror-core"
-version = "1.0.50"
+name = "thiserror"
+version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c001ee18b7e5e3f62cbf58c7fe220119e68d902bb7443179c0c8aef30090e999"
+checksum = "2f49a1853cf82743e3b7950f77e0f4d622ca36cf4317cba00c767838bac8d490"
 dependencies = [
- "thiserror-core-impl",
+ "thiserror-impl",
 ]
 
 [[package]]
-name = "thiserror-core-impl"
-version = "1.0.50"
+name = "thiserror-impl"
+version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4c60d69f36615a077cc7663b9cb8e42275722d23e58a7fa3d2c7f2915d09d04"
+checksum = "8381894bb3efe0c4acac3ded651301ceee58a15d47c2e34885ed1908ad667061"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2586,7 +2587,7 @@ dependencies = [
  "static_assertions",
  "staticvec",
  "testing",
- "thiserror-core",
+ "thiserror",
  "uart_16550",
  "volatile",
  "walkdir",
@@ -2721,7 +2722,7 @@ dependencies = [
  "simple_endian",
  "static_assertions",
  "staticvec",
- "thiserror-core",
+ "thiserror",
  "uuid",
 ]
 
