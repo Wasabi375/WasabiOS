@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub trait BlockDevice {
-    type BlockDeviceError: Error + 'static;
+    type BlockDeviceError: Error + Send + Sync + 'static;
 
     /// Returns the number of blocks in the [BlockDevice]
     fn max_block_count(&self) -> Result<u64, Self::BlockDeviceError>;
@@ -37,7 +37,7 @@ pub trait BlockDevice {
     fn write_blocks(
         &mut self,
         start: LBA,
-        // TODO can I use NonNull<[BlockSlie]> instead?
+        // TODO can I use NonNull<[BlockSlice]> instead?
         data: NonNull<[u8]>,
     ) -> Result<(), Self::BlockDeviceError>;
 
