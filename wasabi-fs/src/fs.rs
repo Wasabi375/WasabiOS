@@ -45,7 +45,7 @@ const MIN_BLOCK_COUNT: u64 = INITALLY_USED_BLOCKS.len() as u64 + 1;
 #[allow(missing_docs)]
 pub enum FsError {
     #[error("Block device error: {0}")]
-    BlockDevice(Box<dyn Error>),
+    BlockDevice(Box<dyn Error + Send + Sync>),
     #[error("Block device too small. Max block count is {0}, required: {1}")]
     BlockDeviceToSmall(u64, u64),
     #[error("Override check failed")]
@@ -76,7 +76,7 @@ pub enum FsError {
     StringToLong,
 }
 
-fn map_device_error<E: Error + 'static>(e: E) -> FsError {
+fn map_device_error<E: Error + Send + Sync + 'static>(e: E) -> FsError {
     FsError::BlockDevice(Box::new(e))
 }
 
@@ -157,7 +157,10 @@ impl<D, S> FileSystem<D, S>
 where
     D: BlockDevice,
 {
-    pub fn close(mut self) -> Result<D, FsError> {
+    /// Ensures that all data is written to the device
+    ///
+    /// In readonly filesystem this only checks for data consistency
+    pub fn flush(&mut self) -> Result<(), FsError> {
         if self.block_allocator.is_dirty() {
             assert_matches!(self.access_mode, AccessMode::ReadWrite);
             self.block_allocator.write(&mut self.device)?;
@@ -169,11 +172,26 @@ where
                 .is_err()
             {
                 error!("That allocator said it is not dirty, but this is wrong!");
+                assert_matches!(self.access_mode, AccessMode::ReadWrite);
                 self.block_allocator.write(&mut self.device)?;
             }
         }
+        Ok(())
+    }
 
-        let open_header = self.header()?;
+    pub fn close(mut self) -> Result<D, (Self, FsError)> {
+        // TODO I want a Drop impl but that conflicts with manually closing and returning the
+        // device.
+        // I need some type to store the device that allows take on Drop only
+
+        if let Err(e) = self.flush() {
+            return Err((self, e));
+        }
+
+        let open_header = match self.header() {
+            Ok(h) => h,
+            Err(e) => return Err((self, e)),
+        };
         let mut closed_header = open_header.clone();
         let closed_transient = &mut closed_header
             .transient
@@ -188,6 +206,10 @@ where
                 closed_transient.open_in_write_mode = false;
             }
         }
+        assert_eq!(
+            open_header.transient.unwrap().mount_count - 1,
+            closed_transient.mount_count
+        );
         match self
             .device
             .compare_exchange_block(
@@ -195,10 +217,11 @@ where
                 open_header.block_data(),
                 dbg!(closed_header).block_data(),
             )
-            .map_err(map_device_error)?
+            .map_err(map_device_error)
         {
-            Ok(()) => Ok(self.device),
-            Err(_) => Err(FsError::CompareExchangeFailedToOften), // TODO loop a few times
+            Ok(Ok(())) => Ok(self.device),
+            Ok(Err(_)) => Err((self, FsError::CompareExchangeFailedToOften)), // TODO loop a few times
+            Err(e) => Err((self, e)),
         }
     }
 
@@ -266,6 +289,7 @@ where
             backup_header: NodePointer::new(fs.backup_header_lba),
             name: None,
             transient: Some(MainTransientHeader {
+                magic: MainTransientHeader::MAGIC,
                 mount_count: 1,
                 open_in_write_mode: true,
                 status: FsStatus::Uninitialized,
@@ -319,10 +343,10 @@ where
         }
     }
 
-    fn open_internal(device: D, access: AccessMode) -> Result<Self, FsError> {
+    fn open_internal(device: D, access: AccessMode, force_open: bool) -> Result<Self, FsError> {
         let mut fs = Self::create_fs_device_access(device, access)?;
 
-        let header = dbg!(fs.header()?);
+        let header = fs.header()?;
 
         if header.magic != MainHeader::MAGIC {
             return Err(FsError::HeaderMagicInvalid);
@@ -368,35 +392,62 @@ where
             uuid: header.uuid,
         };
 
-        let on_device_transient = header.transient.unwrap();
-        if on_device_transient.open_in_write_mode {
-            return Err(FsError::AlreadyMounted);
-        }
+        let new_header = if force_open {
+            warn!("Skip already mounted check");
 
-        let mut new_header = header.as_ref().clone();
-        let new_transient = new_header.transient.as_mut().unwrap();
+            let mut new_header = header.clone();
+            let new_transient = new_header.transient.as_mut().unwrap();
 
-        match access {
-            AccessMode::ReadOnly => {
-                new_transient.mount_count += 1;
+            match access {
+                AccessMode::ReadOnly => {
+                    new_transient.open_in_write_mode = false;
+                    new_transient.mount_count = 1;
+                }
+                AccessMode::ReadWrite => {
+                    new_transient.open_in_write_mode = true;
+                    new_transient.mount_count = 1;
+                }
             }
-            AccessMode::ReadWrite => {
-                new_transient.mount_count += 1;
-                new_transient.open_in_write_mode = true;
+            new_header
+        } else {
+            let on_device_transient = header.transient.as_ref().unwrap();
+
+            let mut new_header = header.clone();
+            let new_transient = new_header.transient.as_mut().unwrap();
+
+            match access {
+                AccessMode::ReadOnly => {
+                    if on_device_transient.open_in_write_mode {
+                        return Err(FsError::AlreadyMounted);
+                    }
+                    new_transient.mount_count += 1;
+                }
+                AccessMode::ReadWrite => {
+                    if on_device_transient.mount_count != 0 {
+                        return Err(FsError::AlreadyMounted);
+                    }
+                    new_transient.mount_count += 1;
+                    new_transient.open_in_write_mode = true;
+                }
             }
-        }
+            new_header
+        };
+
         match fs
             .device
             .compare_exchange_block(
                 MAIN_HEADER_BLOCK,
                 header.block_data(),
-                new_header.block_data(),
+                dbg!(new_header).block_data(),
             )
             .map_err(map_device_error)?
         {
             Ok(()) => {}
             Err(_) => return Err(FsError::CompareExchangeFailedToOften), // TODO loop a few times
         }
+
+        fs.block_allocator =
+            BlockAllocator::load(&mut fs.device, header.free_blocks).map_err(map_device_error)?;
 
         unsafe {
             // Safety: we checked that the fs is valid, and ensured that read/write access is ok
@@ -557,7 +608,7 @@ impl<D: BlockDevice> FileSystem<D, FsReadOnly> {
     }
 
     pub fn open(device: D) -> Result<Self, FsError> {
-        Self::open_internal(device, AccessMode::ReadOnly)
+        Self::open_internal(device, AccessMode::ReadOnly, false)
     }
 }
 
@@ -572,6 +623,10 @@ impl<D: BlockDevice> FileSystem<D, FsReadWrite> {
     }
 
     pub fn open(device: D) -> Result<Self, FsError> {
-        Self::open_internal(device, AccessMode::ReadWrite)
+        Self::open_internal(device, AccessMode::ReadWrite, false)
+    }
+
+    pub fn force_open(device: D) -> Result<Self, FsError> {
+        Self::open_internal(device, AccessMode::ReadWrite, true)
     }
 }

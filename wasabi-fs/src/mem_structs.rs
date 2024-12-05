@@ -1,6 +1,7 @@
 use core::{cmp::max, num::NonZeroU64, usize};
 
 use alloc::{boxed::Box, vec::Vec};
+use log::debug;
 use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
 
@@ -137,9 +138,12 @@ impl BlockAllocator {
         Ok(first_block)
     }
 
-    pub fn load<D: BlockDevice>(device: &D, start_block: LBA) -> Result<Self, D::BlockDeviceError> {
+    pub fn load<D: BlockDevice>(
+        device: &D,
+        free_blocks: NodePointer<FreeBlockGroups>,
+    ) -> Result<Self, D::BlockDeviceError> {
         let mut free = Vec::new();
-        let on_disk = Some(NodePointer::new(start_block));
+        let on_disk = Some(free_blocks);
         let mut self_on_disk = Vec::new();
 
         let mut next_block = on_disk;

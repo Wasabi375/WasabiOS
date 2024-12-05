@@ -152,7 +152,7 @@ pub struct BlockGroup {
     ///
     /// A group will always have at least 1 block. Therefor we can store
     /// this as `0`. 2 blocks will be represented as `1`, etc.
-    pub count_minus_one: u64,
+    pub count_minus_one: u64, // FIXME LE
 }
 
 impl BlockGroup {

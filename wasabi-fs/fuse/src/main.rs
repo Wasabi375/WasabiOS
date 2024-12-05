@@ -2,16 +2,15 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use fuse::WasabiFuseTest;
 use fuser::MountOption;
 use log::{debug, info, LevelFilter};
 use simple_logger::SimpleLogger;
 use wfs::{
     blocks_required_for,
-    fs::{FileSystem, FsReadOnly, FsReadWrite, OverrideCheck},
+    fs::{FsReadOnly, FsReadWrite, OverrideCheck},
 };
 
-use crate::block_device::FileDevice;
+use crate::fuse::WasabiFuse;
 
 mod fuse;
 
@@ -31,13 +30,23 @@ struct Arguments {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Mount the image at the given mount point
+    ///
+    /// If this command is chosen, the process must not be interrupted using Ctrl+C.
+    /// Instead use the `umount` program to unmount the fs instad
     Mount(MountOptions),
     Create(CreateOptions),
     Info(InfoOptions),
+    ResetTransient(ForceResetOptions),
 }
 
 #[derive(Args, Debug)]
 struct InfoOptions {
+    image_file: PathBuf,
+}
+
+#[derive(Args, Debug)]
+struct ForceResetOptions {
     image_file: PathBuf,
 }
 
@@ -102,14 +111,17 @@ fn main() {
         Command::Mount(args) => mount(args),
         Command::Create(args) => create(args),
         Command::Info(args) => info(args),
+        Command::ResetTransient(args) => reset_transient(args),
     }
 }
 
-fn info(args: InfoOptions) {
-    let device = FileDevice::open(&args.image_file);
-    let fs = FileSystem::<_, FsReadOnly>::open(device).unwrap();
+fn reset_transient(args: ForceResetOptions) {
+    WasabiFuse::<FsReadWrite>::force_open(&args.image_file).unwrap();
+}
 
-    info!("Header: {:?}", fs.header_data());
+fn info(args: InfoOptions) {
+    let fs = WasabiFuse::<FsReadOnly>::open(&args.image_file).unwrap();
+    info!("Header: {:?}", fs.fs().header_data());
 }
 
 fn create(mut args: CreateOptions) {
@@ -130,19 +142,24 @@ fn create(mut args: CreateOptions) {
     let uuid = uuid::Uuid::new_v4();
     let name: Option<Box<str>> = args.name.take().map(|n| n.into_boxed_str());
 
-    let device = FileDevice::create(&args.image_file, block_count);
-
-    let fs = FileSystem::<_, FsReadWrite>::create(device, override_check, uuid, name).unwrap();
-
-    fs.close().unwrap().close();
+    WasabiFuse::create(&args.image_file, block_count, override_check, uuid, name).unwrap();
 }
 
 fn mount(args: MountOptions) {
+    let fs = WasabiFuse::<FsReadWrite>::open(&args.image_file).unwrap();
+    let name = fs
+        .fs()
+        .header_data()
+        .name
+        .clone()
+        .map(|n| n.into())
+        .unwrap_or("WasabiFS".to_string());
+
     let mut options = vec![
-        MountOption::AutoUnmount,
-        MountOption::AllowRoot,
-        MountOption::RO,
-        MountOption::FSName("WasabiFS".to_string()),
+        fuser::MountOption::AutoUnmount,
+        fuser::MountOption::AllowRoot,
+        fuser::MountOption::RO,
+        fuser::MountOption::FSName(name),
     ];
 
     if args.allow_other {
@@ -150,5 +167,5 @@ fn mount(args: MountOptions) {
         options.push(MountOption::AllowOther);
     }
 
-    fuser::mount2(WasabiFuseTest, &args.mount_point, &options).expect("Wasabi Fuse Driver failed");
+    fuser::mount2(fs, &args.mount_point, &options).expect("Wasabi Fuse Driver failed");
 }
