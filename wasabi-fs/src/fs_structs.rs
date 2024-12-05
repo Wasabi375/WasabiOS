@@ -5,6 +5,8 @@ use core::{
     num::{NonZeroU16, NonZeroU64, NonZeroU8},
 };
 
+use bitflags::bitflags;
+use shared::math::IntoI64;
 use simple_endian::LittleEndian;
 use static_assertions::const_assert;
 use staticvec::{StaticString, StaticVec};
@@ -78,9 +80,19 @@ const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
 ///
 /// Unique means unique within this filesystem.
 /// It is possible if not likely for INodes to be the same on different file systems
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct INode(LittleEndian<u64>);
+
+impl INode {
+    pub fn new(ino: u64) -> Self {
+        INode(LittleEndian::<_>::from(ino))
+    }
+
+    pub fn get(self) -> u64 {
+        self.0.into()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -97,6 +109,21 @@ pub enum INodeType {
 #[repr(C)]
 pub struct Timestamp(LittleEndian<u64>);
 
+impl Timestamp {
+    pub fn get(self) -> u64 {
+        self.0.into()
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Perm: u8 {
+        const EXECUTE = 1 ;
+        const WRITE = 1 << 1;
+        const READ = 1 << 2;
+    }
+}
+
 const I_NODE_MAX_NAME_LEN: usize = 40;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
@@ -104,9 +131,11 @@ pub struct INodeData {
     pub inode: INode,
     pub parent: INode,
     pub typ: INodeType,
-    _unused: [u8; 7],
+    pub permissions: [Perm; 4],
+    _unused: [u8; 3],
+    pub size: u64,
     pub created_at: Timestamp,
-    pub modified_at: Timestamp,
+    pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
     pub block_data: BlockListHead,
     pub name: NodePointer<BlockString>,
 }
@@ -214,12 +243,14 @@ impl Default for MainTransientHeader {
 #[repr(C, u8)]
 pub enum TreeNode {
     Leave {
-        parent: Option<NodePointer<TreeNode>>,
+        parent: NodePointer<TreeNode>,
         nodes: StaticVec<INodeData, 6, u8>,
     },
     Node {
+        /// The parent of this Node or `None` if this is the root node
         parent: Option<NodePointer<TreeNode>>,
         children: StaticVec<(INode, NodePointer<TreeNode>), 30, u8>,
+        max: INode,
     },
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);
