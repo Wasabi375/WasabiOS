@@ -1,22 +1,40 @@
 use anyhow::Context;
 use anyhow::Result;
+use fuser::FileAttr;
+use fuser::FileType;
 use fuser::Request;
+use libc::ENOENT;
 use log::debug;
 use log::error;
+use log::warn;
 use std::path::Path;
 use std::time::Duration;
+use std::time::UNIX_EPOCH;
 use uuid::Uuid;
+use wfs::blocks_required_for;
 use wfs::fs::FsWrite;
 use wfs::fs::OverrideCheck;
+use wfs::fs_structs::INode;
+use wfs::fs_structs::INodeType;
+use wfs::BLOCK_SIZE;
 
 use wfs::fs::{FileSystem, FsRead, FsReadOnly, FsReadWrite};
 
 use crate::block_device::FileDevice;
+use crate::fuse::errno::fs_error_no;
 
+pub mod errno;
 pub mod fake;
 
 pub struct WasabiFuse<S> {
     file_system: Option<FileSystem<FileDevice, S>>,
+    /// Time to live
+    ///
+    /// the time the kernel will cache any data provided by this driver
+    pub ttl: Duration,
+
+    uid: u32,
+    gid: u32,
 }
 
 impl<S> WasabiFuse<S> {
@@ -36,6 +54,9 @@ impl WasabiFuse<FsReadOnly> {
 
         Ok(WasabiFuse {
             file_system: Some(fs),
+            ttl: Duration::from_secs(1),
+            uid: 0,
+            gid: 0,
         })
     }
 }
@@ -47,6 +68,9 @@ impl WasabiFuse<FsReadWrite> {
 
         Ok(WasabiFuse {
             file_system: Some(fs),
+            ttl: Duration::from_secs(1),
+            uid: 0,
+            gid: 0,
         })
     }
 
@@ -57,6 +81,9 @@ impl WasabiFuse<FsReadWrite> {
 
         Ok(WasabiFuse {
             file_system: Some(fs),
+            ttl: Duration::from_secs(1),
+            uid: 0,
+            gid: 0,
         })
     }
 
@@ -75,6 +102,9 @@ impl WasabiFuse<FsReadWrite> {
 
         Ok(WasabiFuse {
             file_system: Some(fs),
+            ttl: Duration::from_secs(1),
+            uid: 0,
+            gid: 0,
         })
     }
 }
@@ -87,12 +117,66 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
     ) -> std::prelude::v1::Result<(), libc::c_int> {
         debug!("init request: config: {config:?}");
         debug!("gid: {}, uid: {}, pid: {}", req.gid(), req.uid(), req.pid());
+        self.uid = req.uid();
+        self.gid = req.gid();
         Ok(())
     }
 
     fn destroy(&mut self) {
         debug!("Shutdown");
         self.fs_mut().flush().unwrap();
+    }
+
+    fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: fuser::ReplyAttr) {
+        let inode = self.fs().read_inode_data(INode::new(ino));
+
+        match inode {
+            Ok(Some(inode)) => {
+                let mtime = UNIX_EPOCH + Duration::from_secs(inode.modified_at.get());
+                let crtime = UNIX_EPOCH + Duration::from_secs(inode.created_at.get());
+                let (kind, nlink) = match inode.typ {
+                    INodeType::File => (FileType::RegularFile, 1),
+                    INodeType::Directory => (FileType::Directory, 2),
+                };
+                let perm: u16 = {
+                    let perm: [u8; 4] = unsafe { std::mem::transmute_copy(&inode.permissions) };
+                    (perm[0] as u16) << 12
+                        | (perm[1] as u16) << 8
+                        | (perm[2] as u16) << 4
+                        | perm[1] as u16
+                };
+                reply.attr(
+                    &self.ttl,
+                    &dbg!(FileAttr {
+                        ino: inode.inode.get().try_into().unwrap(),
+                        size: inode.size,
+                        blocks: blocks_required_for!(inode.size),
+                        atime: mtime,
+                        mtime,
+                        ctime: mtime,
+                        crtime,
+                        kind,
+                        // TODO ensure that ordering matches once I decide how
+                        // I want to handle this in my fs
+                        perm,
+                        nlink,
+                        uid: self.uid,
+                        gid: self.gid,
+                        rdev: 0,
+                        blksize: BLOCK_SIZE as u32,
+                        flags: 0,
+                    }),
+                )
+            }
+            Ok(None) => {
+                warn!("getattr: inode not found!");
+                reply.error(ENOENT)
+            }
+            Err(e) => {
+                error!("Failed to get inode({ino}): {e}");
+                reply.error(fs_error_no(e));
+            }
+        }
     }
 }
 
