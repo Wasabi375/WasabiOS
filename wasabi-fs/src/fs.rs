@@ -14,7 +14,7 @@ use alloc::{
     string::{FromUtf8Error, String},
     vec::Vec,
 };
-use log::{error, warn};
+use log::{debug, error, warn};
 use shared::{counts_required_for, dbg, rangeset::RangeSet, todo_error};
 use static_assertions::const_assert;
 use staticvec::StaticVec;
@@ -24,8 +24,8 @@ use uuid::Uuid;
 use crate::{
     existing_fs_check::{check_for_filesystem, FsFound},
     fs_structs::{
-        BlockString, BlockStringPart, FsStatus, MainHeader, MainTransientHeader, NodePointer,
-        TreeNode, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH,
+        BlockString, BlockStringPart, FsStatus, INode, INodeData, MainHeader, MainTransientHeader,
+        NodePointer, TreeNode, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH,
     },
     interface::BlockDevice,
     mem_structs::BlockAllocator,
@@ -110,11 +110,13 @@ pub struct FileSystem<D, S> {
 }
 
 /// Data from the header about the fs that generally does not change
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct HeaderData {
     pub name: Option<Box<str>>,
     pub version: [u8; 4],
     pub uuid: Uuid,
+
+    root_ptr: NodePointer<TreeNode>,
 }
 
 pub enum OverrideCheck {
@@ -245,7 +247,12 @@ where
             max_usable_lba,
             backup_header_lba,
 
-            header_data: Default::default(),
+            header_data: HeaderData {
+                name: None,
+                version: FS_VERSION,
+                uuid: Uuid::nil(),
+                root_ptr: NodePointer::new(ROOT_BLOCK),
+            },
 
             access_mode: access,
 
@@ -298,9 +305,10 @@ where
         fs.write_header(&header);
         fs.copy_header_to_backup(&header);
 
-        let root = Block::new(TreeNode::Leave {
+        let root = Block::new(TreeNode::Node {
             parent: None,
-            nodes: StaticVec::new(),
+            children: StaticVec::new(),
+            max: INode::new(u64::MAX),
         });
         fs.write_tree_node(root_block, &root);
 
@@ -335,6 +343,7 @@ where
             name,
             version: FS_VERSION,
             uuid,
+            root_ptr: NodePointer::new(ROOT_BLOCK),
         };
 
         unsafe {
@@ -390,6 +399,7 @@ where
             name,
             version: header.version,
             uuid: header.uuid,
+            root_ptr: header.root,
         };
 
         let new_header = if force_open {
@@ -531,6 +541,45 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
         }
 
         Ok(String::from_utf8(string)?.into_boxed_str())
+    }
+
+    pub fn read_inode_data(&self, inode: INode) -> Result<Option<INodeData>, FsError> {
+        // TODO caching?
+
+        let mut tree_node_ptr = Some(self.header_data.root_ptr);
+
+        while let Some(tree_node) = tree_node_ptr {
+            tree_node_ptr = None;
+            let tree_node = unsafe {
+                // Safety: reading a [TreeNode] should be save, given that our address is correct
+                self.device
+                    .read_pointer(tree_node)
+                    .map_err(map_device_error)?
+            };
+
+            match tree_node {
+                TreeNode::Leave { parent, nodes } => {
+                    debug!("parent: {:#?}", parent);
+                    debug!("nodes: {:?}", nodes.iter().map(|n| n.inode));
+                    return Ok(nodes.iter().find(|(node)| node.inode == inode).cloned());
+                }
+                TreeNode::Node {
+                    parent: _,
+                    children,
+                    max,
+                } => {
+                    assert!(inode <= max);
+                    for (max, ptr) in children {
+                        if inode <= max {
+                            tree_node_ptr = Some(ptr);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 }
 
