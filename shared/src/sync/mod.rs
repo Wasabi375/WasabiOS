@@ -4,6 +4,7 @@ use crate::types::CoreId;
 
 pub mod barrier;
 pub mod lockcell;
+pub mod single_core_lock;
 
 /// Trait that allows access to OS-level constructs defining basic information
 /// about the current processor.
