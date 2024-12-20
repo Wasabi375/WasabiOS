@@ -43,6 +43,10 @@ impl CoreInfo for TestInterruptState {
     {
         TestInterruptState
     }
+
+    fn is_initialized(&self) -> bool {
+        interrupt_state().is_initialized()
+    }
 }
 
 impl InterruptState for TestInterruptState {

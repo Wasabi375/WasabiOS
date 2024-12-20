@@ -10,7 +10,7 @@ use super::panic::CustomPanicHandler;
 
 /// struct containing core local data for tests
 #[repr(C)]
-pub struct TestCoreLocals {
+pub struct TestCoreStatics {
     /// The number of locks, currently held
     pub lock_count: AtomicU32,
 
@@ -18,8 +18,8 @@ pub struct TestCoreLocals {
     pub custom_panic: TicketLock<Option<Box<CustomPanicHandler>>, TestInterruptState>,
 }
 
-impl TestCoreLocals {
-    /// creates a new [TestCoreLocals] struct
+impl TestCoreStatics {
+    /// creates a new [TestCoreStatics] struct
     pub const fn new() -> Self {
         Self {
             lock_count: AtomicU32::new(0),
@@ -33,25 +33,25 @@ impl TestCoreLocals {
     }
 }
 
-/// Returns this' core [TestCoreLocals] struct.
+/// Returns this' core [TestCoreStatics] struct.
 ///
 /// # Safety
 ///
 /// This assumes that `GS` segement was initialized by
 /// [init](crate::core_local::init) to point to the
-/// [CoreLocals](crate::core_local::CoreLocals) struct for this core.
+/// [CoreStatics](crate::core_local::CoreStatics) struct for this core.
 ///
 /// see [get_core_locals](crate::core_local::get_core_locals)
-pub unsafe fn get_test_core_locals() -> &'static TestCoreLocals {
-    unsafe { &crate::core_local::get_core_locals().test_local }
+pub unsafe fn get_test_core_statics() -> &'static TestCoreStatics {
+    unsafe { &crate::core_local::get_core_statics().test_local }
 }
 
-/// A macro wrapper around [get_test_core_locals] returning this' core [TestCoreLocals] struct.
+/// A macro wrapper around [get_test_core_statics] returning this' core [TestCoreStatics] struct.
 ///
 /// # Safety
 ///
 /// This assumes that `FS` segement was initialized to point to
-/// the [TestCoreLocals] struct for this core.
+/// the [TestCoreStatics] struct for this core.
 ///
 /// This macro includes the necessary unsafe block to allow calling this from
 /// safe rust, but it's still unsafe before
@@ -63,8 +63,8 @@ macro_rules! test_locals {
         #[allow(unused_unsafe)]
     }};
     () => {{
-        let locals: &$crate::testing::core_local::TestCoreLocals =
-            unsafe { $crate::testing::core_local::get_test_core_locals() };
+        let locals: &$crate::testing::core_local::TestCoreStatics =
+            unsafe { $crate::testing::core_local::get_test_core_statics() };
         locals
     }};
 }
