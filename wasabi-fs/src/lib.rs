@@ -1,6 +1,6 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
-#![feature(assert_matches, slice_take)]
+#![feature(assert_matches, negative_impls, slice_take)]
 #![allow(unused, dead_code)] // TODO temp
 
 use core::{
@@ -23,6 +23,7 @@ pub mod existing_fs_check;
 pub mod fs;
 pub mod fs_structs;
 pub mod interface;
+pub mod mem_tree;
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -193,7 +194,7 @@ pub const BLOCK_SIZE: usize = 512;
 /// # fn main() {
 /// # use static_assertions::const_assert_eq;
 /// use wfs::blocks_required_for;
-/// const_assert_eq!(1, blocks_required_for!( u8));
+/// const_assert_eq!(1, blocks_required_for!( type: u8));
 /// const_assert_eq!(1, blocks_required_for!( 512));
 /// const_assert_eq!(1, blocks_required_for!( 8));
 /// const_assert_eq!(2, blocks_required_for!( 1024));
