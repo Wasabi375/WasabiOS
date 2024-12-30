@@ -1,17 +1,13 @@
-//! Module containing data/access to core local structures
-//!
-//! This provides the [locals!] macro as well as [CoreLocals] struct
-//! which can be used to access per core data.
+//! Kernel static core data structures
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
 
 #[cfg(feature = "test")]
-use crate::{test_locals, testing::core_local::TestCoreLocals};
+use crate::testing::core_local::TestCoreStatics;
 
 use crate::{
     cpu::{self, apic::Apic, cpuid, gdt::GDTInfo, interrupts::InterruptHandlerState},
-    locals,
     prelude::UnwrapTicketLock,
 };
 use alloc::boxed::Box;
@@ -21,58 +17,15 @@ use core::{
     ptr::{addr_of_mut, NonNull},
     sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
 };
-use shared::{
-    sync::{lockcell::LockCellInternal, CoreInfo, InterruptState},
-    types::CoreId,
-};
+use shared::{sync::lockcell::LockCellInternal, types::CoreId};
 
-/// A counter used to assign the core id for each core.
-/// Each core calls [AtomicU8::fetch_add] to get it's id and automatically increment
-/// it for the next core, ensuring ids are unique.
-///
-/// As a side-effect, this is also the number of cores that have been started
-static CORE_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
+use super::{AutoRefCounter, AutoRefCounterGuard, CORE_ID_COUNTER, CORE_READY_COUNT};
 
-/// The number of cores that have finished booting
-static CORE_READY_COUNT: AtomicU8 = AtomicU8::new(0);
+/// an array with the [NonNull]s for each [CoreStatics] indexed by the core id.
+static mut CORE_LOCALS_VADDRS: [Option<NonNull<CoreStatics>>; 255] = [None; 255];
 
-/// an array with the [NonNull]s for each [CoreLocals] indexed by the core id.
-static mut CORE_LOCALS_VADDRS: [Option<NonNull<CoreLocals>>; 255] = [None; 255];
-
-/// A [CoreLocals] instance used during the boot process.
-static mut BOOT_CORE_LOCALS: CoreLocals = CoreLocals::empty();
-
-/// An reference counter that automatically decrements using a [AutoRefCounterGuard].
-#[derive(Debug)]
-pub struct AutoRefCounter(AtomicU64);
-
-impl AutoRefCounter {
-    /// creates a new [AutoRefCounter]
-    pub const fn new(init: u64) -> Self {
-        Self(AtomicU64::new(init))
-    }
-
-    /// returns the count
-    pub fn count(&self) -> u64 {
-        self.0.load(Ordering::SeqCst)
-    }
-
-    /// increments the count and returns a [AutoRefCounterGuard], which will
-    /// decrement the count on [Drop].
-    pub fn increment(&self) -> AutoRefCounterGuard<'_> {
-        self.0.fetch_add(1, Ordering::SeqCst);
-        AutoRefCounterGuard(self)
-    }
-}
-
-/// Guard struct which will decrement the count of the associated [AutoRefCounter].
-pub struct AutoRefCounterGuard<'a>(&'a AutoRefCounter);
-
-impl<'a> Drop for AutoRefCounterGuard<'a> {
-    fn drop(&mut self) {
-        (self.0).0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
+/// A [CoreStatics] instance used during the boot process.
+static mut BOOT_CORE_LOCALS: CoreStatics = CoreStatics::empty();
 
 /// This struct contains a number of core local entries.
 ///
@@ -82,12 +35,12 @@ impl<'a> Drop for AutoRefCounterGuard<'a> {
 /// There is also an additional instance that is used after [core_boot] is finished
 /// and before [init] was called.
 #[repr(C)]
-pub struct CoreLocals {
-    /// The virtual address of this [CoreLocals] struct. This is used in combination with
+pub struct CoreStatics {
+    /// The virtual address of this [CoreStatics] struct. This is used in combination with
     /// `GS` segment to load this struct.
     // NOTE: this must be the first entry in the struct, in order to load
     // the core locals from gs
-    self_ptr: NonNull<CoreLocals>,
+    self_ptr: NonNull<CoreStatics>,
 
     /// lock used to access the critical boot section.
     ///
@@ -140,13 +93,16 @@ pub struct CoreLocals {
     /// useable
     pub gdt: GDTInfo,
 
+    /// Set to true after the locals are fully initialized
+    pub initialized: bool,
+
     /// Core locals used by tests
     #[cfg(feature = "test")]
-    pub test_local: TestCoreLocals,
+    pub test_local: TestCoreStatics,
 }
 
-impl CoreLocals {
-    /// creates an empty [CoreLocals] struct.
+impl CoreStatics {
+    /// creates an empty [CoreStatics] struct.
     const fn empty() -> Self {
         Self {
             self_ptr: NonNull::dangling(),
@@ -166,8 +122,10 @@ impl CoreLocals {
 
             gdt: GDTInfo::new_uninit(),
 
+            initialized: false,
+
             #[cfg(feature = "test")]
-            test_local: TestCoreLocals::new(),
+            test_local: TestCoreStatics::new(),
         }
     }
 
@@ -201,7 +159,7 @@ impl CoreLocals {
     ///
     /// # Safety
     ///
-    /// * must only be called once for each call to [CoreLocals::disable_interrupts]
+    /// * must only be called once for each call to [CoreStatics::disable_interrupts]
     /// * caller must ensure that interrupts are save
     pub unsafe fn enable_interrupts(&self) {
         let old_disable_count = self.interrupts_disable_count.fetch_sub(1, Ordering::SeqCst);
@@ -240,7 +198,7 @@ impl CoreLocals {
     /// returns `true` if interrupts are currently enabled
     ///
     /// this can break if [`cpu::disable_interrupts`] is used instead of
-    /// the core local [`CoreLocals::disable_interrupts`].
+    /// the core local [`CoreStatics::disable_interrupts`].
     ///
     /// This function uses a relaxed load, and should therefor only be used
     /// for diagnostics.
@@ -292,7 +250,7 @@ pub unsafe fn core_boot() -> CoreId {
         spin_loop();
     }
 
-    cpu::set_gs_base(boot_core_locals as *const CoreLocals as u64);
+    cpu::set_gs_base(boot_core_locals as *const CoreStatics as u64);
 
     // setup locals region for boot of core
     boot_core_locals.core_id = core_id;
@@ -321,7 +279,7 @@ pub unsafe fn core_boot() -> CoreId {
 pub unsafe fn init(core_id: CoreId) {
     let apic_id = cpuid::apic_id().into();
 
-    let mut core_local = Box::new(CoreLocals {
+    let mut core_local = Box::new(CoreStatics {
         boot_lock: AtomicU8::new(core_id.0),
         core_id,
         apic_id,
@@ -331,7 +289,9 @@ pub unsafe fn init(core_id: CoreId) {
         // for interrupts, after all we have not initialized them.
         interrupts_disable_count: AtomicU64::new(1),
 
-        ..CoreLocals::empty()
+        initialized: true,
+
+        ..CoreStatics::empty()
     });
 
     core_local.self_ptr =
@@ -369,115 +329,23 @@ pub unsafe fn init(core_id: CoreId) {
     trace!("Core {}: locals init done", core_id.0);
 }
 
-/// A ZST used to access the interrupt state of this core.
-///
-/// See [InterruptState]
-pub struct CoreInterruptState;
-
-impl CoreInfo for CoreInterruptState {
-    fn core_id(&self) -> CoreId {
-        locals!().core_id
-    }
-
-    fn is_bsp(&self) -> bool {
-        locals!().is_bsp()
-    }
-
-    fn instance() -> Self
-    where
-        Self: Sized,
-    {
-        CoreInterruptState
-    }
-}
-
-impl InterruptState for CoreInterruptState {
-    #[track_caller]
-    #[inline(always)]
-    fn in_interrupt(&self) -> bool {
-        locals!().in_interrupt()
-    }
-
-    #[track_caller]
-    #[inline(always)]
-    fn in_exception(&self) -> bool {
-        locals!().in_exception()
-    }
-
-    unsafe fn enter_lock(&self, disable_interrupts: bool) {
-        #[cfg(feature = "test")]
-        test_locals!().lock_count.fetch_add(1, Ordering::AcqRel);
-
-        if disable_interrupts {
-            unsafe {
-                // safety: disbaling interrupts is ok for locked critical sections
-                locals!().disable_interrupts();
-            }
-        }
-    }
-
-    unsafe fn exit_lock(&self, enable_interrupts: bool) {
-        #[cfg(feature = "test")]
-        test_locals!().lock_count.fetch_sub(1, Ordering::AcqRel);
-
-        if enable_interrupts {
-            unsafe {
-                // safety: only called once, when a lock-guard is dropped
-                locals!().enable_interrupts();
-            }
-        }
-    }
-}
-
-/// The number of cores that have started
-///  
-/// This is the number of cores that started their boot sequence.
-/// For most situation [get_ready_core_count] is the more accurate function.
-pub fn get_started_core_count(ordering: Ordering) -> u8 {
-    CORE_ID_COUNTER.load(ordering)
-}
-
-/// The number of cores that finished booting
-pub fn get_ready_core_count(ordering: Ordering) -> u8 {
-    CORE_READY_COUNT.load(ordering)
-}
-
-/// Returns this' core [CoreLocals] struct.
+/// Returns this' core [CoreStatics] struct.
 ///
 /// # Safety
 ///
 /// This assumes that `GS` segement was initialized by [init] to point to
-/// the [CoreLocals] struct for this core.
-pub unsafe fn get_core_locals() -> &'static CoreLocals {
+/// the [CoreStatics] struct for this core.
+pub unsafe fn get_core_statics() -> &'static CoreStatics {
     unsafe {
         let ptr: usize;
         // Safety: we assume that gs contains the vaddr of this core's
-        // [CoreLocals], which starts with it's own address, therefor we
-        // can access the [CoreLocals] vaddr using `gs:[0]`
+        // [CoreStatics], which starts with it's own address, therefor we
+        // can access the [CoreStatics] vaddr using `gs:[0]`
         asm! {
             "mov {0}, gs:[0]",
             out(reg) ptr
         }
 
-        &*(ptr as *const CoreLocals)
+        &*(ptr as *const CoreStatics)
     }
-}
-
-/// A macro wrapper around [get_core_locals] returning this' core [CoreLocals] struct.
-///
-/// # Safety
-///
-/// This assumes that `GS` segement was initialized by [init] to point to
-/// the [CoreLocals] struct for this core.
-///
-/// This macro includes the necessary unsafe block to allow calling this from safe
-/// rust, but it's still unsafe before [core_boot] and/or [init] have been called.
-#[macro_export]
-macro_rules! locals {
-    () => {{
-        #[allow(unused_unsafe)]
-        let locals = unsafe { $crate::core_local::get_core_locals() };
-
-        locals
-    }};
 }

@@ -34,6 +34,7 @@ impl<I: InterruptState> SingleCoreLock<I> {
     /// is dropped.
     pub fn lock(&mut self) -> SingleCoreLockGuard<'_, I> {
         unsafe {
+            // This should act as a barrier, because it disables interrupts
             I::s_enter_lock(true);
         }
         SingleCoreLockGuard { lock: self }
