@@ -16,6 +16,10 @@ pub type UnwrapTicketLock<T> = shared::sync::lockcell::UnwrapTicketLock<T, CoreI
 /// a [DataBarrier](shared::sync::barrier::DataBarrier) with the [CoreInterruptState]
 pub type DataBarrier<T> = shared::sync::barrier::DataBarrier<T, CoreInterruptState>;
 
+/// a [SingleCoreLock](shared::sync::single_core_lock::SingleCoreLock) with the
+/// [CoreInterruptState]
+pub type SingleCoreLock = shared::sync::single_core_lock::SingleCoreLock<CoreInterruptState>;
+
 /// Some common type definitions, that don't fit within a specific module
 pub mod types {
     pub use shared::types::*;
