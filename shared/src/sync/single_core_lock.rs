@@ -22,8 +22,8 @@ impl<I: InterruptState> SingleCoreLock<I> {
     /// Creates a new [SingleCoreLock]
     pub const fn new() -> Self {
         SingleCoreLock {
-            _not_send: core::marker::PhantomData,
-            _not_sync: core::marker::PhantomData,
+            _not_send: NotSend,
+            _not_sync: NotSync,
             _interrupt_state: PhantomData,
         }
     }

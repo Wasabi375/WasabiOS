@@ -12,10 +12,24 @@ pub use time::TscDuration;
 pub use time::TscTimestamp;
 
 /// Marker type to ensure a type is not [Send]
-pub type NotSend = PhantomData<*const ()>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct NotSend {
+    _mark: PhantomData<*const ()>,
+}
+
+/// Default value for [NotSend]
+#[allow(non_upper_case_globals)]
+pub const NotSend: NotSend = NotSend { _mark: PhantomData };
 
 /// Marker type to ensure a type is not [Sync]
-pub type NotSync = PhantomData<UnsafeCell<()>>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct NotSync {
+    _mark: PhantomData<UnsafeCell<()>>,
+}
+
+/// Default value for [NotSync]
+#[allow(non_upper_case_globals)]
+pub const NotSync: NotSync = NotSync { _mark: PhantomData };
 
 #[cfg(doctest)]
 pub mod doc_test {
