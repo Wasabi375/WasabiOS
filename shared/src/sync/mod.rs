@@ -23,6 +23,12 @@ pub trait CoreInfo: 'static {
         !self.is_bsp()
     }
 
+    /// Returns `true` if the [CoreInfo] is fully initialized.
+    ///
+    /// If set to `false` the core is in it's early boot state and not all functionallity
+    /// is available.
+    fn is_initialized(&self) -> bool;
+
     /// returns the instance of this interrupt state. This should always be a zst.
     fn instance() -> Self
     where
