@@ -308,7 +308,6 @@ where
         let root = Block::new(TreeNode::Node {
             parent: None,
             children: StaticVec::new(),
-            max: INode::new(u64::MAX),
         });
         fs.write_tree_node(root_block, &root);
 
@@ -558,17 +557,15 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
             };
 
             match tree_node {
-                TreeNode::Leave { parent, nodes } => {
+                TreeNode::Leave { parent, inodes } => {
                     debug!("parent: {:#?}", parent);
-                    debug!("nodes: {:?}", nodes.iter().map(|n| n.inode));
-                    return Ok(nodes.iter().find(|(node)| node.inode == inode).cloned());
+                    debug!("nodes: {:?}", inodes.iter().map(|n| n.inode));
+                    return Ok(inodes.iter().find(|(node)| node.inode == inode).cloned());
                 }
                 TreeNode::Node {
                     parent: _,
                     children,
-                    max,
                 } => {
-                    assert!(inode <= max);
                     for (max, ptr) in children {
                         if inode <= max {
                             tree_node_ptr = Some(ptr);
