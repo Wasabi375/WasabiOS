@@ -18,6 +18,7 @@ pub mod math;
 pub mod primitive_enum;
 pub mod rangeset;
 pub mod sync;
+pub mod task_local;
 pub mod types;
 
 /// Calculat the number of bytes in n kilo bytes

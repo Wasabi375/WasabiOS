@@ -6,8 +6,11 @@
 mod statics;
 pub use statics::{core_boot, get_core_statics, init, CoreStatics};
 
-mod local;
-pub use local::CoreLocal;
+/// A [shared::task_local::TaskLocal] based on [CoreId]
+pub type CoreLocal<T> = shared::task_local::TaskLocal<T, CoreInterruptState>;
+
+/// A [shared::task_local::TaskLocalRef] ref based on [CoreId]
+pub type CoreLocalRef<'l, T> = shared::task_local::TaskLocalRef<'l, T, CoreInterruptState>;
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};

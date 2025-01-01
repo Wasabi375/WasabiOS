@@ -175,7 +175,10 @@ static TEST_END_BARRIER: Barrier =
 static TESTING_CORE_INTERRUPT_STATE: CoreInterruptState = CoreInterruptState;
 
 fn init_mp() {
-    testing::multiprocessor::init_interrupt_state(&TESTING_CORE_INTERRUPT_STATE);
+    testing::multiprocessor::init_interrupt_state(
+        &TESTING_CORE_INTERRUPT_STATE,
+        get_ready_core_count(Ordering::SeqCst),
+    );
     unsafe {
         // we call this on all processors with the same value so this will not affect
         // any processors currently waiting
