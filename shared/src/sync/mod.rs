@@ -63,6 +63,11 @@ pub trait CoreInfo: 'static {
     {
         Self::instance().is_ap()
     }
+
+    /// Returns the maximum number of cores running.
+    fn max_core_count() -> u8
+    where
+        Self: Sized;
 }
 
 /// Trait that allows access to OS-level constructs defining interrupt state,

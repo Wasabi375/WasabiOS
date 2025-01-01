@@ -1,5 +1,7 @@
 //! Multiprocessor functionality for testing
 
+use core::sync::atomic::{AtomicU8, Ordering};
+
 use shared::sync::{CoreInfo, InterruptState};
 
 /// type alias for [DataBarrier](shared::sync::barrier::DataBarrier) using [TestInterruptState]
@@ -14,12 +16,15 @@ pub struct TestInterruptState;
 
 static mut INTERRUPT_STATE: Option<&'static dyn InterruptState> = None;
 
+static MAX_CORE_COUNT: AtomicU8 = AtomicU8::new(0);
+
 /// initializes interrupts and locks for testing
 /// This must be called before test execution starts
-pub fn init_interrupt_state(interrupt_state: &'static dyn InterruptState) {
+pub fn init_interrupt_state(interrupt_state: &'static dyn InterruptState, max_core_count: u8) {
     unsafe {
         INTERRUPT_STATE = Some(interrupt_state);
     }
+    MAX_CORE_COUNT.store(max_core_count, Ordering::Release);
 }
 
 #[track_caller]
@@ -37,6 +42,10 @@ impl CoreInfo for TestInterruptState {
         interrupt_state().is_bsp()
     }
 
+    fn is_initialized(&self) -> bool {
+        interrupt_state().is_initialized()
+    }
+
     fn instance() -> Self
     where
         Self: Sized,
@@ -44,8 +53,11 @@ impl CoreInfo for TestInterruptState {
         TestInterruptState
     }
 
-    fn is_initialized(&self) -> bool {
-        interrupt_state().is_initialized()
+    fn max_core_count() -> u8
+    where
+        Self: Sized,
+    {
+        MAX_CORE_COUNT.load(Ordering::Acquire)
     }
 }
 

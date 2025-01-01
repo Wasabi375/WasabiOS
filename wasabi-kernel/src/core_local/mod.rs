@@ -78,6 +78,10 @@ impl CoreInfo for CoreInterruptState {
         locals!().is_bsp()
     }
 
+    fn is_initialized(&self) -> bool {
+        locals!().initialized
+    }
+
     fn instance() -> Self
     where
         Self: Sized,
@@ -85,8 +89,11 @@ impl CoreInfo for CoreInterruptState {
         CoreInterruptState
     }
 
-    fn is_initialized(&self) -> bool {
-        locals!().initialized
+    fn max_core_count() -> u8
+    where
+        Self: Sized,
+    {
+        get_ready_core_count(Ordering::SeqCst)
     }
 }
 
