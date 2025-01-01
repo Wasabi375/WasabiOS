@@ -289,7 +289,8 @@ mod test {
     use crate::{BlockGroup, LBA};
 
     #[test]
-    fn test_block_from_start_end() {
+    /// ensure no off by 1 error when calculating `count_minus_one` field
+    fn test_block_from_start_and_end() {
         let start = LBA::new(1).unwrap();
         let end = LBA::new(10).unwrap();
 
