@@ -244,7 +244,7 @@ impl Default for MainTransientHeader {
 pub enum TreeNode {
     Leave {
         parent: NodePointer<TreeNode>,
-        nodes: StaticVec<INodeData, 6, u8>,
+        inodes: StaticVec<INodeData, 6, u8>,
     },
     Node {
         /// The parent of this Node or `None` if this is the root node
@@ -253,10 +253,6 @@ pub enum TreeNode {
         ///
         /// `children[i].0 == children[i].1.follow().max`
         children: StaticVec<(INode, NodePointer<TreeNode>), 30, u8>,
-        /// The maximum inode in this subtree
-        ///
-        /// This must be the `INode` in the parents `childeren` list.
-        max: INode,
     },
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);
@@ -266,7 +262,7 @@ pub(crate) const BLOCK_RANGES_COUNT_PER_BLOCK: usize = 31;
 
 /// Used to keep track of unsused [BlockGroup]s.
 ///
-/// This should be accessed through [crate::mem_structs::BlockAllocator].
+/// This should be accessed through [crate::block_allocator::BlockAllocator].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub struct FreeBlockGroups {
@@ -275,7 +271,7 @@ pub struct FreeBlockGroups {
     /// A [NodePointer] to the next [FreeBlockGroups] of unused [BlockGroup]s.
     ///
     /// This might be `Some` even if [Self::free] is not full.
-    /// The [crate::mem_structs::BlockAllocator] might uses empty [FreeBlockGroups] as reserved blocks.
+    /// The [crate::block_allocator::BlockAllocator] might uses empty [FreeBlockGroups] as reserved blocks.
     pub next: Option<NodePointer<FreeBlockGroups>>,
 }
 const_assert!(size_of::<FreeBlockGroups>() <= BLOCK_SIZE);
