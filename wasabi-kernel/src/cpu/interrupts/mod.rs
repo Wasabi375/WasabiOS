@@ -231,12 +231,12 @@ exception_fn!(breakpoint_handler, stack_frame, {
 /// the number of pages for the double fault exception stack
 ///
 /// DF uses a separate stack, in case DF was caused by a stack overflow
-pub const DOUBLE_FAULT_STACK_PAGE_COUNT: u64 = 2;
+pub const DOUBLE_FAULT_STACK_PAGE_COUNT: u64 = 16;
 
 /// the number of pages for the page fault exception stack
 ///
 /// PF uses a separate stack, in case PF was caused by a stack overflow
-pub const PAGE_FAULT_STACK_PAGE_COUNT: u64 = 2;
+pub const PAGE_FAULT_STACK_PAGE_COUNT: u64 = 16;
 
 /// generic interrupt handler, that is called for any interrupt handler with
 /// `interrupt_vector >= 32`.
@@ -264,5 +264,25 @@ fn interrupt_handler(interrupt_vector: u8, int_stack_frame: InterruptStackFrame)
         }
     } else {
         panic!("Interrupt {interrupt_vector} not handled: \n{int_stack_frame:#?}");
+    }
+}
+
+#[cfg(feature = "test")]
+mod test {
+    use core::hint::black_box;
+
+    use testing::{description::TestExitState, kernel_test, KernelTestError};
+
+    /// This test was added to proteced against a too small stack for
+    /// the page fault handler
+    #[kernel_test(expected_exit: TestExitState::Panic)]
+    fn test_page_fault_panic() -> Result<(), KernelTestError> {
+        let fake_ptr = 0 as *const u64;
+        unsafe {
+            let invalid = *fake_ptr;
+            black_box(invalid);
+        }
+
+        Ok(())
     }
 }

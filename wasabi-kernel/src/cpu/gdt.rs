@@ -127,6 +127,7 @@ impl GDTInfo {
         let pages = PageAllocator::get_for_kernel()
             .lock()
             .allocate_guarded_pages(page_count, true, false)?;
+        trace!("Allocate TSS stack: {pages:?}");
         unsafe {
             // Safety: pages was just allocated
             pages.map()

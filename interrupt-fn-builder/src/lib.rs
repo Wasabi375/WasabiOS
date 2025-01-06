@@ -82,6 +82,7 @@ macro_rules! int_fn_builder {
 /// creates a page fault $int_type handler
 #[macro_export]
 macro_rules! exception_page_fault_fn {
+    // TODO  page fault in page fault does not seem to trigger a double fault? Why?
     ($pub:vis $name:ident, $ist_name:ident, $err_name:ident, $block:tt) => {
         #[doc(hidden)]
         $pub extern "x86-interrupt" fn $name(

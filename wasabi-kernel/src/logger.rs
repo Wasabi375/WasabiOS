@@ -92,8 +92,8 @@ pub unsafe fn init() {
             // .with_module_level("wasabi_kernel::cpu::apic::ap_startup", LevelFilter::Debug)
             // .with_module_level("wasabi_kernel::panic", LevelFilter::Trace);
             // .with_module_level("wasabi_kernel::pci", LevelFilter::Trace)
-            .with_module_level("wasabi_kernel::pci::nvme", LevelFilter::Trace)
-            .with_module_level("wasabi_kernel::pci::nvme::queue", LevelFilter::Debug)
+            // .with_module_level("wasabi_kernel::pci::nvme", LevelFilter::Trace)
+            // .with_module_level("wasabi_kernel::pci::nvme::queue", LevelFilter::Debug)
             // comment to move ; to separate line - easy uncomment of module log levels
             ;
     }

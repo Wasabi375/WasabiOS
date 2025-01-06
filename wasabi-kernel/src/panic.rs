@@ -15,10 +15,10 @@ use shared::{
     },
     types::{CoreId, Duration},
 };
+use uart_16550::SerialPort;
 
 #[allow(unused_imports)]
-use log::{error, trace};
-use uart_16550::SerialPort;
+use log::{debug, error, info, trace, warn};
 
 use crate::{
     core_local::{get_ready_core_count, CoreInterruptState},
@@ -196,7 +196,7 @@ fn panic(info: &PanicInfo) -> ! {
 #[cfg_attr(feature = "test", allow(unreachable_code, unused_variables))]
 fn panic_impl(info: &PanicInfo) -> ! {
     let core_disable_result = if IN_PANIC.load(Ordering::Acquire) {
-        error!("panic in panic! {info:?}");
+        error!(target: "PANIC", "panic in panic! {info:?}");
         CoreDisableResult::AllDisabled
     } else {
         // if we panic in panic we dont send another nmi
@@ -230,6 +230,8 @@ fn panic_impl(info: &PanicInfo) -> ! {
     }
 
     error!(target: "PANIC", "{}", info);
+
+    debug!(target: "PANIC", "cpu halt");
 
     cpu::halt();
 }
