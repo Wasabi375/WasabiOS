@@ -196,7 +196,7 @@ impl Log for GlobalLogger {
 macro_rules! dbg {
     ($v:expr) => {{
         let value = $v;
-        log::debug!("{} = {:?}", core::stringify($v), value);
+        log::debug!("{} = {:?}", core::stringify!($v), value);
         value
     }};
 }
