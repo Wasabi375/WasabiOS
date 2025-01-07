@@ -15,8 +15,9 @@ use shared::sync::lockcell::LockCell;
 use wasabi_kernel::{
     bootloader_config_common,
     cpu::{self, apic::timer::TimerConfig, interrupts::InterruptVector},
+    default_kernel_config,
     kernel_info::KernelInfo,
-    pci, time,
+    pci, time, KernelConfig,
 };
 use x86_64::structures::idt::InterruptStackFrame;
 
@@ -101,4 +102,13 @@ const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
     let config = bootloader_api::BootloaderConfig::new_default();
     bootloader_config_common(config)
 };
-wasabi_kernel::entry_point!(kernel_main, boot_config = &BOOTLOADER_CONFIG);
+const KERNEL_CONFIG: KernelConfig = {
+    let mut config = default_kernel_config();
+    config.start_aps = true;
+    config
+};
+wasabi_kernel::entry_point!(
+    kernel_main,
+    boot_config = &BOOTLOADER_CONFIG,
+    kernel_config = KERNEL_CONFIG
+);

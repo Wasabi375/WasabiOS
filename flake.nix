@@ -49,6 +49,7 @@
             nasmfmt
             asm-lsp
             gdb
+            elfutils
           ];
         };
       });
