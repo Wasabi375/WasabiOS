@@ -41,6 +41,7 @@ edition = "2021"
 [workspace.dependencies]
 bit_field = "0.10.2"
 bitflags = "2.6.0"
+crossbeam-epoch = { version = "0.9.18", default-features = false, features = ["alloc"] }
 #  TODO use upstream once new version is released
 derive_builder = { version = "0.20.0", git = "https://github.com/Wasabi375/rust-derive-builder", branch = "owned_custom_default", default-features = false}
 iced-x86 = { version = "1.21", default-features = false, features = [ "no_std", "nasm", "decoder" ] }

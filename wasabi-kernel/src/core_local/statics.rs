@@ -8,6 +8,7 @@ use crate::testing::core_local::TestCoreStatics;
 
 use crate::{
     cpu::{self, apic::Apic, cpuid, gdt::GDTInfo, interrupts::InterruptHandlerState},
+    crossbeam_epoch::LocalEpochHandle,
     prelude::UnwrapTicketLock,
 };
 use alloc::boxed::Box;
@@ -96,6 +97,9 @@ pub struct CoreStatics {
     /// Set to true after the locals are fully initialized
     pub initialized: bool,
 
+    /// Handle for crossbeam epoch
+    pub epoch_handle: LocalEpochHandle,
+
     /// Core locals used by tests
     #[cfg(feature = "test")]
     pub test_local: TestCoreStatics,
@@ -121,6 +125,8 @@ impl CoreStatics {
             nmi_on_panic: AtomicBool::new(false),
 
             gdt: GDTInfo::new_uninit(),
+
+            epoch_handle: LocalEpochHandle::new_uninit(),
 
             initialized: false,
 

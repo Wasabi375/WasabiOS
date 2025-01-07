@@ -94,6 +94,7 @@ pub unsafe fn init() {
             // .with_module_level("wasabi_kernel::pci", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::pci::nvme", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::pci::nvme::queue", LevelFilter::Debug)
+            // .with_module_level("wasabi_kernel::crossbeam_epoch", LevelFilter::Trace)
             // comment to move ; to separate line - easy uncomment of module log levels
             ;
     }

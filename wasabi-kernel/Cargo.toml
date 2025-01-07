@@ -24,6 +24,7 @@ testing = { path = "../testing", optional = true }
 
 bitflags.workspace = true
 bit_field.workspace = true
+crossbeam-epoch.workspace = true
 bootloader_api.workspace = true
 derive_builder.workspace = true
 iced-x86.workspace = true

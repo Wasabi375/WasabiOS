@@ -27,6 +27,7 @@
 
 pub mod core_local;
 pub mod cpu;
+pub mod crossbeam_epoch;
 pub mod graphics;
 pub mod kernel_info;
 pub mod logger;
@@ -167,11 +168,16 @@ pub unsafe fn processor_init() {
         if core_id.is_bsp() {
             // Safety: bsp during `init` and locks and logging are working
             mem::init();
-        }
 
+            // Safety: bsp during `init` right after mem is initialized
+            crossbeam_epoch::bsp_init();
+        }
         // Safety:
         // this is called after `core_boot()` and we have initialized memory and logging
         core_local::init(core_id);
+
+        // Safety: called during `init` after `crossbeam_epoch::bsp_init` and `core_local::init`
+        crossbeam_epoch::processor_init();
 
         // Safety:
         // only called here for bsp and we have just init core_locals and logging and mem
