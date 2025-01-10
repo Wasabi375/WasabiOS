@@ -76,6 +76,16 @@ pub struct QemuOptions {
     /// Options for setting up uefi
     #[command(flatten)]
     pub uefi: UefiOptions,
+
+    /// Qemu waits for a debugger to connect
+    #[arg(long)]
+    pub gdb: bool,
+
+    /// Overrite the default port(1234) for a debugger to connect to qemu
+    ///
+    /// only used when [gdb] is also specified.
+    #[arg(long)]
+    pub gdb_port: Option<u16>,
 }
 
 #[derive(Args, Debug)]

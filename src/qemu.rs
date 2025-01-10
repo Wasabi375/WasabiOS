@@ -73,10 +73,16 @@ pub struct QemuConfig<'a> {
     pub debug_log: Option<&'a Path>,
     pub debug_info: &'a str,
     pub uefi: UefiConfig<'a>,
+    pub gdb_port: Option<u16>,
 }
 
 impl<'a> QemuConfig<'a> {
     pub fn from_options(args: &'a QemuOptions) -> Self {
+        let gdb_port = if args.gdb || args.gdb_port.is_some() {
+            args.gdb_port.or(Some(1234))
+        } else {
+            None
+        };
         Self {
             memory: "4G",
             devices: "",
@@ -86,6 +92,7 @@ impl<'a> QemuConfig<'a> {
             debug_log: args.qemu_log.as_ref().map(|p| p.as_path()),
             debug_info: args.qemu_info.as_str(),
             uefi: (&args.uefi).into(),
+            gdb_port,
         }
     }
 }
@@ -210,6 +217,10 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
         cmd.arg("-D").arg(log_path);
     }
     cmd.arg("-no-reboot");
+
+    if let Some(gdb_port) = qemu.gdb_port {
+        cmd.arg("-gdb").arg(format!("tcp::{}", gdb_port)).arg("-S");
+    }
 
     cmd.kill_on_drop(qemu.kill_on_drop);
 
