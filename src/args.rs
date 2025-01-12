@@ -15,6 +15,7 @@ pub struct Arguments {
 }
 
 /// The different build commands
+// TODO Docs command for building and opening docs
 #[derive(Debug, Subcommand)]
 pub enum BuildCommand {
     /// rebuild the kernel
@@ -29,7 +30,30 @@ pub enum BuildCommand {
     Check(CheckArgs),
     /// run cargo expand on kernel
     Expand(ExpandArgs),
-    // TODO Docs command for building and opening docs
+    /// Starts gdb and connects to a running qemu instance.
+    ///
+    /// This does not start qemu itself. It can be started using the `build run --gdb` or `latest run
+    /// --gdb`
+    Gdb(GdbArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct GdbArgs {
+    #[arg(short, long)]
+    pub profile: Option<Profile>,
+
+    /// target architecture
+    #[arg(long, default_value = Target::X86_64)]
+    pub target: Target,
+
+    /// The tcp port used to connect to qemu
+    ///
+    /// The default is 1234 and is automatically used by the `run` command if no port is specified
+    pub port: Option<u16>,
+
+    /// Only print the gdb command instead of executing it
+    #[arg(long)]
+    pub print_command: bool,
 }
 
 /// The different ways to run the kernel
@@ -42,6 +66,7 @@ pub enum RunCommand {
     #[command(alias = "t")]
     Test(TestArgs),
 }
+
 #[derive(Args, Debug)]
 pub struct UefiOptions {
     /// The ovmf code file to use
@@ -261,9 +286,10 @@ impl BuildOptions {
 }
 
 /// Build the OS with the specified Profile (default debug)
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum Profile {
     /// Dev profile (default)
+    #[default]
     Dev,
     /// Release profile
     Release,

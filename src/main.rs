@@ -9,7 +9,7 @@ mod qemu;
 mod test;
 
 use anyhow::{Context, Result};
-use args::{Arguments, BuildCommand, LatestArgs, Profile, RunArgs, RunCommand, Target};
+use args::{Arguments, BuildCommand, GdbArgs, LatestArgs, Profile, RunArgs, RunCommand, Target};
 use build::{build, check, clean, expand};
 use clap::Parser;
 use log::LevelFilter;
@@ -24,6 +24,7 @@ use std::{
     str::FromStr,
 };
 use test::test;
+use tokio::process::Command;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -45,6 +46,7 @@ async fn main() -> Result<()> {
         BuildCommand::Clean(args) => clean(args).await?,
         BuildCommand::Check(args) => check(args).await?,
         BuildCommand::Expand(args) => expand(args).await?,
+        BuildCommand::Gdb(args) => gdb(args).await?,
     }
 
     Ok(())
@@ -89,6 +91,48 @@ pub async fn latests(args: LatestArgs) -> Result<()> {
         RunCommand::Run(args) => run(&path, args).await,
         RunCommand::Test(args) => test(&path, args).await,
     }
+}
+
+pub async fn gdb(args: GdbArgs) -> Result<()> {
+    let bin_name = OsString::from_str("wasabi-kernel").unwrap();
+    let mut path = latest_path(&bin_name, &args.target, &args.profile.unwrap_or_default());
+    path.push(bin_name);
+
+    let gdb_commands = [
+        format!("target remote localhost:{}", args.port.unwrap_or(1234)),
+        format!("symbol-file -o 0x8000000000 {}", path.display()),
+        format!("break wasabi_kernel::kernel_bsp_entry"),
+    ]
+    .into_iter()
+    .map(|c| format!("--eval-command={}", c));
+
+    if args.print_command {
+        print_gdb_command(args, path.to_str().unwrap(), gdb_commands);
+        return Ok(());
+    }
+    let mut cmd = Command::new("rust-gdb");
+    cmd.arg(path);
+
+    cmd.args(gdb_commands);
+
+    log::info!("{cmd:?}");
+    cmd.spawn()
+        .context("gdb")?
+        .wait()
+        .await
+        .context("waiting for gdb")?;
+    Ok(())
+}
+
+fn print_gdb_command(_args: GdbArgs, bin_name: &str, commands: impl Iterator<Item = String>) {
+    let mut cmd = String::new();
+    cmd.push_str("rust-gdb ");
+    cmd.push_str(bin_name);
+    for c in commands {
+        cmd.push(' ');
+        cmd.push_str(&c);
+    }
+    println!("{}", cmd);
 }
 
 #[cfg(unix)]
