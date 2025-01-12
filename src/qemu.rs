@@ -194,7 +194,8 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
     cmd.arg("-device")
         .arg("nvme,serial=deadbeef,drive=nvm_test");
 
-    if qemu.debug_log.is_none() {
+    // Hardware acceleration is messing with logs and gdb
+    if qemu.debug_log.is_none() && qemu.gdb_port.is_none() {
         if host_arch.is_windows() {
             cmd.arg("-accel").arg("whpx,kernel-irqchip=off");
             cmd.arg("-cpu").arg("max,vmx=off");
