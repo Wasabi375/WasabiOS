@@ -168,7 +168,6 @@ pub unsafe fn processor_init() {
         if core_id.is_bsp() {
             // Safety: bsp during `init` and locks and logging are working
             mem::init();
-
             // Safety: bsp during `init` right after mem is initialized
             crossbeam_epoch::bsp_init();
         }
@@ -229,6 +228,7 @@ pub const fn bootloader_config_common(
     mut config: bootloader_api::BootloaderConfig,
 ) -> bootloader_api::BootloaderConfig {
     config.mappings.page_table_recursive = Some(Mapping::Dynamic);
+    config.mappings.aslr = false;
     config.kernel_stack_size = DEFAULT_STACK_SIZE;
     config
 }
