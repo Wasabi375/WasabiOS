@@ -18,7 +18,7 @@ use core::{
     ptr::{addr_of_mut, NonNull},
     sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
 };
-use shared::{sync::lockcell::LockCellInternal, types::CoreId};
+use shared::types::CoreId;
 
 use super::{AutoRefCounter, AutoRefCounterGuard, CORE_ID_COUNTER, CORE_READY_COUNT};
 
@@ -27,6 +27,11 @@ static mut CORE_LOCALS_VADDRS: [Option<NonNull<CoreStatics>>; 255] = [None; 255]
 
 /// A [CoreStatics] instance used during the boot process.
 static mut BOOT_CORE_LOCALS: CoreStatics = CoreStatics::empty();
+
+/// lock used to access the critical boot section.
+///
+/// This lock is taken when [core_boot] is called and released at the end of [init].
+static BOOT_LOCK: AtomicU8 = AtomicU8::new(0);
 
 /// This struct contains a number of core local entries.
 ///
@@ -42,11 +47,6 @@ pub struct CoreStatics {
     // NOTE: this must be the first entry in the struct, in order to load
     // the core locals from gs
     self_ptr: NonNull<CoreStatics>,
-
-    /// lock used to access the critical boot section.
-    ///
-    /// This lock is taken when [core_boot] is called and released at the end of [init].
-    boot_lock: AtomicU8,
 
     /// A unique id of this core. Each core has sequential ids starting from 0 and ending
     /// at [get_started_core_count].
@@ -110,7 +110,6 @@ impl CoreStatics {
     const fn empty() -> Self {
         Self {
             self_ptr: NonNull::dangling(),
-            boot_lock: AtomicU8::new(0),
             core_id: CoreId(0),
             apic_id: CoreId(0),
             interrupt_count: AutoRefCounter::new(0),
@@ -133,6 +132,62 @@ impl CoreStatics {
             #[cfg(feature = "test")]
             test_local: TestCoreStatics::new(),
         }
+    }
+
+    /// initializes [CoreStatics] for this core from the [BOOT_CORE_LOCALS].
+    ///
+    /// This creates a fully functional [CoreStatics] with the relevant fields
+    /// from the boot copied over.
+    ///
+    /// # Safety
+    ///
+    /// This function must only be called once for each core, after [core_boot] and
+    /// before [init].
+    ///
+    /// The caller must ensure that there are no references into [BOOT_CORE_LOCALS]
+    /// either via the static ref, the [super::locals] macro or in any other way.
+    /// This should be guranteed by the `boot_locals` parameter.
+    unsafe fn initialize(boot_locals: &mut Self, core_id: CoreId, apic_id: CoreId) -> Box<Self> {
+        trace!("CoreStatic::initialize");
+
+        assert_eq!(boot_locals.interrupt_count.count(), 0);
+        assert_eq!(boot_locals.exception_count.count(), 0);
+        assert_eq!(
+            boot_locals.interrupts_disable_count.load(Ordering::Relaxed),
+            1
+        );
+
+        let mut reset_boot_locals = CoreStatics::empty();
+        // The self ptr must be set for `locals!` to work.
+        // See [get_core_statics]
+        reset_boot_locals.self_ptr = NonNull::from(unsafe {
+            // Safety: we are still during the `core_boot` process and therefore have unique
+            // access to BOOT_CORE_LOCALS
+            &mut *addr_of_mut!(BOOT_CORE_LOCALS)
+        });
+
+        let boot_locals = core::mem::replace(boot_locals, reset_boot_locals);
+
+        let mut core_statics = Box::new(CoreStatics {
+            self_ptr: NonNull::dangling(),
+            core_id,
+            apic_id,
+            interrupt_count: AutoRefCounter::new(0),
+            exception_count: AutoRefCounter::new(0),
+            // interrupts disbale count is 1, because the boot section does not allow
+            // for interrupts, after all we have not initialized them.
+            interrupts_disable_count: AtomicU64::new(1),
+
+            initialized: true,
+
+            // Move all the setup work that has been done so far, we just need
+            // to override some specific data to move to a new self_ptr
+            ..boot_locals
+        });
+
+        core_statics.self_ptr = NonNull::from(core_statics.as_mut());
+
+        core_statics
     }
 
     /// increment the [Self::interrupt_count] and return a guard to decrement it again.
@@ -245,16 +300,14 @@ pub unsafe fn core_boot() -> CoreId {
 
     let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::AcqRel).into();
 
-    // Safety: This is only safe as long as we are the only core
-    // to access this. Right now we might not be.
-    // We must not use this other than to take th boot_lock.
-    // Only when we have the boot_lock, this is save to use.
-    let boot_core_locals = unsafe { &mut *addr_of_mut!(BOOT_CORE_LOCALS) };
-
     // This is critical for the safe access to boot_core_locals
-    while boot_core_locals.boot_lock.load(Ordering::SeqCst) != core_id.0 {
+    while BOOT_LOCK.load(Ordering::SeqCst) != core_id.0 {
         spin_loop();
     }
+
+    // Safety: This is only safe as long as we are the only core
+    // to access this, which is ensured by the BOOT_LOCK
+    let boot_core_locals = unsafe { &mut *addr_of_mut!(BOOT_CORE_LOCALS) };
 
     cpu::set_gs_base(boot_core_locals as *const CoreStatics as u64);
 
@@ -280,33 +333,26 @@ pub unsafe fn core_boot() -> CoreId {
 ///
 /// # Safety
 ///
-/// this function must only be called once per CPU core, after [`core_boot`] was executed
+/// This function must only be called once per CPU core, after [`core_boot`] was executed
 /// and also after memory and logging was initialized.
+///
+/// The caller must also ensure that no references or pointers to [super::locals] is held
+/// past this function call, as the result of the macro is invalidated and reinitialized by
+/// this function
 pub unsafe fn init(core_id: CoreId) {
+    trace!("init({core_id:?})");
     let apic_id = cpuid::apic_id().into();
 
-    let mut core_local = Box::new(CoreStatics {
-        boot_lock: AtomicU8::new(core_id.0),
-        core_id,
-        apic_id,
-        interrupt_count: AutoRefCounter::new(0),
-        exception_count: AutoRefCounter::new(0),
-        // interrupts disbale count is 1, because the boot section does not allow
-        // for interrupts, after all we have not initialized them.
-        interrupts_disable_count: AtomicU64::new(1),
+    let boot_locals = unsafe {
+        // Safety: after `core_boot` and before `init` is done, therefor we have
+        // unique access to BOOT_CORE_LOCALS ensured by BOOT_LOCK and function safety gurantees.
+        &mut *addr_of_mut!(BOOT_CORE_LOCALS)
+    };
 
-        initialized: true,
-
-        ..CoreStatics::empty()
-    });
-
-    core_local.self_ptr =
-        NonNull::new(core_local.as_mut()).expect("Core locals should never be at ptr 0");
-    assert!(!LockCellInternal::<Apic>::is_preemtable(&core_local.apic));
-    debug!(
-        "Core {}: Core Locals initialized from boot locals",
-        core_id.0
-    );
+    let core_local = unsafe {
+        // Safety: during `init` call and `boot_locals` is properly constructed uniuqe reference.
+        CoreStatics::initialize(boot_locals, core_id, apic_id)
+    };
 
     unsafe {
         // safety: we are in the kernel boot process and we only access our own
@@ -315,18 +361,12 @@ pub unsafe fn init(core_id: CoreId) {
         CORE_LOCALS_VADDRS[core_id.0 as usize] = Some(core_local.self_ptr);
     }
 
-    // set gs base to point to this core_local. That way we can use the core!
-    // macro to access the core_locals.
+    // set gs base to point to this core_local. That way we can use the locals!
+    // macro to access core_local.
     cpu::set_gs_base(core_local.self_ptr.as_ptr() as u64);
 
-    unsafe {
-        // exit the critical boot section and let next core enter
-        // safety: at this point we are still in the boot process so we still
-        // have unique access to [BOOT_CORE_LOCALS]
-        (*addr_of_mut!(BOOT_CORE_LOCALS))
-            .boot_lock
-            .fetch_add(1, Ordering::SeqCst);
-    }
+    // exit the critical boot section and let next core enter
+    BOOT_LOCK.fetch_add(1, Ordering::SeqCst);
     CORE_READY_COUNT.fetch_add(1, Ordering::Release);
 
     // don't drop core_local, we want it to life forever in static memory.
@@ -344,9 +384,12 @@ pub unsafe fn init(core_id: CoreId) {
 pub unsafe fn get_core_statics() -> &'static CoreStatics {
     unsafe {
         let ptr: usize;
-        // Safety: we assume that gs contains the vaddr of this core's
+        // Safety: we assume that gs_base contains the vaddr of this core's
         // [CoreStatics], which starts with it's own address, therefor we
-        // can access the [CoreStatics] vaddr using `gs:[0]`
+        // can access the [CoreStatics] vaddr using `gs:[0]`.
+        //
+        // `gs:[0]` reads the memory at gs_base offset by 0, therefor reading
+        // the ptr stored in the first field of [CoreStatics]
         asm! {
             "mov {0}, gs:[0]",
             out(reg) ptr
