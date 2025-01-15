@@ -25,7 +25,7 @@ use crate::{
     block_allocator::BlockAllocator,
     existing_fs_check::{check_for_filesystem, FsFound},
     fs_structs::{
-        BlockString, BlockStringPart, FsStatus, INode, INodeData, MainHeader, MainTransientHeader,
+        BlockString, BlockStringPart, FileId, FileNode, FsStatus, MainHeader, MainTransientHeader,
         NodePointer, TreeNode, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH,
     },
     interface::BlockDevice,
@@ -542,8 +542,9 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
         Ok(String::from_utf8(string)?.into_boxed_str())
     }
 
-    pub fn read_inode_data(&self, inode: INode) -> Result<Option<INodeData>, FsError> {
-        // TODO caching?
+    #[deprecated]
+    pub fn read_file_node(&self, id: FileId) -> Result<Option<FileNode>, FsError> {
+        // TODO use mem_tree instead
 
         let mut tree_node_ptr = Some(self.header_data.root_ptr);
 
@@ -557,17 +558,17 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
             };
 
             match tree_node {
-                TreeNode::Leave { parent, inodes } => {
+                TreeNode::Leave { parent, files } => {
                     debug!("parent: {:#?}", parent);
-                    debug!("nodes: {:?}", inodes.iter().map(|n| n.inode));
-                    return Ok(inodes.iter().find(|(node)| node.inode == inode).cloned());
+                    debug!("nodes: {:?}", files.iter().map(|n| n.id));
+                    return Ok(files.iter().find(|(node)| node.id == id).cloned());
                 }
                 TreeNode::Node {
                     parent: _,
                     children,
                 } => {
                     for (max, ptr) in children {
-                        if inode <= max {
+                        if id <= max {
                             tree_node_ptr = Some(ptr);
                             break;
                         }
