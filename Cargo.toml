@@ -39,39 +39,42 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+anyhow =  "1.0.94"
 bit_field = "0.10.2"
 bitflags = "2.6.0"
 crossbeam-epoch = { version = "0.9.18", default-features = false, features = ["alloc"] }
+derive-where = "1.2.7"
+hashbrown = "0.15.2"
+itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
+libm = "0.2.11"
+linkme = "0.3.31"
+log = "0.4.22"
+noto-sans-mono-bitmap = { version = "0.3.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
+paste = "1.0.12"
+proc-macro2 = "1.0.92"
+quote = "1.0.37"
+static_assertions = "1.1"
+syn = { version = "2.0.90", features = ["full", "extra-traits"] }
+thiserror = { version = "2.0.4",  default-features = false }
+uuid = { version = "1.11.0", default-features = false }
+walkdir = "2.5"
+
 #  TODO use upstream once new version is released
 derive_builder = { version = "0.20.0", git = "https://github.com/Wasabi375/rust-derive-builder", branch = "owned_custom_default", default-features = false}
-iced-x86 = { version = "1.21", default-features = false, features = [ "no_std", "nasm", "decoder" ] }
-itertools = { version = "0.10.5", default-features = false, features = ["use_alloc"] }
+
 # TODO remove lazy_static as a dependency, in order to get rid of the external spin-lock
 lazy_static = { version = "1.4.0", features=["spin_no_std"] }
-linkme = "0.3.10"
-log = "0.4.20"
-paste = "1.0.12"
-proc-macro2 = "1.0.58"
-quote = "1.0.27"
-static_assertions = "1.1"
-syn = { version = "2.0.16", features = ["full", "extra-traits"] }
-thiserror = { version = "1.0", package = "thiserror-core", default-features = false }
+
+# TODO use upstream once new version is released
+# x86_64 = 0.16"
+x86_64 = { version = "0.15.1", git = "https://github.com/Wasabi375/x86_64", branch = "patched" }
+
 # TODO: why am I using my fork?
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
-walkdir = "2.5"
-# TODO use upstream once new version is released
-# x86_64 = 0.15"
-x86_64 = { version = "0.15", git = "https://github.com/Wasabi375/x86_64", branch = "patched" }
-hashbrown = "0.14.5"
-derive-where = "1.2.7"
-libm = "0.2.11"
-
-# latin-1-suplement is required for german Umlauts. unicode-specials contains the replacement character �
-noto-sans-mono-bitmap = { version = "0.2.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
 
 # TODO use upstream once new version is released
-bootloader = { git = "https://github.com/Wasabi375/bootloader", rev = "bf950a4bee82764dac17b5e18f5c82f491c9799e", version = "0.11", default-features = false, features = ["uefi"] }
-# bootloader = { version = "0.11.8", default-features = false, features = ["uefi"] }
+# bootloader = { git = "https://github.com/Wasabi375/bootloader", rev = "bf950a4bee82764dac17b5e18f5c82f491c9799e", version = "0.11", default-features = false, features = ["uefi"] }
+bootloader = { version = "0.11.8", default-features = false, features = ["uefi"] }
 # bootloader = { path = "/home/burkhard/programming/forks/bootloader", default-features = false, features = ["uefi"]}
 bootloader_api = { version = "0.11" }
 
