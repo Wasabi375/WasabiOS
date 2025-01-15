@@ -76,17 +76,17 @@ const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
 
 /// A unique identifier of a node
 ///
-/// Nodes can be things like files, directories, etc. See [INodeType]
+/// Nodes can be things like files, directories, etc. See [FileType]
 ///
 /// Unique means unique within this filesystem.
-/// It is possible if not likely for INodes to be the same on different file systems
+/// It is possible for [FileId] to be the same on different file systems
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub struct INode(LittleEndian<u64>);
+pub struct FileId(LittleEndian<u64>);
 
-impl INode {
+impl FileId {
     pub fn new(ino: u64) -> Self {
-        INode(LittleEndian::<_>::from(ino))
+        FileId(LittleEndian::<_>::from(ino))
     }
 
     pub fn get(self) -> u64 {
@@ -96,7 +96,7 @@ impl INode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum INodeType {
+pub enum FileType {
     File,
     Directory,
 }
@@ -127,10 +127,10 @@ bitflags! {
 const I_NODE_MAX_NAME_LEN: usize = 40;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
-pub struct INodeData {
-    pub inode: INode,
-    pub parent: INode,
-    pub typ: INodeType,
+pub struct FileNode {
+    pub id: FileId,
+    pub parent: FileId,
+    pub typ: FileType,
     pub permissions: [Perm; 4],
     _unused: [u8; 3],
     pub size: u64,
@@ -244,15 +244,15 @@ impl Default for MainTransientHeader {
 pub enum TreeNode {
     Leave {
         parent: NodePointer<TreeNode>,
-        inodes: StaticVec<INodeData, 6, u8>,
+        files: StaticVec<FileNode, 6, u8>,
     },
     Node {
         /// The parent of this Node or `None` if this is the root node
         parent: Option<NodePointer<TreeNode>>,
-        /// a list of [TreeNode] pointers and their maximum [INode] value.
+        /// a list of [TreeNode] pointers and their maximum [FileId] value.
         ///
         /// `children[i].0 == children[i].1.follow().max`
-        children: StaticVec<(INode, NodePointer<TreeNode>), 30, u8>,
+        children: StaticVec<(FileId, NodePointer<TreeNode>), 30, u8>,
     },
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);

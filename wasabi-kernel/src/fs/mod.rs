@@ -8,31 +8,31 @@ pub mod path;
 
 pub enum FileSystemError {}
 
-pub struct INodeId([u8; 16]);
+pub struct FileId(u64);
 pub struct FileSystemId([u8; 16]);
 
-pub struct INode {
-    id: INodeId,
-    node_type: INodeType,
+pub struct FileInfo {
+    id: FileId,
+    node_type: FileType,
     path: PathBuf,
 }
 
 pub struct File {
-    inode: INode,
+    info: FileInfo,
 }
 
 pub struct Directory {
-    inode: INode,
-    nodes: Vec<INode>,
+    info: FileInfo,
+    nodes: Vec<FileInfo>,
 }
 
 pub struct Symlink {
-    inode: INode,
+    info: FileInfo,
     target: PathBuf,
 }
 
 pub struct MountPoint {
-    inode: INode,
+    file: FileInfo,
     fs_id: FileSystemId,
 }
 
@@ -46,7 +46,7 @@ pub struct FileMetadata {
     meta_timestamp: FileTimestamp,
 }
 
-pub enum INodeType {
+pub enum FileType {
     File,
     Directory,
     Symlink,
@@ -56,15 +56,15 @@ pub enum INodeType {
 pub trait Filesystem {
     fn id(&self) -> FileSystemId;
 
-    /// Querry the file system for the inode id
-    fn query(&mut self, id: INodeId) -> Result<Option<INode>, FileSystemError>;
+    /// Querry the file system for the id
+    fn query(&mut self, id: FileId) -> Result<Option<FileInfo>, FileSystemError>;
 
     /// Querry the file system for the path
-    fn query_path(&mut self, path: Path) -> Result<Option<INode>, FileSystemError>;
+    fn query_path(&mut self, path: Path) -> Result<Option<FileInfo>, FileSystemError>;
 
     /// Open a file on the file system
-    fn open(&mut self, inode: INode) -> Result<File, FileSystemError>;
+    fn open(&mut self, file: FileInfo) -> Result<File, FileSystemError>;
 
     /// Open a directory on the file system
-    fn directory(&mut self, inode: INode) -> Result<Directory, FileSystemError>;
+    fn directory(&mut self, file: FileInfo) -> Result<Directory, FileSystemError>;
 }

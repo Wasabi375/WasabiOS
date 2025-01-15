@@ -14,8 +14,8 @@ use uuid::Uuid;
 use wfs::blocks_required_for;
 use wfs::fs::FsWrite;
 use wfs::fs::OverrideCheck;
-use wfs::fs_structs::INode;
-use wfs::fs_structs::INodeType;
+use wfs::fs_structs;
+use wfs::fs_structs::FileId;
 use wfs::BLOCK_SIZE;
 
 use wfs::fs::{FileSystem, FsRead, FsReadOnly, FsReadWrite};
@@ -128,18 +128,19 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
     }
 
     fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: fuser::ReplyAttr) {
-        let inode = self.fs().read_inode_data(INode::new(ino));
+        #[allow(deprecated)]
+        let file_node = self.fs().read_file_node(FileId::new(ino));
 
-        match inode {
-            Ok(Some(inode)) => {
-                let mtime = UNIX_EPOCH + Duration::from_secs(inode.modified_at.get());
-                let crtime = UNIX_EPOCH + Duration::from_secs(inode.created_at.get());
-                let (kind, nlink) = match inode.typ {
-                    INodeType::File => (FileType::RegularFile, 1),
-                    INodeType::Directory => (FileType::Directory, 2),
+        match file_node {
+            Ok(Some(file_node)) => {
+                let mtime = UNIX_EPOCH + Duration::from_secs(file_node.modified_at.get());
+                let crtime = UNIX_EPOCH + Duration::from_secs(file_node.created_at.get());
+                let (kind, nlink) = match file_node.typ {
+                    fs_structs::FileType::File => (FileType::RegularFile, 1),
+                    fs_structs::FileType::Directory => (FileType::Directory, 2),
                 };
                 let perm: u16 = {
-                    let perm: [u8; 4] = unsafe { std::mem::transmute_copy(&inode.permissions) };
+                    let perm: [u8; 4] = unsafe { std::mem::transmute_copy(&file_node.permissions) };
                     (perm[0] as u16) << 12
                         | (perm[1] as u16) << 8
                         | (perm[2] as u16) << 4
@@ -148,9 +149,9 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
                 reply.attr(
                     &self.ttl,
                     &dbg!(FileAttr {
-                        ino: inode.inode.get().try_into().unwrap(),
-                        size: inode.size,
-                        blocks: blocks_required_for!(inode.size),
+                        ino: file_node.id.get().try_into().unwrap(),
+                        size: file_node.size,
+                        blocks: blocks_required_for!(file_node.size),
                         atime: mtime,
                         mtime,
                         ctime: mtime,
