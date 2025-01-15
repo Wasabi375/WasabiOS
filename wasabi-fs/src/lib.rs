@@ -24,42 +24,16 @@ pub mod fs;
 pub mod fs_structs;
 pub mod interface;
 
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct LbaInternal(NonMaxU64);
-
-impl SpecificEndian<LbaInternal> for LbaInternal {
-    fn to_big_endian(&self) -> LbaInternal {
-        // Safety self is not max and endianness does not change that
-        unsafe { LbaInternal(NonMaxU64::new_unchecked(self.0.get().to_be())) }
-    }
-
-    fn to_little_endian(&self) -> LbaInternal {
-        // Safety self is not max and endianness does not change that
-        unsafe { LbaInternal(NonMaxU64::new_unchecked(self.0.get().to_le())) }
-    }
-
-    fn from_big_endian(&self) -> LbaInternal {
-        // Safety self is not max and endianness does not change that
-        unsafe { LbaInternal(NonMaxU64::new_unchecked(u64::from_be(self.0.get()))) }
-    }
-
-    fn from_little_endian(&self) -> LbaInternal {
-        // Safety self is not max and endianness does not change that
-        unsafe { LbaInternal(NonMaxU64::new_unchecked(u64::from_le(self.0.get()))) }
-    }
-}
-
 /// Logical Block Address
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LBA(LittleEndian<LbaInternal>);
+pub struct LBA(LittleEndian<NonMaxU64>);
 
 impl TryFrom<u64> for LBA {
     type Error = <NonMaxU64 as TryFrom<u64>>::Error;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Ok(LBA(LbaInternal(value.try_into()?).into()))
+        Ok(LBA(TryInto::<NonMaxU64>::try_into(value)?.into()))
     }
 }
 
@@ -74,9 +48,9 @@ impl LBA {
 
     pub const unsafe fn new_unchecked(addr: u64) -> Self {
         assert!(addr != u64::MAX);
-        Self(LittleEndian::from_bits(LbaInternal(unsafe {
+        Self(LittleEndian::from_bits(unsafe {
             NonMaxU64::new_unchecked(addr.to_le())
-        })))
+        }))
     }
 
     pub fn from_byte_offset(offset: u64) -> Option<LBA> {
@@ -84,11 +58,11 @@ impl LBA {
     }
 
     pub fn addr(self) -> NonMaxU64 {
-        self.0.to_native().0
+        self.0.to_native()
     }
 
     pub fn get(self) -> u64 {
-        self.0.to_native().0.get()
+        self.0.to_native().get()
     }
 }
 
