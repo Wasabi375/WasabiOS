@@ -6,6 +6,7 @@ use core::{
 };
 
 use bitflags::bitflags;
+use nonmax::NonMaxU64;
 use shared::math::IntoI64;
 use simple_endian::LittleEndian;
 use static_assertions::const_assert;
@@ -82,15 +83,23 @@ const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
 /// It is possible for [FileId] to be the same on different file systems
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub struct FileId(LittleEndian<u64>);
+pub struct FileId(LittleEndian<NonMaxU64>);
 
 impl FileId {
-    pub fn new(ino: u64) -> Self {
-        FileId(LittleEndian::<_>::from(ino))
+    pub fn new(id: NonMaxU64) -> Self {
+        FileId(id.into())
+    }
+
+    pub fn try_new(id: u64) -> Option<Self> {
+        NonMaxU64::new(id).map(|id| FileId(id.into()))
+    }
+
+    pub unsafe fn new_unchecked(id: u64) -> Self {
+        unsafe { FileId(NonMaxU64::new_unchecked(id).into()) }
     }
 
     pub fn get(self) -> u64 {
-        self.0.into()
+        self.0.to_native().get()
     }
 }
 

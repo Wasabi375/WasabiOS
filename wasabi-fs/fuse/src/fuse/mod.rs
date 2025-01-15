@@ -129,7 +129,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
 
     fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: fuser::ReplyAttr) {
         #[allow(deprecated)]
-        let file_node = self.fs().read_file_node(FileId::new(ino));
+        let file_node = self.fs().read_file_node(FileId::try_new(ino).unwrap());
 
         match file_node {
             Ok(Some(file_node)) => {
