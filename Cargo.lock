@@ -1105,8 +1105,10 @@ dependencies = [
 [[package]]
 name = "nonmax"
 version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
+source = "git+https://github.com/Wasabi375/nonmax.git?branch=simple_endian#21734de0a458c948140877d1184e18635bac494a"
+dependencies = [
+ "simple_endian",
+]
 
 [[package]]
 name = "noto-sans-mono-bitmap"
@@ -1574,7 +1576,7 @@ dependencies = [
 [[package]]
 name = "simple_endian"
 version = "0.3.2"
-source = "git+https://github.com/Wasabi375/simple-endian-rs.git?branch=const#afe3f8f20c88f78ecf7040f2fc7c686f8232bf25"
+source = "git+https://github.com/Wasabi375/simple-endian-rs.git?branch=generic_ops#6cbed0621801c824d09df1db9ebd1ab4614ca471"
 
 [[package]]
 name = "simple_logger"
