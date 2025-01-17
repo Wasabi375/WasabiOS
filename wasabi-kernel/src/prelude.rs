@@ -4,7 +4,10 @@ pub use shared::sync::lockcell::{LockCell, LockCellGuard};
 
 use crate::core_local::CoreInterruptState;
 
-/// a [TicketLoc](shared::sync::lockcell::TicketLock) with the [CoreInterruptState]
+/// a [UnsafeTicketLock](shared::sync::lockcell::UnsafeTicketLock) with the [CoreInterruptState]
+pub type UnsafeTicketLock = shared::sync::lockcell::UnsafeTicketLock<CoreInterruptState>;
+
+/// a [TicketLock](shared::sync::lockcell::TicketLock) with the [CoreInterruptState]
 pub type TicketLock<T> = shared::sync::lockcell::TicketLock<T, CoreInterruptState>;
 
 /// a [ReadWriteCell](shared::sync::lockcell::ReadWriteCell) with the [CoreInterruptState]
