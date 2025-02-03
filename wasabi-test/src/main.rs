@@ -176,7 +176,7 @@ static TEST_END_BARRIER: Barrier =
 static TESTING_CORE_INTERRUPT_STATE: CoreInterruptState = CoreInterruptState;
 
 fn get_test_iter() -> impl Iterator<Item = &'static KernelTestDescription> {
-    get_kernel_tests!(wasabi_test, wasabi_kernel)
+    get_kernel_tests!(wasabi_test, wasabi_kernel, wfs)
 }
 
 fn init_mp() {

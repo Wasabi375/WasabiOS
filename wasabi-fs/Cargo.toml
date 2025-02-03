@@ -3,12 +3,18 @@ name = "wfs"
 version.workspace = true
 edition.workspace = true
 
+
+[features] 
+test = ["dep:testing"]
+
 [dependencies]
 shared = { path = "../shared" }
 staticvec = { path = "../staticvec" }
+testing = { path = "../testing", optional = true }
 
 bit_field.workspace = true
 bitflags.workspace = true
+linkme.workspace = true
 log.workspace = true
 nonmax.workspace = true
 static_assertions.workspace = true
