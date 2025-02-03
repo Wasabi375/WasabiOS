@@ -258,6 +258,9 @@ impl<T> DerefMut for BlockAligned<T> {
     }
 }
 
+#[cfg(feature = "test")]
+testing::description::kernel_test_setup!();
+
 #[cfg(test)]
 mod test {
     use crate::{BlockGroup, LBA};
