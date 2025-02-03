@@ -1975,6 +1975,7 @@ dependencies = [
  "testing-tests",
  "uart_16550",
  "wasabi-kernel",
+ "wfs",
  "x86_64",
 ]
 
@@ -2096,12 +2097,14 @@ version = "0.1.0"
 dependencies = [
  "bit_field",
  "bitflags 2.8.0",
+ "linkme",
  "log",
  "nonmax",
  "shared",
  "simple_endian",
  "static_assertions",
  "staticvec",
+ "testing",
  "thiserror",
  "uuid",
 ]

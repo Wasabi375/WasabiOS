@@ -178,11 +178,11 @@ static TESTING_CORE_INTERRUPT_STATE: CoreInterruptState = CoreInterruptState;
 fn get_test_iter() -> impl Iterator<Item = &'static KernelTestDescription> {
     #[cfg(not(feature = "test-tests"))]
     {
-        get_kernel_tests!(wasabi_kernel)
+        get_kernel_tests!(wasabi_kernel, wfs)
     }
     #[cfg(feature = "test-tests")]
     {
-        get_kernel_tests!(wasabi_kernel, testing_tests)
+        get_kernel_tests!(wasabi_kernel, testing_tests, wfs)
     }
 }
 
