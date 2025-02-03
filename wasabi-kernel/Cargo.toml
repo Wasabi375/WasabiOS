@@ -9,7 +9,7 @@ default = []
 no-color = ["logger/no-color"]  
 no-unicode-log = ["shared/no-unicode-log"]
 mem-stats = [ "dep:histogram" ]
-test = ["dep:testing", "shared/test"]
+test = ["dep:testing"]
 mem-backed-guard-page = []  
 
 

@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 testing-derive = { path = "derive" }
-shared = { path = "../shared", features = ["test"] }
+shared = { path = "../shared" }
 staticvec = { path = "../staticvec" }
 
 x86_64.workspace = true
