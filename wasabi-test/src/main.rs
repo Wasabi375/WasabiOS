@@ -1,4 +1,4 @@
-//! Kernel tests
+//! Kernel test
 //!
 //! The test kernel runs in 2 distinct modes. With or without serial control.
 //! The test process can be controlled via simple commands sent on the COM2
@@ -96,6 +96,7 @@ extern crate alloc;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
+use ::testing::description::get_kernel_tests;
 use alloc::{boxed::Box, string::String, vec::Vec};
 use bootloader_api::BootInfo;
 use core::{
@@ -108,7 +109,7 @@ use core::{
 use itertools::Itertools;
 use shared::sync::{barrier::Barrier, lockcell::LockCell};
 use testing::{
-    description::{KernelTestDescription, KernelTestFunction, TestExitState, KERNEL_TESTS},
+    description::{KernelTestDescription, KernelTestFunction, TestExitState},
     multiprocessor::DataBarrier,
 };
 use uart_16550::SerialPort;
@@ -120,7 +121,7 @@ use wasabi_kernel::{
         page_table::PageTable,
     },
     serial::SERIAL2,
-    testing::{panic::use_custom_panic_handler, qemu},
+    testing::{self, panic::use_custom_panic_handler, qemu},
     KernelConfig,
 };
 
@@ -173,6 +174,10 @@ static TEST_MP_SUCCESS: AtomicBool = AtomicBool::new(true);
 static TEST_END_BARRIER: Barrier =
     Barrier::new(u32::max_value()).with_target_ordering(Ordering::Acquire);
 static TESTING_CORE_INTERRUPT_STATE: CoreInterruptState = CoreInterruptState;
+
+fn get_test_iter() -> impl Iterator<Item = &'static KernelTestDescription> {
+    get_kernel_tests!(wasabi_test, wasabi_kernel)
+}
 
 fn init_mp() {
     testing::multiprocessor::init_interrupt_state(
@@ -315,14 +320,11 @@ fn run_tests(serial: &mut SerialPort) -> bool {
 
 fn run_single_test(serial: &mut SerialPort, test_to_run: usize, panicing: bool) -> bool {
     info!("Running isolated test");
-    let focus_only = KERNEL_TESTS.iter().any(|t| t.focus);
+    let focus_only = get_test_iter().any(|t| t.focus);
 
     let mut test_number = 0;
 
-    for module in &KERNEL_TESTS
-        .iter()
-        .group_by(|desc| desc.test_location.module)
-    {
+    for module in &get_test_iter().chunk_by(|desc| desc.test_location.module) {
         for test in module.1 {
             if (test.expected_exit == TestExitState::Panic) != panicing {
                 continue;
@@ -342,7 +344,7 @@ fn run_single_test(serial: &mut SerialPort, test_to_run: usize, panicing: bool) 
             info!("Running test in module {}", module.0);
             let _ = serial_line!(serial, "start test {test_number}");
 
-            let success = run_test_bsp(test, panicing);
+            let success = run_test_bsp(&test, panicing);
             if success {
                 let _ = serial_line!(serial, "test succeeded");
             } else {
@@ -356,9 +358,8 @@ fn run_single_test(serial: &mut SerialPort, test_to_run: usize, panicing: bool) 
 }
 
 fn count_tests(expect_panic: bool) -> usize {
-    let focus_only = KERNEL_TESTS.iter().any(|t| t.focus);
-    KERNEL_TESTS
-        .iter()
+    let focus_only = get_test_iter().any(|t| t.focus);
+    get_test_iter()
         // if there are focused tests, only count those
         .filter(|t| t.focus == focus_only)
         // skip tests that are ignored, unless they are also focused
@@ -369,8 +370,7 @@ fn count_tests(expect_panic: bool) -> usize {
 }
 
 fn count_ignored(expect_panic: bool) -> usize {
-    KERNEL_TESTS
-        .iter()
+    get_test_iter()
         // count tests that are ignored (focused tests are not counted)
         .filter(|t| t.ignore && !t.focus)
         // filter based on expected exit state
@@ -405,14 +405,11 @@ fn run_tests_with_serial(serial: &mut SerialPort, start_at: usize) -> bool {
     let mut total_count = 0;
     let mut total_success = 0;
 
-    let focus_only = KERNEL_TESTS.iter().any(|t| t.focus);
+    let focus_only = get_test_iter().any(|t| t.focus);
 
     let mut test_number = 0;
 
-    for module in &KERNEL_TESTS
-        .iter()
-        .group_by(|desc| desc.test_location.module)
-    {
+    for module in &get_test_iter().chunk_by(|desc| desc.test_location.module) {
         let mut count = 0;
         let mut success = 0;
 
@@ -440,7 +437,7 @@ fn run_tests_with_serial(serial: &mut SerialPort, start_at: usize) -> bool {
             let start_confirmation = read_line(serial);
             assert_eq!(start_confirmation.as_slice(), b"start test");
 
-            if run_test_bsp(test, false) {
+            if run_test_bsp(&test, false) {
                 success += 1;
                 let _ = serial_line!(serial, "test succeeded");
                 debug!("send test succeded");
@@ -485,12 +482,9 @@ fn run_tests_no_serial() -> bool {
     let mut total_count = 0;
     let mut total_success = 0;
 
-    let focus_only = KERNEL_TESTS.iter().any(|t| t.focus);
+    let focus_only = get_test_iter().any(|t| t.focus);
 
-    for module in &KERNEL_TESTS
-        .iter()
-        .group_by(|desc| desc.test_location.module)
-    {
+    for module in &get_test_iter().chunk_by(|desc| desc.test_location.module) {
         info!("Running tests in module {}", module.0);
         let mut count = 0;
         let mut success = 0;
@@ -506,7 +500,7 @@ fn run_tests_no_serial() -> bool {
                 continue;
             }
             count += 1;
-            if run_test_bsp(test, false) {
+            if run_test_bsp(&test, false) {
                 success += 1;
             }
         }
@@ -735,6 +729,8 @@ fn run_panicing_test(test: &KernelTestDescription) -> bool {
 
     false
 }
+
+testing::description::kernel_test_setup!();
 
 #[cfg(feature = "test-tests")]
 mod test_tests {

@@ -303,3 +303,6 @@ macro_rules! entry_point {
         bootloader_api::entry_point!(__impl_kernel_start, config = &BOOTLOADER_CONFIG);
     };
 }
+
+#[cfg(feature = "test")]
+testing::description::kernel_test_setup!();

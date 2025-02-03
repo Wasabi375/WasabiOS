@@ -9,6 +9,9 @@ use linkme::distributed_slice;
 
 use crate::{multiprocessor::DataBarrier, KernelTestError};
 
+pub use testing_derive::get_kernel_tests;
+pub use testing_derive::kernel_test_setup;
+
 // TODO use Termination trait as return type?
 /// Function signature used for kernel test functions
 pub type KernelTestFn = fn() -> Result<(), KernelTestError>;
@@ -40,6 +43,8 @@ pub enum TestExitState {
 /// The source code location of a test function
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
+    /// the crate name of the source location
+    pub crate_name: &'static str,
     /// module of the source location
     pub module: &'static str,
     /// file of the source location
@@ -100,7 +105,3 @@ pub struct KernelTestDescription {
     /// If set, this test will not fail if a page table mapping leak is detected
     pub allow_mapping_leak: bool,
 }
-
-/// The distributed slice, collecting all kernel testss marked with `#[kernel_test]`
-#[distributed_slice]
-pub static KERNEL_TESTS: [KernelTestDescription] = [..];

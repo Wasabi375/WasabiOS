@@ -2,10 +2,11 @@ use proc_macro2::{Ident, Punct};
 use syn::{
     ext::IdentExt,
     parse::{Parse, ParseStream},
+    punctuated::Punctuated,
     Error, Expr, Result, Token,
 };
 
-pub struct Args {
+pub struct TestArgs {
     pub name: Option<Expr>,
     pub expected_exit: Option<Expr>,
     pub focus: bool,
@@ -17,7 +18,7 @@ pub struct Args {
     pub allow_mapping_leak: bool,
 }
 
-impl Parse for Args {
+impl Parse for TestArgs {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut name = None;
         let mut expected_exit = None;
@@ -141,7 +142,7 @@ impl Parse for Args {
             }
         }
 
-        Ok(Args {
+        Ok(TestArgs {
             name,
             expected_exit,
             focus,
@@ -152,5 +153,14 @@ impl Parse for Args {
             allow_heap_leak,
             allow_mapping_leak,
         })
+    }
+}
+
+pub struct CrateList(pub Punctuated<Ident, Token![,]>);
+
+impl Parse for CrateList {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let punctuated = input.parse_terminated(Ident::parse, Token![,])?;
+        Ok(CrateList(punctuated))
     }
 }
