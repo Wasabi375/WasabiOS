@@ -410,7 +410,14 @@ impl<I: InterruptState> UnsafeTicketLock<I> {
     /// # Safety
     ///
     /// must only be called if the current execution context holds the lock.
+    #[track_caller]
     pub unsafe fn unlock(&self) {
+        debug_assert_eq!(
+            self.owner.load(Ordering::Acquire),
+            I::s_core_id().0 as u16,
+            "lockcell not locked by current core"
+        );
+
         self.owner.store(!0, Ordering::Release);
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
 
