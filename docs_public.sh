@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 cargodoc() {
-cargo tree --depth 1 -e normal --prefix none | cut -d' ' -f1 | xargs printf -- '-p %s\n' | xargs cargo doc --features test --no-deps 
+cargo tree --depth 1 -e normal --prefix none | cut -d' ' -f1,2 --output-delimiter="@" | sed "s/@v/@/g" | xargs printf -- '-p %s\n' | xargs cargo doc --features test --no-deps 
 }
 
 

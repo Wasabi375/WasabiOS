@@ -321,6 +321,7 @@ impl Profile {
 pub enum WorkspacePackage {
     WasabiKernel,
     WasabiTest,
+    Wfs,
     SharedDerive,
     Shared,
     Logger,
