@@ -195,7 +195,7 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[cfg_attr(feature = "test", allow(unreachable_code, unused_variables))]
 fn panic_impl(info: &PanicInfo) -> ! {
-    // FIXME: this is running in an endless loop if there are no aps
+    // TODO this is running in an endless loop if there are no aps
     let core_disable_result = if IN_PANIC.load(Ordering::Acquire) {
         error!(target: "PANIC", "panic in panic! {info:?}");
         CoreDisableResult::AllDisabled

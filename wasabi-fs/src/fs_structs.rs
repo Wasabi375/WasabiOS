@@ -1,5 +1,5 @@
 use core::{
-    default,
+    default, fmt,
     marker::PhantomData,
     mem::size_of,
     num::{NonZeroU16, NonZeroU64, NonZeroU8},
@@ -101,6 +101,19 @@ impl FileId {
     pub fn get(self) -> u64 {
         self.0.to_native().get()
     }
+
+    pub const MAX: FileId = unsafe {
+        // Safety: MAX - 1 is a valid non-max
+        FileId(LittleEndian::from_bits(NonMaxU64::new_unchecked(
+            (u64::MAX - 1).to_le(),
+        )))
+    };
+}
+
+impl fmt::Display for FileId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.to_native().fmt(f)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,13 +132,17 @@ pub enum FileType {
 pub struct Timestamp(LittleEndian<u64>);
 
 impl Timestamp {
+    pub const fn zero() -> Self {
+        Timestamp(LittleEndian::from_bits(0))
+    }
+
     pub fn get(self) -> u64 {
         self.0.into()
     }
 }
 
 bitflags! {
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Perm: u8 {
         const EXECUTE = 1 ;
         const WRITE = 1 << 1;
@@ -138,10 +155,10 @@ const I_NODE_MAX_NAME_LEN: usize = 40;
 #[repr(C)]
 pub struct FileNode {
     pub id: FileId,
-    pub parent: FileId,
+    pub parent: Option<FileId>,
     pub typ: FileType,
     pub permissions: [Perm; 4],
-    _unused: [u8; 3],
+    pub _unused: [u8; 3],
     pub size: u64,
     pub created_at: Timestamp,
     pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
@@ -248,20 +265,26 @@ impl Default for MainTransientHeader {
     }
 }
 
+pub(crate) const LEAVE_MAX_FILE_COUNT: usize = 6;
+const_assert!(LEAVE_MAX_FILE_COUNT % 2 == 0);
+
+pub(crate) const NODE_MAX_CHILD_COUNT: usize = 30;
+const_assert!(NODE_MAX_CHILD_COUNT % 2 == 0);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C, u8)]
 pub enum TreeNode {
     Leave {
-        parent: NodePointer<TreeNode>,
-        files: StaticVec<FileNode, 6, u8>,
+        parent: NodePointer<TreeNode>, // TODO do I need the parent pointer?
+        files: StaticVec<FileNode, LEAVE_MAX_FILE_COUNT, u8>,
     },
     Node {
         /// The parent of this Node or `None` if this is the root node
-        parent: Option<NodePointer<TreeNode>>,
+        parent: Option<NodePointer<TreeNode>>, // TODO do I need the parent pointer?
         /// a list of [TreeNode] pointers and their maximum [FileId] value.
         ///
         /// `children[i].0 == children[i].1.follow().max`
-        children: StaticVec<(FileId, NodePointer<TreeNode>), 30, u8>,
+        children: StaticVec<(FileId, NodePointer<TreeNode>), NODE_MAX_CHILD_COUNT, u8>,
     },
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);

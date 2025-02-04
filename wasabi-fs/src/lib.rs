@@ -1,6 +1,6 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
-#![feature(assert_matches, slice_take)]
+#![feature(assert_matches, allocator_api, negative_impls, slice_take)]
 #![allow(unused, dead_code)] // TODO temp
 
 use core::{
@@ -23,6 +23,7 @@ pub mod existing_fs_check;
 pub mod fs;
 pub mod fs_structs;
 pub mod interface;
+pub mod mem_tree;
 
 /// Logical Block Address
 #[repr(transparent)]
@@ -156,6 +157,8 @@ impl BlockGroup {
 pub type BlockSlice = [u8; BLOCK_SIZE];
 
 /// The size of any block used to store data on the disc
+// TODO do I want to/should I increase this to 4KiB/1Page
+//  also ensure all fs_structs sizes are properly updated
 pub const BLOCK_SIZE: usize = 512;
 
 /// Calculate the number of BLOCKs required for `bytes` memory.
