@@ -909,7 +909,7 @@ mod test_mem_only {
         }
     }
 
-    #[kernel_test(allow_heap_leak)] // TODO memory leak
+    #[kernel_test]
     fn test_insert_single() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
 
@@ -943,7 +943,7 @@ mod test_mem_only {
         Ok(())
     }
 
-    #[kernel_test(allow_heap_leak)] // TODO memory leak
+    #[kernel_test]
     fn test_insert_no_split() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
 
@@ -990,7 +990,7 @@ mod test_mem_only {
         Ok(())
     }
 
-    #[kernel_test(allow_heap_leak)] // TODO memory leak
+    #[kernel_test]
     fn test_insert_split_root() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
 
@@ -1070,7 +1070,7 @@ mod test_mem_only {
         Ok(())
     }
 
-    #[kernel_test(allow_heap_leak)] // TODO memory leak
+    #[kernel_test]
     fn test_insert_split_node_insert_in_root() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
 
@@ -1108,7 +1108,7 @@ mod test_mem_only {
         Ok(())
     }
 
-    #[kernel_test(allow_heap_leak)] // TODO memory leak
+    #[kernel_test]
     fn test_insert_100_files() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
 
@@ -1143,7 +1143,7 @@ mod test_mem_only {
         Ok(())
     }
 
-    #[kernel_test(allow_heap_leak)] // TODO memory leak
+    #[kernel_test]
     fn test_insert_duplicate() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
 
@@ -1168,7 +1168,7 @@ mod test_mem_only {
         Ok(())
     }
 
-    #[kernel_test(allow_heap_leak)] // TODO memory leak
+    #[kernel_test]
     fn test_insert_duplicate_no_override() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
 
