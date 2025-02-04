@@ -120,14 +120,6 @@ impl<I: InterruptState> MemTree<I> {
         unsafe { &*self.root.get() }
     }
 
-    /// Create an iterator over all nodes.
-    ///
-    /// This iterator returns all resolved [MemTreeNode]s from left to right,
-    /// one level at a time, e.g. root, first node in root, second node in root, leaves
-    fn iter_nodes(&self) -> MemTreeNodeIter<'_, I> {
-        MemTreeNodeIter::new(self)
-    }
-
     /// Return the leave that should contain `id` if present.
     ///
     /// The nodes are locked based on [LockStrategy]
@@ -211,32 +203,6 @@ impl<I: InterruptState> MemTree<I> {
                 break;
             }
         }
-    }
-
-    fn assert_valid(&self) {
-        self.root_lock.lock();
-
-        // Safety: we have the root lock
-        let root = unsafe { self.get_root().as_ref().unwrap() };
-
-        root.assert_valid(None);
-
-        unsafe {
-            // Safety: locked above
-            self.root_lock.unlock();
-        }
-
-        // check all leaves are on the same level
-        let mut found_leave = false;
-        for node in self.iter_nodes() {
-            match node.deref() {
-                MemTreeNode::Node { .. } => {
-                    assert!(!found_leave);
-                }
-                MemTreeNode::Leave { .. } => found_leave = true,
-            }
-        }
-        assert!(found_leave);
     }
 
     pub fn find<D: BlockDevice>(
@@ -554,6 +520,43 @@ impl<I: InterruptState> MemTree<I> {
     }
 }
 
+#[cfg(feature = "test")]
+impl<I: InterruptState> MemTree<I> {
+    /// Create an iterator over all nodes.
+    ///
+    /// This iterator returns all resolved [MemTreeNode]s from left to right,
+    /// one level at a time, e.g. root, first node in root, second node in root, leaves
+    fn iter_nodes(&mut self) -> MemTreeNodeIter<'_, I> {
+        MemTreeNodeIter::new(self)
+    }
+
+    fn assert_valid(&mut self) {
+        self.root_lock.lock();
+
+        // Safety: we have the root lock
+        let root = unsafe { self.get_root().as_ref().unwrap() };
+
+        root.assert_valid(None);
+
+        unsafe {
+            // Safety: locked above
+            self.root_lock.unlock();
+        }
+
+        // check all leaves are on the same level
+        let mut found_leave = false;
+        for node in self.iter_nodes() {
+            match node {
+                MemTreeNode::Node { .. } => {
+                    assert!(!found_leave);
+                }
+                MemTreeNode::Leave { .. } => found_leave = true,
+            }
+        }
+        assert!(found_leave);
+    }
+}
+
 pub(crate) enum MemTreeNode<I> {
     Node {
         parent: Option<NonNull<MemTreeNode<I>>>,
@@ -655,7 +658,10 @@ impl<I: InterruptState> MemTreeNode<I> {
             MemTreeNode::Leave { parent, .. } => parent,
         }
     }
+}
 
+#[cfg(feature = "test")]
+impl<I: InterruptState> MemTreeNode<I> {
     fn assert_valid(&self, parent: Option<&MemTreeNode<I>>) {
         let lock = self.get_lock();
         lock.lock();
@@ -881,7 +887,7 @@ mod test_mem_only {
 
     #[kernel_test(allow_heap_leak)] // TODO memory leak
     fn test_insert_single() -> Result<(), KernelTestError> {
-        let tree = create_empty_tree();
+        let mut tree = create_empty_tree();
 
         tree.insert(&TestBlockDevice, create_file_node(9), true)
             .tunwrap()?;
@@ -915,7 +921,7 @@ mod test_mem_only {
 
     #[kernel_test(allow_heap_leak)] // TODO memory leak
     fn test_insert_no_split() -> Result<(), KernelTestError> {
-        let tree = create_empty_tree();
+        let mut tree = create_empty_tree();
 
         tree.insert(&TestBlockDevice, create_file_node(9), true)
             .tunwrap()?;
@@ -943,7 +949,7 @@ mod test_mem_only {
             files,
             dirty,
             lock: _,
-        } = root.deref()
+        } = root
         {
             t_assert!(parent.is_none());
             t_assert_eq!(
@@ -962,7 +968,7 @@ mod test_mem_only {
 
     #[kernel_test(allow_heap_leak)] // TODO memory leak
     fn test_insert_split_root() -> Result<(), KernelTestError> {
-        let tree = create_empty_tree();
+        let mut tree = create_empty_tree();
 
         tree.insert(&TestBlockDevice, create_file_node(67), true)
             .tunwrap()?;
@@ -997,7 +1003,7 @@ mod test_mem_only {
         let MemTreeNode::Node {
             children: root_children,
             ..
-        } = root.deref()
+        } = root
         else {
             tfail!("Expected Node at root");
         };
@@ -1012,7 +1018,7 @@ mod test_mem_only {
         let left_leave = nodes.next().texpect("Failed to find left leave")?;
         let MemTreeNode::Leave {
             files: left_files, ..
-        } = left_leave.deref()
+        } = left_leave
         else {
             tfail!("Expected left leave");
         };
@@ -1025,7 +1031,7 @@ mod test_mem_only {
         let right_leave = nodes.next().texpect("Failed to find right leave")?;
         let MemTreeNode::Leave {
             files: right_files, ..
-        } = right_leave.deref()
+        } = right_leave
         else {
             tfail!("Expected right leave");
         };
@@ -1042,7 +1048,7 @@ mod test_mem_only {
 
     #[kernel_test(allow_heap_leak)] // TODO memory leak
     fn test_insert_split_node_insert_in_root() -> Result<(), KernelTestError> {
-        let tree = create_empty_tree();
+        let mut tree = create_empty_tree();
 
         tree.insert(&TestBlockDevice, create_file_node(67), true)
             .tunwrap()?;
@@ -1080,7 +1086,7 @@ mod test_mem_only {
 
     #[kernel_test(allow_heap_leak)] // TODO memory leak
     fn test_insert_100_files() -> Result<(), KernelTestError> {
-        let tree = create_empty_tree();
+        let mut tree = create_empty_tree();
 
         let file_ids: &[u64] = &[
             743, 152, 983, 284, 621, 847, 519, 366, 215, 790, 488, 951, 104, 325, 876, 267, 638,
@@ -1097,17 +1103,16 @@ mod test_mem_only {
             tree.assert_valid();
         }
 
-        let file_count_in_tree = tree
+        let file_count_in_tree: usize = tree
             .iter_nodes()
             .filter_map(|node| {
-                if let MemTreeNode::Leave { files, .. } = node.deref() {
-                    Some(files.clone())
+                if let MemTreeNode::Leave { files, .. } = node {
+                    Some(files.len())
                 } else {
                     None
                 }
             })
-            .flatten()
-            .count();
+            .sum();
 
         t_assert_eq!(file_count_in_tree, file_ids.len());
 
@@ -1116,7 +1121,7 @@ mod test_mem_only {
 
     #[kernel_test(allow_heap_leak)] // TODO memory leak
     fn test_insert_duplicate() -> Result<(), KernelTestError> {
-        let tree = create_empty_tree();
+        let mut tree = create_empty_tree();
 
         tree.insert(&TestBlockDevice, create_file_node(12), true)
             .tunwrap()?;
@@ -1141,7 +1146,7 @@ mod test_mem_only {
 
     #[kernel_test(allow_heap_leak)] // TODO memory leak
     fn test_insert_duplicate_no_override() -> Result<(), KernelTestError> {
-        let tree = create_empty_tree();
+        let mut tree = create_empty_tree();
 
         tree.insert(&TestBlockDevice, create_file_node(12), true)
             .tunwrap()?;
