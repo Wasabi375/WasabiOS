@@ -14,10 +14,12 @@ testing = { path = "../testing", optional = true }
 
 bit_field.workspace = true
 bitflags.workspace = true
+crossbeam-epoch.workspace = true
 linkme.workspace = true
 log.workspace = true
 nonmax.workspace = true
+simple_endian.workspace = true
 static_assertions.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
-simple_endian.workspace = true
+

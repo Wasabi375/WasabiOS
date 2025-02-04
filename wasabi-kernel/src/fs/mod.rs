@@ -1,5 +1,6 @@
 //! Module for filesystem related functionality
 #![allow(missing_docs)]
+#![allow(unused)]
 
 use alloc::vec::Vec;
 use path::{Path, PathBuf};
