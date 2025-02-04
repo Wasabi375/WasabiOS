@@ -213,7 +213,7 @@ impl<I: InterruptState> MemTree<I> {
         }
     }
 
-    pub fn assert_valid(&self) {
+    fn assert_valid(&self) {
         self.root_lock.lock();
 
         // Safety: we have the root lock
@@ -225,6 +225,18 @@ impl<I: InterruptState> MemTree<I> {
             // Safety: locked above
             self.root_lock.unlock();
         }
+
+        // check all leaves are on the same level
+        let mut found_leave = false;
+        for node in self.iter_nodes() {
+            match node.deref() {
+                MemTreeNode::Node { .. } => {
+                    assert!(!found_leave);
+                }
+                MemTreeNode::Leave { .. } => found_leave = true,
+            }
+        }
+        assert!(found_leave);
     }
 
     pub fn find<D: BlockDevice>(
