@@ -655,9 +655,13 @@ impl<I: InterruptState> MemTreeNode<I> {
         //        }
     }
 
-    fn dirty(&self) -> bool {
+    fn has_dirty_leaves(&self) -> bool {
         match self {
-            MemTreeNode::Node { dirty, .. } => *dirty,
+            MemTreeNode::Node {
+                dirty,
+                dirty_children,
+                ..
+            } => *dirty || *dirty_children,
             MemTreeNode::Leave { dirty, .. } => *dirty,
         }
     }
@@ -815,14 +819,16 @@ impl<I: InterruptState> MemTreeLink<I> {
     ///
     /// Return the in memory representation of the [MemTreeNode] or None
     /// if there was none.
-    ///
-    /// # Safety
-    ///
-    /// The caller must gurantee that no other reference to the underlying data exists.
-    /// References can be obtained using [Self::as_ref] and [Self::as_mut].
-    /// The caller gurantees that the necessary locks are held
-    unsafe fn drop_in_mem(&mut self, tree: &mut MemTree<I>) {
-        todo!()
+    fn drop_in_mem(&mut self, tree: &mut MemTree<I>) {
+        let Some(node) = self.node.as_mut() else {
+            return;
+        };
+
+        if node.has_dirty_leaves() {
+            panic!("Can drop in mem representation of dirty sub-tree");
+        }
+
+        self.node = None;
     }
 
     /// Get a reference to the [MemTreeNode]
