@@ -99,3 +99,83 @@ pub trait BlockDevice {
         }
     }
 }
+
+#[cfg(feature = "test")]
+pub mod test {
+    use alloc::boxed::Box;
+
+    use thiserror::Error;
+
+    use super::BlockDevice;
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct TestBlockDevice;
+
+    #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+    #[error("Test Block device should never be accessed")]
+    pub struct TestBlockDeviceError;
+
+    impl BlockDevice for TestBlockDevice {
+        type BlockDeviceError = TestBlockDeviceError;
+
+        fn max_block_count(&self) -> Result<u64, Self::BlockDeviceError> {
+            Ok(0)
+        }
+
+        fn read_block(
+            &self,
+            lba: crate::LBA,
+        ) -> Result<Box<crate::BlockSlice>, Self::BlockDeviceError> {
+            Err(TestBlockDeviceError)
+        }
+
+        fn read_blocks(
+            &self,
+            start: crate::LBA,
+            block_count: u64,
+        ) -> Result<Box<[u8]>, Self::BlockDeviceError> {
+            Err(TestBlockDeviceError)
+        }
+
+        fn write_block(
+            &mut self,
+            lba: crate::LBA,
+            data: core::ptr::NonNull<crate::BlockSlice>,
+        ) -> Result<(), Self::BlockDeviceError> {
+            Err(TestBlockDeviceError)
+        }
+
+        fn write_blocks(
+            &mut self,
+            start: crate::LBA,
+            // TODO can I use NonNull<[BlockSlice]> instead?
+            data: core::ptr::NonNull<[u8]>,
+        ) -> Result<(), Self::BlockDeviceError> {
+            Err(TestBlockDeviceError)
+        }
+
+        fn read_block_atomic(
+            &self,
+            lba: crate::LBA,
+        ) -> Result<Box<crate::BlockSlice>, Self::BlockDeviceError> {
+            Err(TestBlockDeviceError)
+        }
+
+        fn write_block_atomic(
+            &mut self,
+            lba: crate::LBA,
+            data: core::ptr::NonNull<crate::BlockSlice>,
+        ) -> Result<(), Self::BlockDeviceError> {
+            Err(TestBlockDeviceError)
+        }
+
+        fn compare_exchange_block(
+            &mut self,
+            lba: crate::LBA,
+            current: core::ptr::NonNull<crate::BlockSlice>,
+            new: core::ptr::NonNull<crate::BlockSlice>,
+        ) -> Result<Result<(), Box<crate::BlockSlice>>, Self::BlockDeviceError> {
+            Err(TestBlockDeviceError)
+        }
+    }
+}
