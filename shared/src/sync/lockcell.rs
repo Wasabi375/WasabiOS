@@ -395,7 +395,7 @@ impl<I: InterruptState> UnsafeTicketLock<I> {
         while self.current_ticket.load(Ordering::SeqCst) != ticket {
             let owner = self.owner.load(Ordering::Acquire);
             if owner != !0 && owner == I::s_core_id().0 as u16 {
-                panic!("Deadlock detected");
+                panic!("Deadlock detected. Lock already taken by this core");
             }
             spin_loop();
         }
@@ -412,12 +412,6 @@ impl<I: InterruptState> UnsafeTicketLock<I> {
     /// must only be called if the current execution context holds the lock.
     #[track_caller]
     pub unsafe fn unlock(&self) {
-        debug_assert_eq!(
-            self.owner.load(Ordering::Acquire),
-            I::s_core_id().0 as u16,
-            "lockcell not locked by current core"
-        );
-
         self.owner.store(!0, Ordering::Release);
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
 
@@ -517,12 +511,14 @@ impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
         &mut *self.data.get()
     }
 
+    #[track_caller]
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
         assert!(core::ptr::eq(self, guard.lockcell));
 
         self.unlock_no_guard()
     }
 
+    #[track_caller]
     unsafe fn unlock_no_guard(&self) {
         self.lock.unlock();
     }
@@ -853,11 +849,13 @@ impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T,
         self.lockcell.get_mut().assume_init_mut()
     }
 
+    #[track_caller]
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
         assert!(core::ptr::eq(self, guard.lockcell));
         self.lockcell.unlock_no_guard();
     }
 
+    #[track_caller]
     unsafe fn unlock_no_guard(&self) {
         self.lockcell.unlock_no_guard();
     }
