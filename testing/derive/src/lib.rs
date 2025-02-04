@@ -27,6 +27,8 @@ use syn::parse_macro_input;
 ///     The test is ignored
 /// * multiprocessor|mp
 ///     The test is using multiple cores, an can take a [DataBarrier] input parameter
+/// * allow_{}_leak frame/page/heap/mapping
+///     The test is considered successfull even if there is a memory leak of the given type
 ///
 ///
 /// # Setup
