@@ -5,7 +5,6 @@
 use core::any::Any;
 
 use alloc::boxed::Box;
-use linkme::distributed_slice;
 
 use crate::{multiprocessor::DataBarrier, KernelTestError};
 
