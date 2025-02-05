@@ -220,7 +220,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         device: &D,
         id: FileId,
-    ) -> Result<Option<FileNode>, D::BlockDeviceError> {
+    ) -> Result<Option<Arc<FileNode>>, D::BlockDeviceError> {
         let leave: &_ = self.find_leave(device, id, AccessMode::Readonly)?;
         let MemTreeNode::Leave { files, lock, .. } = leave else {
             panic!("Find leave should always return a leave node");
@@ -238,7 +238,7 @@ impl<I: InterruptState> MemTree<I> {
     pub fn insert<D: BlockDevice>(
         &self,
         device: &D,
-        file: FileNode,
+        file: Arc<FileNode>,
         create_only: bool, // TODO do I want to create to functions here? Insert/update
     ) -> Result<(), MemTreeError<D>> {
         let leave = self
@@ -615,10 +615,7 @@ pub(crate) enum MemTreeNode<I> {
         parent: Option<NonNull<MemTreeNode<I>>>,
 
         /// files sorted based on their id
-        ///
-        /// PERF should I create some indirection here? Moving files within this list to keep this
-        /// sorted might be slow
-        files: StaticVec<FileNode, LEAVE_MAX_FILE_COUNT>,
+        files: StaticVec<Arc<FileNode>, LEAVE_MAX_FILE_COUNT>,
         /// set if any file is modfied.
         dirty: bool,
         /// lock for updating this node
@@ -854,7 +851,7 @@ impl<I: InterruptState> MemTreeLink<I> {
 
 #[cfg(feature = "test")]
 mod test_mem_only {
-    use alloc::{boxed::Box, vec::Vec};
+    use alloc::{boxed::Box, sync::Arc, vec::Vec};
     use core::{
         ops::Deref,
         sync::atomic::{AtomicBool, AtomicPtr},
@@ -897,8 +894,8 @@ mod test_mem_only {
         }
     }
 
-    fn create_file_node(id: u64) -> FileNode {
-        FileNode {
+    fn create_file_node(id: u64) -> Arc<FileNode> {
+        Arc::new(FileNode {
             id: FileId::try_new(id).unwrap(),
             parent: None,
             typ: FileType::File,
@@ -912,7 +909,7 @@ mod test_mem_only {
                 LBA::new(0).unwrap(),
             )),
             name: NodePointer::new(LBA::new(0).unwrap()),
-        }
+        })
     }
 
     #[kernel_test]
