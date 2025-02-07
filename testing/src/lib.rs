@@ -17,6 +17,7 @@ pub mod description;
 pub mod multiprocessor;
 
 /// Error type for Kernel-tests
+// TODO when logging this I should repeat the test name
 #[derive(Error, Clone, Debug, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub enum KernelTestError {
