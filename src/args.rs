@@ -54,6 +54,10 @@ pub struct GdbArgs {
     /// Only print the gdb command instead of executing it
     #[arg(long)]
     pub print_command: bool,
+
+    /// binary to run
+    #[arg(long, default_value = Binary::Kernel)]
+    pub bin: Binary,
 }
 
 /// The different ways to run the kernel
@@ -344,6 +348,31 @@ impl WorkspacePackage {
             }
         }
         output
+    }
+}
+
+/// The binary to run (default Kernel)
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum Binary {
+    #[default]
+    /// The main kernel
+    Kernel,
+    /// The test system
+    Test,
+}
+
+impl Binary {
+    pub fn name(&self) -> &'static OsStr {
+        match self {
+            Binary::Kernel => OsStr::new("wasabi-kernel"),
+            Binary::Test => OsStr::new("wasabi-test"),
+        }
+    }
+}
+
+impl Into<clap::builder::OsStr> for Binary {
+    fn into(self) -> clap::builder::OsStr {
+        self.name().into()
     }
 }
 

@@ -94,8 +94,8 @@ pub async fn latests(args: LatestArgs) -> Result<()> {
 }
 
 pub async fn gdb(args: GdbArgs) -> Result<()> {
-    let bin_name = OsString::from_str("wasabi-kernel").unwrap();
-    let mut path = latest_path(&bin_name, &args.target, &args.profile.unwrap_or_default());
+    let bin_name = args.bin.name();
+    let mut path = latest_path(bin_name, &args.target, &args.profile.unwrap_or_default());
     path.push(bin_name);
 
     let gdb_commands = [
