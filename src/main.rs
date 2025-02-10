@@ -41,7 +41,17 @@ async fn main() -> Result<()> {
     let args = Arguments::parse();
 
     match args.build {
-        BuildCommand::Build(args) => build(args).await?,
+        BuildCommand::Build(mut args) => {
+            if args
+                .run
+                .as_ref()
+                .map(|run_command| run_command.gdb_enabled())
+                .unwrap_or(false)
+            {
+                args.options.features.push(args::Feature::FixedKernelVaddr);
+            }
+            build(args).await?
+        }
         BuildCommand::Latest(args) => latests(args).await?,
         BuildCommand::Clean(args) => clean(args).await?,
         BuildCommand::Check(args) => check(args).await?,
@@ -100,7 +110,8 @@ pub async fn gdb(args: GdbArgs) -> Result<()> {
 
     let gdb_commands = [
         format!("target remote localhost:{}", args.port.unwrap_or(1234)),
-        format!("symbol-file -o 0x8000000000 {}", path.display()),
+        // address is found in wasabi_kernel/src/lib.rs: KERNEL_BINARY_VADDR
+        format!("symbol-file -o 0xff000000000 {}", path.display()),
         format!("break wasabi_kernel::kernel_bsp_entry"),
     ]
     .into_iter()

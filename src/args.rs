@@ -4,8 +4,6 @@ use std::{
     path::PathBuf,
 };
 
-use crate::build::KernelBinary;
-
 /// Runner for WasabiOs
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -56,8 +54,8 @@ pub struct GdbArgs {
     pub print_command: bool,
 
     /// binary to run
-    #[arg(long, default_value = Binary::Kernel)]
-    pub bin: Binary,
+    #[arg(long, default_value = KernelBinary::Wasabi)]
+    pub bin: KernelBinary,
 }
 
 /// The different ways to run the kernel
@@ -69,6 +67,15 @@ pub enum RunCommand {
     /// run kernel tests in qemu
     #[command(alias = "t")]
     Test(TestArgs),
+}
+
+impl RunCommand {
+    pub fn gdb_enabled(&self) -> bool {
+        match self {
+            RunCommand::Run(run_args) => run_args.qemu.gdb,
+            RunCommand::Test(test_args) => test_args.qemu.gdb,
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -351,26 +358,25 @@ impl WorkspacePackage {
     }
 }
 
-/// The binary to run (default Kernel)
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-pub enum Binary {
-    #[default]
-    /// The main kernel
-    Kernel,
+/// The kernel binary to use
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum KernelBinary {
+    /// The default kernel
+    Wasabi,
     /// The test system
     Test,
 }
 
-impl Binary {
+impl KernelBinary {
     pub fn name(&self) -> &'static OsStr {
         match self {
-            Binary::Kernel => OsStr::new("wasabi-kernel"),
-            Binary::Test => OsStr::new("wasabi-test"),
+            KernelBinary::Wasabi => OsStr::new("wasabi-kernel"),
+            KernelBinary::Test => OsStr::new("wasabi-test"),
         }
     }
 }
 
-impl Into<clap::builder::OsStr> for Binary {
+impl Into<clap::builder::OsStr> for KernelBinary {
     fn into(self) -> clap::builder::OsStr {
         self.name().into()
     }
@@ -408,6 +414,7 @@ pub enum Feature {
     TestTests,
     MemBackedGuardPage,
     MemStats,
+    FixedKernelVaddr,
 }
 
 impl Feature {
@@ -419,14 +426,28 @@ impl Feature {
             Feature::TestTests => OsStr::new("test-tests"),
             Feature::MemBackedGuardPage => OsStr::new("mem-backed-guard-page"),
             Feature::MemStats => OsStr::new("mem-stats"),
+            Feature::FixedKernelVaddr => OsStr::new("fixed-kernel-vaddr"),
         }
     }
 
     pub fn used_in(&self, binary: &KernelBinary) -> bool {
         use Feature::*;
         let valid_flags: &[Feature] = match binary {
-            KernelBinary::Wasabi => &[NoUnicodeLog, NoColor, Test, MemBackedGuardPage, MemStats],
-            KernelBinary::Test => &[NoColor, TestTests, MemBackedGuardPage, MemStats],
+            KernelBinary::Wasabi => &[
+                NoUnicodeLog,
+                NoColor,
+                Test,
+                MemBackedGuardPage,
+                MemStats,
+                FixedKernelVaddr,
+            ],
+            KernelBinary::Test => &[
+                NoColor,
+                TestTests,
+                MemBackedGuardPage,
+                MemStats,
+                FixedKernelVaddr,
+            ],
         };
         valid_flags.contains(self)
     }

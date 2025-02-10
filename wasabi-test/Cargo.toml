@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
+fixed-kernel-vaddr = [ "wasabi-kernel/fixed-kernel-vaddr" ]
 no-color = ["wasabi-kernel/no-color"]
 test-tests = []
 mem-backed-guard-page = ["wasabi-kernel/mem-backed-guard-page"]

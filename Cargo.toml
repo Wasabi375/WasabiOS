@@ -73,10 +73,11 @@ x86_64 = { version = "0.15.1", git = "https://github.com/Wasabi375/x86_64", bran
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
 
 # TODO use upstream once new version is released
-# bootloader = { git = "https://github.com/Wasabi375/bootloader", rev = "bf950a4bee82764dac17b5e18f5c82f491c9799e", version = "0.11", default-features = false, features = ["uefi"] }
-bootloader = { version = "0.11.8", default-features = false, features = ["uefi"] }
+bootloader = { git = "https://github.com/Wasabi375/bootloader", branch = "fixed_entry", version = "0.12", default-features = false, features = ["uefi"] }
+# bootloader = { version = "0.12.0", default-features = false, features = ["uefi"] }
 # bootloader = { path = "/home/burkhard/programming/forks/bootloader", default-features = false, features = ["uefi"]}
-bootloader_api = { version = "0.11" }
+# bootloader_api = { version = "0.12" }
+bootloader_api = { git = "https://github.com/Wasabi375/bootloader", branch = "fixed_entry", version = "0.12" }
 
 [profile.dev]
 panic = "abort"

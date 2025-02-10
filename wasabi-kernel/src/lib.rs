@@ -223,6 +223,10 @@ pub struct KernelConfig {
     pub start_aps: bool,
 }
 
+/// The fixed address the kernel is loaded at
+#[cfg(feature = "fixed-kernel-vaddr")]
+pub const KERNEL_BINARY_VADDR: x86_64::VirtAddr = x86_64::VirtAddr::new(0xff0_0000_0000);
+
 /// fills in bootloader configuration that is shared between normal and test mode
 pub const fn bootloader_config_common(
     mut config: bootloader_api::BootloaderConfig,
@@ -230,6 +234,12 @@ pub const fn bootloader_config_common(
     config.mappings.page_table_recursive = Some(Mapping::Dynamic);
     config.mappings.aslr = false;
     config.kernel_stack_size = DEFAULT_STACK_SIZE;
+
+    #[cfg(feature = "fixed-kernel-vaddr")]
+    {
+        config.mappings.kernel_code = Mapping::FixedAddress(KERNEL_BINARY_VADDR.as_u64())
+    }
+
     config
 }
 

@@ -1,32 +1,17 @@
 use crate::{
-    args::{BuildArgs, BuildOptions, CheckArgs, CleanArgs, ExpandArgs, RunCommand},
+    args::{BuildArgs, BuildOptions, CheckArgs, CleanArgs, ExpandArgs, KernelBinary, RunCommand},
     latest_path, run,
     test::test,
 };
 use anyhow::{bail, ensure, Context, Result};
 use cargo_toml::Manifest;
 use std::{
-    ffi::OsStr,
     fs::{remove_dir_all, File},
     io::Write,
     path::{Path, PathBuf},
     process::Stdio,
 };
 use tokio::process::Command;
-
-pub enum KernelBinary {
-    Wasabi,
-    Test,
-}
-
-impl KernelBinary {
-    pub fn name(&self) -> &'static OsStr {
-        match self {
-            KernelBinary::Wasabi => OsStr::new("wasabi-kernel"),
-            KernelBinary::Test => OsStr::new("wasabi-test"),
-        }
-    }
-}
 
 pub async fn check(args: CheckArgs) -> Result<()> {
     check_kernel(KernelBinary::Wasabi, &args.options)
