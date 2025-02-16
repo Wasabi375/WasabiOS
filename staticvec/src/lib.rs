@@ -1,4 +1,9 @@
 //! No std and no alloc vector and strings.
+//!
+//! There is a rust internal compiler error that leads to compiler crashes
+//! on some functions in this crate. The workaround is to add `#![feature(generic_const_exprs)]`
+//! to all crates using those functions.
+//! <https://github.com/rust-lang/rust/issues/133199>
 #![no_std]
 #![allow(
   // Clippy wants every single instance of the word "StaticVec" to be in syntax-highlight
@@ -1617,6 +1622,7 @@ where
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::staticvec;
     /// assert!(staticvec!['a', 'b'].concat(&staticvec!['c', 'd']) == ['a', 'b', 'c', 'd']);
     /// ```
@@ -1656,6 +1662,7 @@ where
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::staticvec;
     /// assert!(staticvec!["a", "b"].concat_clone(&staticvec!["c", "d"]) == ["a", "b", "c", "d"]);
     /// ```
@@ -2151,6 +2158,7 @@ where
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::*;
     /// let v1 = staticvec![Box::new(1), Box::new(2), Box::new(3), Box::new(4), Box::new(5), Box::new(6)];
     /// let t1 = v1.split_at::<0>();
@@ -2305,6 +2313,7 @@ where
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::staticvec;
     /// assert_eq!(
     ///   staticvec![1, 2, 3].symmetric_difference(&staticvec![3, 4, 5]),
@@ -2398,6 +2407,7 @@ where
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::staticvec;
     /// assert_eq!(
     ///   staticvec![1, 2, 3].union(&staticvec![4, 2, 3, 4]),
