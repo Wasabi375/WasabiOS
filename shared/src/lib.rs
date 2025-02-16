@@ -2,6 +2,7 @@
 #![no_std]
 #![feature(
     box_into_inner,
+    const_ops,
     const_trait_impl,
     downcast_unchecked,
     let_chains,
