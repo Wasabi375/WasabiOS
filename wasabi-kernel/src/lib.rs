@@ -312,7 +312,7 @@ macro_rules! entry_point {
             let kernel_main: fn() -> ! = $path;
             $crate::kernel_bsp_entry(boot_info, kernel_conf, kernel_main);
         }
-        bootloader_api::entry_point!(__impl_kernel_start, config = &BOOTLOADER_CONFIG);
+        bootloader_api::entry_point!(__impl_kernel_start, config = $b_conf);
     };
 }
 
