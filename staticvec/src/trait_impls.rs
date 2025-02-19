@@ -368,16 +368,21 @@ where
             iter.as_ptr()
                 .copy_to_nonoverlapping(self.mut_ptr_at_unchecked(old_length), added_length);
             self.set_len(old_length + added_length.try_into().unwrap());
-            // Wrap the values in a MaybeUninit to inhibit their destructors (if any),
-            // then manually drop any excess ones. This is the same kind of "trick" as
-            // is used in `new_from_array`, as you may or may not have noticed.
-            let mut forgotten = MaybeUninit::new(iter);
-            ptr::drop_in_place(
-                forgotten
-                    .assume_init_mut()
-                    .as_mut_slice()
-                    .get_unchecked_mut(N1.min(N2)..N1),
-            );
+
+            let drop_range = N1.min(N2)..iter.len().try_into().unwrap();
+            if !drop_range.is_empty() {
+                // Wrap the values in a MaybeUninit to inhibit their destructors (if any),
+                // then manually drop any excess ones. This is the same kind of "trick" as
+                // is used in `new_from_array`, as you may or may not have noticed.
+                let mut forgotten = MaybeUninit::new(iter);
+
+                ptr::drop_in_place(
+                    forgotten
+                        .assume_init_mut()
+                        .as_mut_slice()
+                        .get_unchecked_mut(drop_range),
+                );
+            }
         }
     }
 
@@ -1246,5 +1251,23 @@ where
         S: Serializer,
     {
         serializer.collect_seq(self)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::StaticVec;
+
+    #[test]
+    fn test_extend_drop_no_panic() {
+        let mut a = StaticVec::<u64, 6, usize>::new();
+        let mut b = StaticVec::<u64, 6, usize>::new();
+
+        a.extend_from_slice(&[1, 2]);
+        b.extend_from_slice(&[3, 4, 5]);
+
+        a.extend(b);
+
+        assert_eq!(a, [1, 2, 3, 4, 5]);
     }
 }
