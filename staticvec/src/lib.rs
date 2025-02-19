@@ -2850,9 +2850,9 @@ impl<const N: usize> StaticVec<u8, N, usize> {
     pub const fn __new_from_const_str(values: &str) -> Self {
         // This works at compile time too, of course, thanks to the `const_panic` feature.
         assert!(
-      values.len() <= N,
-      "Attempted to create a `StaticString` with insufficient capacity from an `&str` literal!"
-    );
+            values.len() <= N,
+            "Attempted to create a `StaticString` with insufficient capacity from an `&str` literal!"
+        );
         Self::new_from_str_data(Self::bytes_to_data(values.as_bytes()), values.len())
     }
 }
