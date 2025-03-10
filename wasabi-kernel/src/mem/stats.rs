@@ -107,7 +107,7 @@ impl HeapStats {
         let bytes = bytes.into();
         trace!("register free: {bytes}");
 
-        assert!(self.used > bytes);
+        assert!(self.used >= bytes, "{} >= {}", self.used, bytes);
         self.used -= bytes;
 
         self.total_free = self.total_free.wrapping_add(bytes);
