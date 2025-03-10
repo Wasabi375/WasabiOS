@@ -518,7 +518,7 @@ impl<T: Send, I: InterruptState> RWLockCell<T> for ReadWriteCell<T, I> {
         // NOTE: because there can be multiple readers, RWLock is allowed
         // in interrupts even if preemtable
         unsafe {
-            // Safety: disabling interrupts is ok, for preemtable locks
+            // Safety: disabling interrupts is false
             I::s_enter_lock(false);
         }
 
@@ -594,9 +594,8 @@ impl<T, I: InterruptState> RWCellInternal<T> for ReadWriteCell<T, I> {
     unsafe fn force_release_read(&self) {
         let previous_count = self.access_count.fetch_sub(1, Ordering::SeqCst);
         assert!(previous_count >= 1);
-        // Safety: this will restore the interrupt state from when we called
-        // enter_lock, so this is safe
-        I::s_exit_lock(!self.preemtable);
+        // NOTE: read does not disable interrupts
+        I::s_exit_lock(false);
     }
 
     fn open_to_read(&self) -> bool {
