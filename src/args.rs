@@ -415,6 +415,7 @@ pub enum Feature {
     MemBackedGuardPage,
     MemStats,
     FixedKernelVaddr,
+    FreezeHeap,
 }
 
 impl Feature {
@@ -427,6 +428,7 @@ impl Feature {
             Feature::MemBackedGuardPage => OsStr::new("mem-backed-guard-page"),
             Feature::MemStats => OsStr::new("mem-stats"),
             Feature::FixedKernelVaddr => OsStr::new("fixed-kernel-vaddr"),
+            Feature::FreezeHeap => OsStr::new("freeze-heap"),
         }
     }
 
@@ -440,6 +442,7 @@ impl Feature {
                 MemBackedGuardPage,
                 MemStats,
                 FixedKernelVaddr,
+                FreezeHeap,
             ],
             KernelBinary::Test => &[
                 NoColor,

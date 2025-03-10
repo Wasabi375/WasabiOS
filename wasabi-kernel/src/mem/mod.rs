@@ -111,6 +111,15 @@ pub enum MemError {
     PageTableMap(#[from] PageTableMapError),
     #[error("Heap allocation failed")]
     AllocError,
+    #[cfg(feature = "freeze-heap")]
+    #[error("Max heap count has already been reached")]
+    MaxHeapCountReached,
+    #[cfg(feature = "freeze-heap")]
+    #[error("The freeze heap still has open allocations and can not be dropped")]
+    HeapNotFullyFreed,
+    #[cfg(feature = "freeze-heap")]
+    #[error("No freeze heap exists")]
+    NoFreezeHeapExists,
 }
 
 impl From<AllocError> for MemError {

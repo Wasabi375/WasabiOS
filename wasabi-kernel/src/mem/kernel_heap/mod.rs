@@ -9,6 +9,11 @@ use log::{debug, error, info, trace, warn};
 #[cfg(feature = "mem-stats")]
 use super::stats::HeapStats;
 
+#[cfg(feature = "freeze-heap")]
+use crate::prelude::ReadWriteCell;
+#[cfg(feature = "freeze-heap")]
+use shared::sync::lockcell::RWLockCell;
+
 use super::{ptr::UntypedPtr, structs::Pages};
 use crate::{
     mem::{
@@ -26,7 +31,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use linked_list_allocator::Heap as LinkedHeap;
-use shared::{sync::lockcell::LockCellInternal, KiB};
+use shared::KiB;
 use x86_64::structures::paging::{PageSize, PageTableFlags, Size4KiB};
 
 /// the size of the kernel heap in bytes
@@ -41,11 +46,12 @@ const KERNEL_HEAP_PAGE_COUNT: u64 = 250;
 
 /// the [KernelHeap]
 // Safety: initialized by [init] before it we use allocated types
-static KERNEL_HEAP: UnwrapTicketLock<KernelHeap> = unsafe { UnwrapTicketLock::new_uninit() };
+static KERNEL_HEAP: UnwrapTicketLock<KernelHeap> =
+    unsafe { UnwrapTicketLock::new_non_preemtable_uninit() };
 
-/// holds ZST for [global_allocator]
+/// The global allocator
 #[global_allocator]
-static GLOBAL_ALLOCATOR: KernelHeapGlobalAllocator = KernelHeapGlobalAllocator;
+static GLOBAL_ALLOCATOR: KernelHeapGlobalAllocator = KernelHeapGlobalAllocator::new();
 
 /// true if the kernel heap is initiaized.
 static KERNEL_HEAP_INIT: AtomicBool = AtomicBool::new(false);
@@ -87,19 +93,17 @@ pub fn init() {
         }
     }
 
-    let mut kernel_lock = KERNEL_HEAP.lock_uninit();
-    unsafe {
+    let mut heap_guard = KERNEL_HEAP.lock_uninit();
+    let heap = unsafe {
         // Safety: we call init right after we move this to static storage
-        kernel_lock.write(KernelHeap::new(pages.into()));
-    }
+        heap_guard.write(KernelHeap::new(pages.into()))
+    };
 
-    // Safety: we hold the uninit_lock so accessing the heap is valid.
-    // we don't use the lock so we can get at the static lifetime
-    let heap: &mut KernelHeap = unsafe { UnwrapTicketLock::get_mut(&KERNEL_HEAP) };
-    if let Err(e) = heap.init() {
+    // Safety: KERNEL_HEAP is a static
+    if let Err(e) = unsafe { heap.init() } {
         panic!("KernelHeap::new(): {e:?}")
     };
-    drop(kernel_lock);
+    drop(heap_guard);
 
     KERNEL_HEAP_INIT.store(true, Ordering::SeqCst);
     debug!(
@@ -114,13 +118,52 @@ pub fn init() {
     }
 
     #[cfg(feature = "mem-stats")]
-    KernelHeap::init_stats(KernelHeap::get());
+    KernelHeap::init_stats(KernelHeap::get(), HeapStats::default());
 
     trace!("kernel init done");
 }
 
-/// ZST for [GlobalAlloc] implementation
-struct KernelHeapGlobalAllocator;
+/// [GlobalAlloc] implementation
+struct KernelHeapGlobalAllocator {
+    #[cfg(feature = "freeze-heap")]
+    freeze_heaps: ReadWriteCell<GlobalHeapFreezeHeaps>,
+}
+
+impl KernelHeapGlobalAllocator {
+    const fn new() -> Self {
+        Self {
+            #[cfg(feature = "freeze-heap")]
+            freeze_heaps: ReadWriteCell::new_non_preemtable(GlobalHeapFreezeHeaps::new()),
+        }
+    }
+}
+
+#[cfg(feature = "freeze-heap")]
+struct GlobalHeapFreezeHeaps {
+    /// number of extra heaps that are in use
+    valid_count: usize,
+
+    /// the extra kernel heaps used by the freeze-heap feature
+    ///
+    /// The last valid heap as indicated by [Self::valid_extra_heap_count]
+    /// is the active heap used by all allocations. If there is no extra heap
+    /// the normal kernel heap is used.
+    ///
+    /// Dealocations are executed by the heap that did the allocation.
+    extra_heaps: [MaybeUninit<TicketLock<KernelHeap>>; Self::MAX_HEAPS],
+}
+
+#[cfg(feature = "freeze-heap")]
+impl GlobalHeapFreezeHeaps {
+    const fn new() -> Self {
+        Self {
+            valid_count: 0,
+            extra_heaps: MaybeUninit::uninit_array(),
+        }
+    }
+
+    const MAX_HEAPS: usize = 8;
+}
 
 unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -135,7 +178,25 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
         // only log if we are using the main heap, logging might not be initialized
         trace!(target: "GlobalAlloc", "allocate {layout:?}");
 
-        match KernelHeap::get().alloc(layout) {
+        #[cfg(not(feature = "freeze-heap"))]
+        let result = KernelHeap::get().alloc(layout);
+        #[cfg(feature = "freeze-heap")]
+        let result = {
+            let freeze_heaps = self.freeze_heaps.read();
+            if freeze_heaps.valid_count > 0 {
+                let active_heap_idx = freeze_heaps.valid_count - 1;
+                unsafe {
+                    // Safety: heap is active based on valid_extra_heap_count
+                    freeze_heaps.extra_heaps[active_heap_idx].assume_init_ref()
+                }
+                .lock()
+                .alloc(layout)
+            } else {
+                KernelHeap::get().alloc(layout)
+            }
+        };
+
+        match result {
             Ok(mem) => unsafe {
                 trace!(target: "GlobalAlloc", "allocating at {:p}", mem);
                 // Safety: [KernelHeap::alloc] returns a valid pointer
@@ -143,7 +204,7 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
                 mem.as_mut()
             },
             Err(err) => {
-                error!("Kernel Heap allocation failed for layout {layout:?}: {err:?}");
+                error!(target: "GlobalAlloc", "Kernel Heap allocation failed for layout {layout:?}: {err:?}");
                 null_mut()
             }
         }
@@ -163,17 +224,174 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
             early_heap::free(ptr, layout);
         }
 
-        // Safety: see safety guarantees of [GlobalAlloc]
-        if let Some(non_null) = unsafe { UntypedPtr::new_from_raw(ptr) } {
+        let ptr = unsafe {
+            // Safety: see safety guarantees of [GlobalAlloc]
+            UntypedPtr::new_from_raw(ptr)
+        };
+        let Some(non_null) = ptr else {
+            error!(target: "GlobalAlloc", "Tried to free null pointer with layout {layout:?}");
+            return;
+        };
+
+        #[cfg(not(feature = "freeze-heap"))]
+        {
             // Safety: see safety guarantees of [GlobalAlloc]
             match unsafe { KernelHeap::get().free(non_null, layout) } {
                 Ok(_) => {}
-                Err(err) => error!("Failed to free {non_null:p} with layout {layout:?}: {err:?}"),
+                Err(err) => {
+                    error!(target: "GlobalAlloc", "Failed to free {non_null:p} with layout {layout:?}: {err:?}");
+                }
             }
-        } else {
-            error!("tried to free null pointer with layout {layout:?}");
+        }
+        #[cfg(feature = "freeze-heap")]
+        {
+            let freeze_heaps = self.freeze_heaps.read();
+            let extras = if freeze_heaps.valid_count > 0 {
+                unsafe {
+                    // Safety: the first `valid_extra_heap_count` heaps are initialized
+                    MaybeUninit::slice_assume_init_ref(
+                        &freeze_heaps.extra_heaps[0..freeze_heaps.valid_count],
+                    )
+                }
+            } else {
+                &[]
+            };
+
+            for allocator in extras {
+                let mut allocator = allocator.lock();
+                // Safety: see safety guarantees of [GlobalAlloc]
+                match unsafe { allocator.free(non_null, layout) } {
+                    Ok(_) => {
+                        return;
+                    }
+                    Err(MemError::PtrNotAllocated(_)) => continue,
+                    Err(err) => {
+                        error!(target: "GlobalAlloc", "Failed to free {non_null:p} with layout {layout:?}: {err:?}");
+                        return;
+                    }
+                }
+            }
+            // Safety: see safety guarantees of [GlobalAlloc]
+            match unsafe { KernelHeap::get().free(non_null, layout) } {
+                Ok(_) => {}
+                Err(err) => {
+                    error!(target: "GlobalAlloc", "Failed to free {non_null:p} with layout {layout:?}: {err:?}");
+                }
+            }
         }
     }
+}
+
+/// Locks the currently active heap and creates a new heap that is used
+/// for any new allocations.
+///
+/// [try_unfreeze_global_heap] can be used to undo this operation.
+#[cfg(feature = "freeze-heap")]
+pub fn freeze_global_heap() -> Result<()> {
+    // must be allocated before we take the freeze_heaps write lock. Otherwise
+    // this leads to a deadlock when we try to allocate the histogram for the stats object
+    let empty_stats = HeapStats::default();
+
+    let mut freeze_heaps = GLOBAL_ALLOCATOR.freeze_heaps.write();
+
+    if freeze_heaps.valid_count == freeze_heaps.extra_heaps.len() {
+        return Err(MemError::MaxHeapCountReached);
+    }
+
+    let pages = PageAllocator::get_for_kernel()
+        .lock()
+        .allocate_pages::<KernelHeapPageSize>(KERNEL_HEAP_PAGE_COUNT)?;
+
+    {
+        let mut page_table = PageTable::get_for_kernel().lock();
+
+        let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
+
+        for page in pages.iter() {
+            let frame = frame_allocator.alloc()?;
+            unsafe {
+                // Safety: we are mapping new unused pages to new unused phys frames
+                page_table
+                    .map_kernel(page, frame, flags, frame_allocator.deref_mut())?
+                    .flush();
+            }
+        }
+    }
+
+    let new_heap = unsafe {
+        // Safety: pages are mapped and we call init right after creation
+        TicketLock::new_non_preemtable(KernelHeap::new(pages))
+    };
+    let heap_id = freeze_heaps.valid_count;
+
+    let new_heap = freeze_heaps.extra_heaps[heap_id].write(new_heap);
+    unsafe {
+        // Safety: new_heap lives in the global allocator which is a static
+        new_heap.lock().init()?;
+    }
+    KernelHeap::init_stats(new_heap, empty_stats);
+
+    freeze_heaps.valid_count += 1;
+
+    log::warn!("Kernel Heap frozen");
+
+    Ok(())
+}
+
+/// Tries to free the active freeze heap.
+///
+/// A freeze heap can be allocated by calling [freeze_global_heap].
+/// This fails if there is no freeze heap or if there are any open allocations
+/// in the current freeze heap.
+#[cfg(feature = "freeze-heap")]
+pub fn try_unfreeze_global_heap() -> Result<()> {
+    use crate::todo_warn;
+
+    let mut freeze_heaps = GLOBAL_ALLOCATOR.freeze_heaps.write();
+
+    if freeze_heaps.valid_count == 0 {
+        return Err(MemError::NoFreezeHeapExists);
+    }
+
+    let to_free_id = freeze_heaps.valid_count - 1;
+
+    let heap = unsafe {
+        // Safety: not yet freed so this should be valid
+        freeze_heaps.extra_heaps[to_free_id].assume_init_read()
+    };
+    let heap = heap.lock();
+
+    if heap.stats().used > 0 {
+        return Err(MemError::HeapNotFullyFreed);
+    }
+    freeze_heaps.valid_count -= 1;
+
+    drop(freeze_heaps);
+
+    // lock and heap must be dropped after the write lock is released. Otherwise
+    // dropping the heap might lead to a deadlock as it tries to access the GlobalAllocator
+    // when trying to drop the Histrogram for the stats object.
+    todo_warn!("Free pages and frames used by freeze heap. Drop for KernelHeap?");
+    drop(heap);
+
+    Ok(())
+}
+
+/// The current number of freeze heaps.
+///
+/// See [freeze_global_heap]
+#[cfg(feature = "freeze-heap")]
+pub fn freeze_heap_count() -> usize {
+    GLOBAL_ALLOCATOR.freeze_heaps.read().valid_count
+}
+
+/// The maximum number of freeze heaps.
+///
+/// See [freeze_global_heap]
+#[cfg(feature = "freeze-heap")]
+pub fn max_freeze_heap_count() -> usize {
+    GlobalHeapFreezeHeaps::MAX_HEAPS
 }
 
 /// the sizes of the [SlabAllocator]s used by the kernel heap
@@ -304,18 +522,27 @@ impl KernelHeap {
 
     /// init the kernel allocator. This should be called after the allocator
     /// was moved to static memory
-    fn init(&'static mut self) -> Result<()> {
+    ///
+    /// # Safety
+    ///
+    /// The caller must gurantee that self is never moved after this call.
+    unsafe fn init(&mut self) -> Result<()> {
+        // Safety: caller gurantees that self is never moved so we can take a static ref.
+        //  We don't require &'static mut self, because we don't require self to be borrowed
+        //  mutable for a static lifetime. This is ok (not really) because linked_heap
+        //  is stored within a TicketLock.
+        let linked_heap: &'static _ = unsafe { &*(&self.linked_heap as *const _) };
+
         for slab in self.slab_allocators.iter_mut() {
-            slab.init(&self.linked_heap)?;
+            slab.init(linked_heap)?;
         }
         Ok(())
     }
 
     #[cfg(feature = "mem-stats")]
-    fn init_stats<L: LockCell<Self>>(locked_heap: &L) {
+    fn init_stats<L: LockCell<Self>>(locked_heap: &L, empty_stats: HeapStats) {
         debug!("init heap stats");
-        let stats = HeapStats::default();
-        locked_heap.lock().stats = Some(stats);
+        locked_heap.lock().stats = Some(empty_stats);
         trace!("init heap stats allocated");
     }
 }
@@ -436,6 +663,7 @@ impl<'a, A: Allocator> SlabAllocator<'a, A> {
 
     /// initializes the Slab Allocator
     fn init(&mut self, allocator: &'a A) -> Result<()> {
+        // TODO allocator should be a pointer and not this
         self.allocator.write(allocator);
         self.block = Some(SlabBlock::new(self.size, allocator)?);
 

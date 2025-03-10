@@ -11,6 +11,7 @@
     debug_closure_helpers,
     extern_types,
     let_chains,
+    maybe_uninit_slice,
     maybe_uninit_array_assume_init,
     maybe_uninit_uninit_array,
     never_type,

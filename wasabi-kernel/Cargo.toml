@@ -12,6 +12,7 @@ no-unicode-log = ["shared/no-unicode-log"]
 mem-stats = [ "dep:histogram" ]
 test = ["dep:testing"]
 mem-backed-guard-page = []  
+freeze-heap = ["mem-stats"]
 
 
 [dependencies]

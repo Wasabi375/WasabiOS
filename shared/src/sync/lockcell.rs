@@ -619,7 +619,8 @@ impl<T, I: InterruptState> LockCellInternal<T> for ReadWriteCell<T, I> {
     }
 
     unsafe fn unlock_no_guard(&self) {
-        self.access_count.store(0, Ordering::SeqCst);
+        let old_lock_value = self.access_count.swap(0, Ordering::SeqCst);
+        assert_eq!(old_lock_value, -1);
         // Safety: this will restore the interrupt state from when we called
         // enter_lock, so this is safe
         I::s_exit_lock(!self.preemtable);

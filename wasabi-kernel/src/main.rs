@@ -4,6 +4,8 @@
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+extern crate alloc;
+
 #[macro_use]
 extern crate wasabi_kernel;
 
@@ -43,7 +45,8 @@ fn kernel_main() -> ! {
     if locals!().is_bsp() {
         // TODO temp
         info!("rsdp at: {:?}", KernelInfo::get().boot_info.rsdp_addr);
-        pci::pci_experiment();
+
+        // pci::pci_experiment();
     }
 
     // start_timer();
@@ -64,6 +67,20 @@ fn kernel_main() -> ! {
             .stats()
             .log(level, Some("frames"));
         PageTable::get_for_kernel().lock().stats().log(level);
+    }
+
+    #[cfg(feature = "freeze-heap")]
+    if locals!().is_bsp() {
+        use alloc::boxed::Box;
+        use wasabi_kernel::mem::kernel_heap::{freeze_global_heap, try_unfreeze_global_heap};
+
+        freeze_global_heap().unwrap();
+
+        let foo = core::hint::black_box(Box::new(5));
+        drop(foo);
+
+        info!("unfreeze");
+        try_unfreeze_global_heap().unwrap();
     }
 
     info!("OS Done!\tcpu::halt()");
