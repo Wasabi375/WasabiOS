@@ -102,6 +102,11 @@ impl FileId {
         self.0.to_native().get()
     }
 
+    pub const MIN: FileId = unsafe {
+        // Safety: 0 is a valid non-max
+        FileId(LittleEndian::from_bits(NonMaxU64::new_unchecked(0)))
+    };
+
     pub const MAX: FileId = unsafe {
         // Safety: MAX - 1 is a valid non-max
         FileId(LittleEndian::from_bits(NonMaxU64::new_unchecked(
