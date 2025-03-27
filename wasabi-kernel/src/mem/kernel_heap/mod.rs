@@ -346,7 +346,7 @@ pub fn freeze_global_heap() -> Result<()> {
 /// in the current freeze heap.
 #[cfg(feature = "freeze-heap")]
 pub fn try_unfreeze_global_heap() -> Result<()> {
-    use crate::todo_warn;
+    use shared::todo_warn;
 
     let mut freeze_heaps = GLOBAL_ALLOCATOR.freeze_heaps.write();
 
