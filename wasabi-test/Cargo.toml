@@ -6,7 +6,7 @@ edition.workspace = true
 [features]
 fixed-kernel-vaddr = [ "wasabi-kernel/fixed-kernel-vaddr" ]
 no-color = ["wasabi-kernel/no-color"]
-test-tests = []
+test-tests = [ "dep:testing-tests" ]
 mem-backed-guard-page = ["wasabi-kernel/mem-backed-guard-page"]
 mem-stats = ["wasabi-kernel/mem-stats"]
 
@@ -14,8 +14,9 @@ default = ["mem-stats"]
 
 [dependencies]
 shared = { path = "../shared" }
-testing = { path = "../testing" }
 staticvec = { path = "../staticvec" }
+testing = { path = "../testing" }
+testing-tests = { path = "../testing/test-tests", optional = true }
 
 bootloader_api.workspace = true
 log.workspace = true

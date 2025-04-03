@@ -1,0 +1,11 @@
+[package]
+name = "testing-tests"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared.workspace = true
+testing = {path = ".."}
+
+linkme.workspace = true
+log.workspace = true
