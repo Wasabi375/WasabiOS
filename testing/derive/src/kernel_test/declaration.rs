@@ -1,34 +1,29 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
-use syn::{Error, ItemFn, Signature};
+use syn::{Error, ItemFn, Result, Signature};
 
-use crate::args::{CrateList, TestArgs};
+use crate::kernel_test::args::TestFunctionVariance;
+
+use super::args::{CrateList, TestArgs};
 
 fn crate_name() -> String {
     std::env::var("CARGO_CRATE_NAME").unwrap()
 }
 
-fn expand_test_function(signature: &Signature) -> TokenStream {
+fn expand_test_function(signature: &Signature) -> Result<TokenStream> {
     let fn_name_ident = &signature.ident;
 
-    let fn_variance = match signature.inputs.len() {
-        0 => Ident::new("Normal", signature.span()),
-        1 => Ident::new("MPBarrier", signature.span()),
-        _ => {
-            return TokenStream::from(
-                Error::new_spanned(signature, "Invalid function arguments").to_compile_error(),
-            )
-        }
-    };
+    let fn_variance = TestFunctionVariance::try_from(signature)?.name();
+    let fn_variance = Ident::new(fn_variance, signature.span());
 
-    quote! {
+    Ok(quote! {
         testing::description::KernelTestFunction::#fn_variance (#fn_name_ident)
-    }
+    })
 }
 
-pub fn expand_test(args: TestArgs, test_fn: ItemFn) -> TokenStream {
-    let fn_to_test = expand_test_function(&test_fn.sig);
+pub fn expand_test(args: TestArgs, test_fn: ItemFn) -> Result<TokenStream> {
+    let fn_to_test = expand_test_function(&test_fn.sig)?;
     let fn_name = test_fn.sig.ident.to_string();
 
     let description_name = format_ident!("__KERNEL_TEST_{}", fn_name.to_uppercase());
@@ -68,7 +63,7 @@ pub fn expand_test(args: TestArgs, test_fn: ItemFn) -> TokenStream {
         }
     };
 
-    quote! {
+    Ok(quote! {
         #test_fn
 
         #[linkme::distributed_slice(#dist_slice_ref)]
@@ -86,7 +81,7 @@ pub fn expand_test(args: TestArgs, test_fn: ItemFn) -> TokenStream {
             allow_page_leak: #allow_page_leak,
             allow_mapping_leak: #allow_mapping_leak,
         };
-    }
+    })
 }
 
 fn test_slice_name(crate_name: &str) -> Ident {

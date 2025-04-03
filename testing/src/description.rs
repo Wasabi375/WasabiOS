@@ -5,14 +5,12 @@
 use core::any::Any;
 
 use alloc::boxed::Box;
-use linkme::distributed_slice;
 
 use crate::{multiprocessor::DataBarrier, KernelTestError};
 
 pub use testing_derive::get_kernel_tests;
 pub use testing_derive::kernel_test_setup;
 
-// TODO use Termination trait as return type?
 /// Function signature used for kernel test functions
 pub type KernelTestFn = fn() -> Result<(), KernelTestError>;
 

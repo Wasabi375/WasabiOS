@@ -1,11 +1,14 @@
+#![feature(proc_macro_diagnostic)]
+
 extern crate proc_macro;
 
-use args::TestArgs;
+#[allow(unused_imports)] // this disables the warning about the "test" in the module name
+mod kernel_test;
+
+mod multitest;
+
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
-
-mod args;
-mod declaration;
 
 /// Marks a function as a kernel test
 ///
@@ -50,9 +53,12 @@ mod declaration;
 //// ```
 #[proc_macro_attribute]
 pub fn kernel_test(attribute: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attribute as TestArgs);
+    let args = parse_macro_input!(attribute as kernel_test::args::TestArgs);
 
-    let expanded = declaration::expand_test(args, parse_macro_input!(item));
+    let expanded = match kernel_test::declaration::expand_test(args, parse_macro_input!(item)) {
+        Ok(expanded) => expanded,
+        Err(err) => err.to_compile_error(),
+    };
 
     TokenStream::from(expanded)
 }
@@ -65,7 +71,7 @@ pub fn kernel_test(attribute: TokenStream, item: TokenStream) -> TokenStream {
 pub fn kernel_test_setup(item: TokenStream) -> TokenStream {
     assert!(item.is_empty());
 
-    TokenStream::from(declaration::expand_slice())
+    TokenStream::from(kernel_test::declaration::expand_slice())
 }
 
 /// Returns an iterator over all tests marked by the [kernel_test] macro.
@@ -77,7 +83,22 @@ pub fn kernel_test_setup(item: TokenStream) -> TokenStream {
 pub fn get_kernel_tests(item: TokenStream) -> TokenStream {
     let crates = parse_macro_input!(item);
 
-    let expanded = declaration::expand_get_tests(crates);
+    let expanded = kernel_test::declaration::expand_get_tests(crates);
+
+    TokenStream::from(expanded)
+}
+
+/// Marks a module as a multi-test module
+///
+/// This will generate "rust-tests" for each [kernel_test] directly defined in the module.
+#[proc_macro_attribute]
+pub fn multitest(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attribute as multitest::args::MultiTestArgs);
+
+    let expanded = match multitest::declaration::expand_multitest(args, parse_macro_input!(item)) {
+        Ok(expanded) => expanded,
+        Err(err) => err.to_compile_error(),
+    };
 
     TokenStream::from(expanded)
 }

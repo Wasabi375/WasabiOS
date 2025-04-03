@@ -9,6 +9,8 @@ extern crate alloc;
 use core::{error::Error, fmt::Debug};
 
 pub use testing_derive::kernel_test;
+pub use testing_derive::multitest;
+
 use thiserror::Error;
 
 pub mod description;

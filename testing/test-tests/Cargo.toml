@@ -3,6 +3,10 @@ name = "testing-tests"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["test"]
+test = []
+
 [dependencies]
 shared.workspace = true
 testing = {path = ".."}
