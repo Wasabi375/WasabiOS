@@ -9,8 +9,12 @@ edition = "2021"
 testing-derive = { path = "derive" }
 shared = { path = "../shared" }
 staticvec = { path = "../staticvec" }
+host-shared = { path = "../host/shared", optional = true }
 
 x86_64.workspace = true
 log.workspace = true
 linkme.workspace = true
 thiserror.workspace = true
+
+[features]
+host = [ "dep:host-shared" ]

@@ -117,8 +117,8 @@ pub async fn build_kernel_elf(
     if options.all_features {
         cmd.arg("--all-features");
     } else if options.features.iter().any(|f| f.used_in(&bin)) {
-        cmd.arg("--features");
         for feature in options.features.iter().filter(|f| f.used_in(&bin)) {
+            cmd.arg("--features");
             cmd.arg(feature.as_os_str());
         }
     }

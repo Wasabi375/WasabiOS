@@ -1,0 +1,9 @@
+[package]
+name = "host-shared"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared.workspace = true
+
+num_cpus = "1.16"

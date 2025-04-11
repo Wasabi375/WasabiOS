@@ -727,6 +727,12 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermit-abi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
+
+[[package]]
+name = "hermit-abi"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fbd780fe5cc30f81464441920d82ac8740e2e46b29a6fad543ddd075229ce37e"
@@ -741,6 +747,14 @@ dependencies = [
  "schemars",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "host-shared"
+version = "0.1.0"
+dependencies = [
+ "num_cpus",
+ "shared",
 ]
 
 [[package]]
@@ -911,7 +925,7 @@ version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
- "hermit-abi",
+ "hermit-abi 0.5.0",
  "libc",
  "windows-sys 0.59.0",
 ]
@@ -1123,6 +1137,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "num_cpus"
+version = "1.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43"
+dependencies = [
+ "hermit-abi 0.3.9",
+ "libc",
 ]
 
 [[package]]
@@ -1692,6 +1716,7 @@ dependencies = [
 name = "testing"
 version = "0.1.0"
 dependencies = [
+ "host-shared",
  "linkme",
  "log",
  "shared",
@@ -1719,6 +1744,7 @@ dependencies = [
  "log",
  "shared",
  "testing",
+ "testing-derive",
 ]
 
 [[package]]
@@ -2096,6 +2122,7 @@ dependencies = [
  "bit_field",
  "bitflags 2.9.0",
  "crossbeam-epoch",
+ "host-shared",
  "linkme",
  "log",
  "nonmax",
@@ -2104,6 +2131,7 @@ dependencies = [
  "static_assertions",
  "staticvec",
  "testing",
+ "testing-derive",
  "thiserror",
  "uuid",
 ]

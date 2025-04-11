@@ -182,6 +182,16 @@ fn expand_function_rust_test(fun: &ItemFn) -> Result<TokenStream> {
         fn #fn_name() {
             #to_test_fn_def
 
+            unsafe {
+                use host_shared::sync::StdInterruptState as _;
+                use shared::sync::CoreInfo as _;
+                // Safety: host_shared::sync will alwys provide the same values
+                testing::multiprocessor::init_interrupt_state(
+                    &host_shared::sync::STD_INTERRUPT_STATE,
+                    host_shared::sync::StdInterruptState::max_core_count()
+                );
+            }
+
             let result = test_fn();
 
             let expected_result = #expected_result;

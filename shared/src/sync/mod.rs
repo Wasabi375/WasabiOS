@@ -8,7 +8,7 @@ pub mod single_core_lock;
 
 /// Trait that allows access to OS-level constructs defining basic information
 /// about the current processor.
-pub trait CoreInfo: 'static {
+pub trait CoreInfo: 'static + Send + Sync {
     /// Gets the ID of the running core. It's required that this core ID is
     /// unique to the core.
     fn core_id(&self) -> CoreId;

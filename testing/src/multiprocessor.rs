@@ -1,6 +1,10 @@
 //! Multiprocessor functionality for testing
 
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::{
+    hint::spin_loop,
+    ptr::{addr_of, addr_of_mut, null, null_mut},
+    sync::atomic::{AtomicPtr, AtomicU8, Ordering},
+};
 
 use shared::sync::{CoreInfo, InterruptState};
 
@@ -9,28 +13,79 @@ pub type DataBarrier<T> = shared::sync::barrier::DataBarrier<T, TestInterruptSta
 
 /// [InterruptState] used by testing.
 ///
-/// This implementation will panic if used in most cases.
-/// Only `enter_lock` and `exit_lock` are supported as long as the interrupt state
-/// is not accessed.
+/// This implementation is a wrapper around a static interrupt state provided by calling
+/// [init_interrupt_state]
 pub struct TestInterruptState;
 
 static mut INTERRUPT_STATE: Option<&'static dyn InterruptState> = None;
+static mut INTERRUPT_STATE_INITIALIZING_DUMMY: Option<&'static dyn InterruptState> = None;
+
+static INTERRUPT_STATE_GUARD_PTR: AtomicPtr<Option<&'static dyn InterruptState>> =
+    AtomicPtr::new(null_mut());
 
 static MAX_CORE_COUNT: AtomicU8 = AtomicU8::new(0);
 
 /// initializes interrupts and locks for testing
-/// This must be called before test execution starts
-pub fn init_interrupt_state(interrupt_state: &'static dyn InterruptState, max_core_count: u8) {
-    unsafe {
-        INTERRUPT_STATE = Some(interrupt_state);
+///
+/// # Safety
+///
+/// This must be called before test execution starts on every core/thread
+///
+/// If called multiple times this function assumes that the arguments to any call
+/// are the same as the first and will not do anything.
+pub unsafe fn init_interrupt_state(
+    interrupt_state: &'static dyn InterruptState,
+    max_core_count: u8,
+) {
+    let interrupt_state_ptr = addr_of_mut!(INTERRUPT_STATE);
+    let dummy_ptr = addr_of_mut!(INTERRUPT_STATE_INITIALIZING_DUMMY);
+
+    let mut guard_ptr = match INTERRUPT_STATE_GUARD_PTR.compare_exchange(
+        null_mut(),
+        dummy_ptr,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    ) {
+        Ok(_) => {
+            // We set the guard to the init state, so we have exclusive control
+            let state = unsafe { &mut *interrupt_state_ptr };
+            *state = Some(interrupt_state);
+            MAX_CORE_COUNT.store(max_core_count, Ordering::SeqCst);
+            INTERRUPT_STATE_GUARD_PTR.store(interrupt_state_ptr, Ordering::SeqCst);
+
+            return;
+        }
+        Err(guard_ptr) => guard_ptr as *const _,
+    };
+
+    while guard_ptr == dummy_ptr as *const _ {
+        spin_loop();
+        guard_ptr = INTERRUPT_STATE_GUARD_PTR.load(Ordering::Relaxed) as *const _;
+        assert_ne!(
+            guard_ptr,
+            null(),
+            "INTERRUPT_STATE_PTR should never be reset to null"
+        );
     }
-    MAX_CORE_COUNT.store(max_core_count, Ordering::Release);
+
+    if guard_ptr == interrupt_state_ptr as *const _ {
+        assert_eq!(MAX_CORE_COUNT.load(Ordering::Relaxed), max_core_count, "init_interrupt_state must be called with the same argument for max_core_count every time");
+        // Safety: guard_ptr points to final storage, so it will no longer be modified
+        let state = unsafe { &*interrupt_state_ptr }
+            .expect("guard_ptr points to final storage so it should be set");
+        assert_eq!(state as *const _, interrupt_state as *const _, "init_interrupt_state must be called with the same argument for interrupt_state every time");
+    }
 }
 
 #[track_caller]
 #[inline(always)]
 fn interrupt_state() -> &'static dyn InterruptState {
-    unsafe { INTERRUPT_STATE.expect("Test interrupt state not initialized") }
+    let guard_ptr = INTERRUPT_STATE_GUARD_PTR.load(Ordering::Relaxed) as *const _;
+    let state_ptr = addr_of!(INTERRUPT_STATE);
+    assert_eq!(guard_ptr, state_ptr, "init_interrupt_state not called");
+
+    // Safety: guard_ptr points to final storage, so it will no longer be modified
+    unsafe { &*state_ptr }.expect("interrupt state should be initialized based on guard")
 }
 
 impl CoreInfo for TestInterruptState {
@@ -57,7 +112,7 @@ impl CoreInfo for TestInterruptState {
     where
         Self: Sized,
     {
-        MAX_CORE_COUNT.load(Ordering::Acquire)
+        MAX_CORE_COUNT.load(Ordering::SeqCst)
     }
 }
 

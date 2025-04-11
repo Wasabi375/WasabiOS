@@ -22,7 +22,8 @@ ureq = "2.10.1"
 
 [workspace]
 members = [
-    "histogram",
+    "histogram", 
+    "host/shared",
     "interrupt-fn-builder",
     "logger",
     "shared",
@@ -42,7 +43,10 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+host-shared = { path = "host/shared" }
 shared = { path = "shared" }
+testing = { path = "testing" }
+testing-derive = { path = "testing/derive" }
 
 anyhow =  "1.0.94"
 bit_field = "0.10.2"

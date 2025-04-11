@@ -2,7 +2,8 @@
 
 extern crate alloc;
 
-use testing::{description::kernel_test_setup, multitest};
+use testing::description::kernel_test_setup;
+use testing_derive::multitest;
 
 kernel_test_setup!();
 

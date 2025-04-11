@@ -187,11 +187,13 @@ fn get_test_iter() -> impl Iterator<Item = &'static KernelTestDescription> {
 }
 
 fn init_mp() {
-    testing::multiprocessor::init_interrupt_state(
-        &TESTING_CORE_INTERRUPT_STATE,
-        get_ready_core_count(Ordering::SeqCst),
-    );
     unsafe {
+        // this function is called before tests are executed and is always called with
+        // the same arguments, assuming that ready_core_count is constant
+        testing::multiprocessor::init_interrupt_state(
+            &TESTING_CORE_INTERRUPT_STATE,
+            get_ready_core_count(Ordering::SeqCst),
+        );
         // we call this on all processors with the same value so this will not affect
         // any processors currently waiting
         TEST_START_BARRIER.set_target(
@@ -207,6 +209,16 @@ fn init_mp() {
             Ordering::Release,
         );
     }
+}
+
+#[cfg(feature = "freeze-heap")]
+fn freeze_global_heap() -> Result<(), ()> {
+    wasabi_kernel::mem::kernel_heap::freeze_global_heap().map_err(|_| ())
+}
+
+#[cfg(feature = "freeze-heap")]
+fn try_unfreeze_global_heap() -> Result<(), ()> {
+    wasabi_kernel::mem::kernel_heap::try_unfreeze_global_heap().map_err(|_| ())
 }
 
 /// the main entry point for the kernel in test mode
