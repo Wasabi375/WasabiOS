@@ -11,6 +11,7 @@ test = ["dep:testing"]
 shared = { path = "../shared" }
 staticvec = { path = "../staticvec" }
 testing = { path = "../testing", optional = true }
+testing-derive.workspace = true
 
 bit_field.workspace = true
 bitflags.workspace = true
@@ -23,3 +24,6 @@ static_assertions.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+testing = { path = "../testing", optional = false }
+host-shared.workspace = true

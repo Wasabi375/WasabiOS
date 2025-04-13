@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = []
+default = ["freeze-heap"]
 
 fixed-kernel-vaddr = []
 no-color = ["logger/no-color"]  

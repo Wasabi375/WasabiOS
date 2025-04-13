@@ -334,7 +334,7 @@ pub fn freeze_global_heap() -> Result<()> {
 
     freeze_heaps.valid_count += 1;
 
-    log::warn!("Kernel Heap frozen");
+    log::debug!("Kernel Heap frozen");
 
     Ok(())
 }
@@ -346,8 +346,6 @@ pub fn freeze_global_heap() -> Result<()> {
 /// in the current freeze heap.
 #[cfg(feature = "freeze-heap")]
 pub fn try_unfreeze_global_heap() -> Result<()> {
-    use shared::todo_warn;
-
     let mut freeze_heaps = GLOBAL_ALLOCATOR.freeze_heaps.write();
 
     if freeze_heaps.valid_count == 0 {
@@ -372,7 +370,7 @@ pub fn try_unfreeze_global_heap() -> Result<()> {
     // lock and heap must be dropped after the write lock is released. Otherwise
     // dropping the heap might lead to a deadlock as it tries to access the GlobalAllocator
     // when trying to drop the Histrogram for the stats object.
-    todo_warn!("Free pages and frames used by freeze heap. Drop for KernelHeap?");
+    // TODO todo_warn!("Free pages and frames used by freeze heap. Drop for KernelHeap?");
     drop(heap);
 
     Ok(())

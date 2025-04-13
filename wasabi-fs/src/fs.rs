@@ -614,7 +614,7 @@ impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
             next: blocks.peek().map(|lba| NodePointer::new(*lba)),
         });
         let head_data = bytes
-            .take(..min(BLOCK_STRING_DATA_LENGTH, bytes.len()))
+            .split_off(..min(BLOCK_STRING_DATA_LENGTH, bytes.len()))
             .expect("we take at max the remaining length");
         string_head.data[..head_data.len()].copy_from_slice(head_data);
         self.device
@@ -630,7 +630,7 @@ impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
                 next: blocks.peek().map(|lba| NodePointer::new(*lba)),
             });
             let part_data = bytes
-                .take(..min(BLOCK_STRING_PART_DATA_LENGTH, bytes.len()))
+                .split_off(..min(BLOCK_STRING_PART_DATA_LENGTH, bytes.len()))
                 .expect("we take at max the remaining length");
             string_part.data[..part_data.len()].copy_from_slice(part_data);
             self.device

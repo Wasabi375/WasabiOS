@@ -1,8 +1,8 @@
 use core::{
     alloc::AllocError,
     assert_matches::assert_matches,
-    cell::UnsafeCell,
-    error,
+    cell::{RefCell, UnsafeCell},
+    default, error,
     mem::{self, MaybeUninit},
     ops::Deref,
     ptr::{null_mut, NonNull},
@@ -16,8 +16,12 @@ use alloc::{
     vec::Vec,
 };
 use log::{debug, trace};
-use shared::sync::{lockcell::UnsafeTicketLock, InterruptState};
+use shared::{
+    sync::{lockcell::UnsafeTicketLock, InterruptState},
+    todo_error, todo_warn,
+};
 use staticvec::{staticvec, StaticVec};
+use testing_derive::multitest;
 use thiserror::Error;
 
 use crate::{
@@ -41,6 +45,8 @@ pub enum MemTreeError<D: BlockDevice> {
     BlockDevice(D::BlockDeviceError), // TODO ensure I don't destroy the locks
     #[error("FileNode with id {0} already exists")]
     FileNodeExists(FileId),
+    #[error("FileNode with id {0} does not exist")]
+    FileDoesNotExist(FileId),
 }
 
 impl<D: BlockDevice> MemTreeError<D> {
@@ -91,7 +97,6 @@ pub struct MemTree<I> {
 
     dirty: AtomicBool,
 }
-// TODO impl Drop for MemTree
 
 impl<I> !Clone for MemTree<I> {}
 
@@ -182,6 +187,48 @@ impl<I: InterruptState> MemTree<I> {
                 }
                 leave @ MemTreeNode::Leave { .. } => return Ok(leave),
             }
+        }
+    }
+
+    /// Finds the id of the file with the largest id.
+    ///
+    /// # Safety
+    ///
+    /// node must be locked and it's children must be unlocked
+    unsafe fn find_largest_id<D: BlockDevice>(
+        &self,
+        node: &mut MemTreeNode<I>,
+        device: &D,
+    ) -> Result<Option<FileId>, D::BlockDeviceError> {
+        assert!(!node.get_lock().is_unlocked());
+
+        match node {
+            MemTreeNode::Node { children, .. } => {
+                let last_link = &mut children
+                    .iter_mut()
+                    .last()
+                    .expect("B-Tree node can not be empty")
+                    .0
+                    .resolve(device)?;
+
+                let last_child = unsafe {
+                    // node is locked
+                    last_link.as_mut().expect("just resolved")
+                };
+                last_child.get_lock().lock();
+                let result = unsafe {
+                    // Safety: just locked last_child
+                    self.find_largest_id(last_child, device)
+                };
+
+                unsafe {
+                    // Safety: locked above
+                    last_child.get_lock().unlock();
+                }
+
+                result
+            }
+            MemTreeNode::Leave { files, .. } => Ok(files.iter().last().map(|f| f.id)),
         }
     }
 
@@ -547,11 +594,589 @@ impl<I: InterruptState> MemTree<I> {
         Ok(())
     }
 
+    pub fn delete<D: BlockDevice>(
+        &self,
+        device: &D,
+        file_id: FileId,
+    ) -> Result<Arc<FileNode>, MemTreeError<D>> {
+        // NOTE: this will have to resolve on-device only nodes because we want to delete from the
+        // device and not just the in memory FileNode. Therefor in order to keep the tree balanced
+        // we have to find the file even if it is not in memory. Therefor it is ok to use
+        // find_leave
+
+        let leave = self
+            .find_leave(device, file_id, AccessMode::Update)
+            .map_err(MemTreeError::from)?;
+
+        // TODO temp
+        // leave.assert_valid_node_only();
+
+        let MemTreeNode::Leave {
+            parent,
+            files,
+            dirty,
+            lock,
+        } = leave
+        else {
+            panic!("Find leave should always return a leave node");
+        };
+        assert!(!lock.is_unlocked());
+
+        let Some(file_pos) = files.iter().position(|f| f.id == file_id) else {
+            unsafe {
+                // Safety: tree is locked from this node upwards
+                self.unlock_upwards(leave);
+            }
+            return Err(MemTreeError::FileDoesNotExist(file_id));
+        };
+
+        let file_node = files.remove(file_pos);
+        *dirty = true;
+
+        if files.len() >= files.capacity() / 2 || parent.is_none() {
+            unsafe {
+                // Safety: tree is locked from this node upwards
+                self.unlock_upwards(leave);
+            }
+            return Ok(file_node);
+        }
+
+        if parent.is_some() {
+            unsafe {
+                // Safety: tree is locked from this node upwards
+                self.rebalance_leave(leave, device)
+                    .map_err(MemTreeError::from)?;
+            }
+        }
+
+        Ok(file_node)
+    }
+
+    /// Rebalances the tree using rotation and merges
+    /// starting at a leave
+    ///
+    /// # Safety
+    ///
+    /// the tree must be locked from this node upwards
+    unsafe fn rebalance_leave<D: BlockDevice>(
+        &self,
+        mut unbalanced_node: &mut MemTreeNode<I>,
+        device: &D,
+    ) -> Result<(), D::BlockDeviceError> {
+        // TODO temp
+        // unbalanced_node.assert_valid_node_only();
+
+        let unbalanced_addr = unbalanced_node as *const _;
+        let MemTreeNode::Leave { parent, files, .. } = unbalanced_node else {
+            panic!("Expected leave and got node");
+        };
+        trace!("rebalance tree from leave");
+
+        let mut parent = parent.expect("Expected non root node");
+        let parent = unsafe {
+            // Safety: the parent is locked and we have the only reference
+            parent.as_mut()
+        };
+        let MemTreeNode::Node {
+            children,
+            parent: parent_parent,
+            ..
+        } = parent
+        else {
+            panic!("parent must always be a node");
+        };
+
+        let node_index = children
+            .iter()
+            .map(|c| c.0.node.as_ref().map(|node_box| Box::as_ptr(node_box)))
+            .position(|c| c == Some(unbalanced_addr))
+            .expect("parent should always contain it's children");
+
+        if node_index >= 1 {
+            let left = &mut children[node_index - 1].0;
+            let left = unsafe {
+                // Safety: parent is still locked
+                left.resolve(device)?.as_mut().expect("Just resolved")
+            };
+
+            let MemTreeNode::Leave {
+                files: left_files,
+                dirty: left_dirty,
+                lock: left_lock,
+                ..
+            } = left
+            else {
+                panic!("Expected to find leave");
+            };
+
+            left_lock.lock();
+
+            if left_files.len() > left_files.capacity() / 2 {
+                trace!("rotate leaves right");
+
+                let last = left_files.remove(left_files.len() - 1);
+                let new_max_id = left_files
+                    .iter()
+                    .last()
+                    .expect("B-tree node should not be empty")
+                    .id;
+                *left_dirty = true;
+                debug!("moved: {}", last.id.get());
+                files.insert(0, last);
+
+                unsafe {
+                    // Safety: just locked above
+                    left_lock.unlock();
+                }
+
+                children[node_index - 1].1.insert(new_max_id);
+
+                unsafe {
+                    // Safety: unbalanced_node and above is locked
+                    self.unlock_upwards(unbalanced_node);
+                }
+                return Ok(());
+            } else {
+                unsafe {
+                    // Safety: just locked above
+                    left_lock.unlock();
+                }
+            }
+        }
+
+        if node_index + 1 < children.len() {
+            let right = &mut children[node_index + 1].0;
+            let right = unsafe {
+                // Safety: parent is still locked
+                right.resolve(device)?.as_mut().expect("Just resolved")
+            };
+
+            let MemTreeNode::Leave {
+                files: right_files,
+                dirty: right_dirty,
+                lock: right_lock,
+                ..
+            } = right
+            else {
+                panic!("Expected to find leave");
+            };
+
+            right_lock.lock();
+
+            if right_files.len() > right_files.capacity() / 2 {
+                trace!("rotate leaves left");
+                let first = right_files.remove(0);
+                let first_file_id = first.id;
+                *right_dirty = true;
+                files.push(first);
+
+                unsafe {
+                    // Safety: just locked above
+                    right_lock.unlock();
+                }
+
+                children[node_index].1.insert(first_file_id);
+
+                unsafe {
+                    // Safety: unbalanced_node and above is locked
+                    self.unlock_upwards(unbalanced_node);
+                }
+                return Ok(());
+            } else {
+                unsafe {
+                    // Safety: just locked above
+                    right_lock.unlock();
+                }
+            }
+        }
+
+        trace!("merge leaves");
+
+        #[allow(dropping_references)]
+        {
+            drop(files);
+            drop(unbalanced_node);
+        }
+
+        let (left_index, right_index) = if node_index + 1 < children.len() {
+            (node_index, node_index + 1)
+        } else {
+            (node_index - 1, node_index)
+        };
+
+        {
+            let [mut left_link, mut right_link] = children
+                .get_disjoint_mut([left_index, right_index])
+                .expect("indices checked above");
+
+            let left = unsafe {
+                // Safety: parent is locked and old references are invalidated
+                left_link.0.resolve(device)?.as_mut().expect("resolved")
+            };
+            let right = unsafe {
+                // Safety: parent is locked and old references are invalidated
+                right_link.0.resolve(device)?.as_mut().expect("resolved")
+            };
+
+            // one of left or right is already locked, because it points to the initial unbalanced_node
+            let other_lock = if node_index == left_index {
+                right.get_lock()
+            } else {
+                left.get_lock()
+            };
+            other_lock.lock();
+
+            let MemTreeNode::Leave {
+                parent: left_parent,
+                files: left_files,
+                dirty: left_dirty,
+                ..
+            } = left
+            else {
+                panic!("expected leave");
+            };
+            let MemTreeNode::Leave {
+                parent: right_parent,
+                files: right_files,
+                ..
+            } = right
+            else {
+                panic!("expected leave");
+            };
+            assert_eq!(left_parent, right_parent);
+
+            // merge the nodes
+            assert!(left_files.len() <= left_files.capacity() / 2);
+            assert!(right_files.len() <= right_files.capacity() / 2);
+            assert!(left_files.len() + right_files.len() == left_files.capacity() - 1);
+
+            left_files.extend(right_files.drain(..));
+            left_link.1 = right_link.1;
+
+            unsafe {
+                // a bit overkill as this is dropped later
+                // Safety: Either right unbalanced_node or the other_lock. Both or locked
+                right.get_lock().unlock();
+            }
+
+            let _old_link = children.remove(right_index);
+            todo_warn!("We need to somehow remember to free the on device block");
+        }
+
+        if let Some(parent_parent) = parent_parent {
+            assert!(children.len() >= children.capacity() / 2);
+
+            if children.len() < children.capacity() / 2 {
+                unsafe {
+                    // Safety: parent is still locked
+                    let merged_node = children[left_index]
+                        .0
+                        .as_mut()
+                        .expect("node should be resolved by now");
+                    let parent = merged_node.get_parent_mut().unwrap().as_mut();
+
+                    // Safety: merged_node and above is locked
+                    merged_node.get_lock().unlock();
+                    // Safety: parent and above are locked
+                    self.rebalance_node(parent, device)?;
+                }
+            }
+        } else if children.len() == 1 {
+            trace!("replace root with single leave!");
+            let new_root_link = children.remove(0);
+            assert!(new_root_link.1.is_none());
+            let mut new_root_link = new_root_link.0;
+
+            let new_root_node = unsafe {
+                // Safety: parent is still locked
+                new_root_link
+                    .as_mut()
+                    .expect("node should be resolved by now")
+            };
+            *new_root_node.get_parent_mut() = None;
+
+            let old_root_link = unsafe {
+                // Safety: root lock is still held
+                self.get_root_mut()
+            };
+
+            let _old_root_link = core::mem::replace(old_root_link, new_root_link);
+            todo_warn!("We need to somehow remember to free the on device block of the old root");
+
+            unsafe {
+                // Safety: reacquire and unlock root is save as it and root_lock is still locked
+                let root_node = self
+                    .get_root_mut()
+                    .as_mut()
+                    .expect("Root is still resolved");
+                self.unlock_upwards(root_node);
+            }
+
+            return Ok(());
+        }
+
+        unsafe {
+            // Safety: parent is still locked
+            let merged_node = children[left_index]
+                .0
+                .as_mut()
+                .expect("node should be resolved by now");
+            // Safety: merged_node and above is locked
+            self.unlock_upwards(merged_node);
+        }
+
+        Ok(())
+    }
+
+    /// Rebalances the tree using rotation and merges
+    /// starting at a node
+    ///
+    /// # Safety
+    ///
+    /// the tree must be locked from this node upwards
+    unsafe fn rebalance_node<D: BlockDevice>(
+        &self,
+        mut unbalanced_node: &mut MemTreeNode<I>,
+        device: &D,
+    ) -> Result<(), D::BlockDeviceError> {
+        // TODO temp
+        // unbalanced_node.assert_valid_node_only();
+
+        let unbalanced_addr = unbalanced_node as *const _;
+        let MemTreeNode::Node {
+            parent,
+            children: unbalanced_children,
+            lock,
+            ..
+        } = unbalanced_node
+        else {
+            panic!("Expected node");
+        };
+        trace!("rebalance tree node");
+
+        let mut parent = parent.expect("Expected non root node");
+        let parent = unsafe {
+            // Safety: the parent is locked and we have the only reference
+            parent.as_mut()
+        };
+        let MemTreeNode::Node {
+            children,
+            parent: parent_parent,
+            ..
+        } = parent
+        else {
+            panic!("parent must always be a node");
+        };
+
+        let node_index = children
+            .iter()
+            .map(|c| c.0.node.as_ref().map(|node_box| Box::as_ptr(node_box)))
+            .position(|c| c == Some(unbalanced_addr))
+            .expect("parent should always contain it's children");
+
+        if node_index >= 1 {
+            let left = &mut children[node_index - 1].0;
+            let left = unsafe {
+                // Safety: parent is still locked
+                left.resolve(device)?.as_mut().expect("Just resolved")
+            };
+
+            let MemTreeNode::Node {
+                children: left_children,
+                dirty: left_dirty,
+                lock: left_lock,
+                ..
+            } = left
+            else {
+                panic!("Expected to find leave");
+            };
+
+            left_lock.lock();
+
+            if left_children.len() > left_children.capacity() / 2 {
+                trace!("rotate nodes right");
+                let last = left_children.remove(left_children.len() - 1);
+                let new_max_id = left_children
+                    .iter_mut()
+                    .last()
+                    .expect("B-tree node should not be empty")
+                    .1
+                    .take()
+                    .expect("second to last node in children should always have a max");
+                *left_dirty = true;
+                unbalanced_children.insert(0, last);
+
+                unsafe {
+                    // Safety: just locked above
+                    left_lock.unlock();
+                }
+
+                children[node_index - 1].1.insert(new_max_id);
+
+                unsafe {
+                    // Safety: unbalanced_node and above is locked
+                    self.unlock_upwards(unbalanced_node);
+                }
+                return Ok(());
+            }
+        }
+
+        if node_index + 1 < children.len() {
+            let right = &mut children[node_index + 1].0;
+            let right = unsafe {
+                // Safety: parent is still locked
+                right.resolve(device)?.as_mut().expect("Just resolved")
+            };
+
+            let MemTreeNode::Node {
+                children: right_children,
+                dirty: right_dirty,
+                lock: right_lock,
+                ..
+            } = right
+            else {
+                panic!("Expected to find leave");
+            };
+
+            right_lock.lock();
+
+            if right_children.len() > right_children.capacity() / 2 {
+                trace!("rotate nodes left");
+                let first = right_children.remove(0);
+                let first_node_max = first.1.expect("First node should always have a max value");
+                *right_dirty = true;
+                unbalanced_children.push(first);
+
+                unsafe {
+                    // Safety: just locked above
+                    right_lock.unlock();
+                }
+
+                children[node_index].1.insert(first_node_max);
+
+                unsafe {
+                    // Safety: unbalanced_node and above is locked
+                    self.unlock_upwards(unbalanced_node);
+                }
+                return Ok(());
+            }
+        }
+
+        trace!("merge nodes");
+
+        #[allow(dropping_references)]
+        {
+            drop(unbalanced_children);
+            drop(unbalanced_node);
+        }
+
+        let (left_index, right_index) = if node_index + 1 < children.len() {
+            (node_index, node_index + 1)
+        } else {
+            (node_index - 1, node_index)
+        };
+
+        {
+            let [mut left_link, mut right_link] = children
+                .get_disjoint_mut([left_index, right_index])
+                .expect("indices checked above");
+
+            let left = unsafe {
+                // Safety: parent is locked and old references are invalidated
+                left_link.0.resolve(device)?.as_mut().expect("resolved")
+            };
+            let right = unsafe {
+                // Safety: parent is locked and old references are invalidated
+                right_link.0.resolve(device)?.as_mut().expect("resolved")
+            };
+
+            // one of left or right is already locked, because it points to the initial unbalanced_node
+            let other_lock = if node_index == left_index {
+                right.get_lock()
+            } else {
+                left.get_lock()
+            };
+            other_lock.lock();
+
+            let left_max = unsafe {
+                // Safety: left is locked
+                self.find_largest_id(left, device)?
+                    .expect("This is never called on an empty root")
+            };
+
+            let MemTreeNode::Node {
+                parent: left_parent,
+                children: left_children,
+                ..
+            } = left
+            else {
+                panic!("expected node");
+            };
+            let left_len = left_children.capacity() / 2;
+            assert_eq!(left_len, left_children.len());
+            let MemTreeNode::Node {
+                parent: right_parent,
+                children: right_children,
+                ..
+            } = right
+            else {
+                panic!("expected node");
+            };
+            assert_eq!(left_parent, right_parent);
+
+            left_children[left_len - 1].1 = Some(left_max);
+            left_children.extend(right_children.drain(..));
+            left_link.1 = right_link.1;
+
+            unsafe {
+                // a bit overkill as this is dropped later
+                // Safety: Either right unbalanced_node or the other_lock. Both or locked
+                right.get_lock().unlock();
+            }
+
+            let _old_link = children.remove(right_index);
+            todo_warn!("We need to somehow remember to free the on device block");
+        }
+
+        assert!(children.len() >= children.capacity() / 2);
+        if let Some(parent_parent) = parent_parent {
+            if children.len() < children.capacity() / 2 {
+                unsafe {
+                    // Safety: parent is still locked
+                    let merged_node = children[left_index]
+                        .0
+                        .as_mut()
+                        .expect("node should be resolved by now");
+                    let parent = merged_node.get_parent_mut().unwrap().as_mut();
+
+                    // Safety: merged_node and above is locked
+                    merged_node.get_lock().unlock();
+                    // Safety: parent and above are locked
+                    self.rebalance_node(parent, device)?;
+                }
+            }
+        }
+
+        unsafe {
+            // Safety: parent is still locked
+            let merged_node = children[left_index]
+                .0
+                .as_mut()
+                .expect("node should be resolved by now");
+            // Safety: merged_node and above is locked
+            self.unlock_upwards(merged_node);
+        }
+
+        Ok(())
+    }
+
     pub fn assert_valid(&self) {
         self.root_lock.lock();
 
         // Safety: we have the root lock
         let root = unsafe { self.get_root().as_ref().unwrap() };
+
+        debug!("Root at {:p}", root);
 
         root.assert_valid(None);
 
@@ -562,7 +1187,7 @@ impl<I: InterruptState> MemTree<I> {
     }
 }
 
-#[cfg(feature = "test")]
+#[cfg(any(feature = "test", test))]
 impl<I: InterruptState> MemTree<I> {
     /// Create an iterator over all nodes.
     ///
@@ -699,11 +1324,48 @@ impl<I: InterruptState> MemTreeNode<I> {
     }
 }
 
-#[cfg(feature = "test")]
 impl<I: InterruptState> MemTreeNode<I> {
+    fn assert_valid_node_only(&self) {
+        assert!(!self.get_lock().is_unlocked());
+
+        match self {
+            MemTreeNode::Node { children, .. } => {
+                for window in children.windows(2) {
+                    let first = window[0].1;
+                    let second = window[1].1;
+
+                    match (first, second) {
+                        (Some(first), Some(second)) => assert!(first < second),
+                        (Some(_), None) => assert!(true),
+                        (None, Some(_)) | (None, None) => {
+                            assert!(false, "Only the last child should have a max of None")
+                        }
+                    }
+                }
+                assert!(children.last().unwrap().1.is_none());
+            }
+            MemTreeNode::Leave { files, .. } => {
+                // TODO temp
+                if BORK.load(Ordering::SeqCst) {
+                    log::warn!("bork");
+                }
+                let mut out_str = alloc::string::String::new();
+                use core::fmt::Write;
+                let _ = core::write!(out_str, "@{:p}: ", self);
+                for f in files {
+                    let _ = core::write!(out_str, "{:p}@{}, ", &f.id, f.id.get());
+                }
+                debug!("{out_str}");
+                assert!(files.iter().is_sorted_by_key(|f| f.id));
+            }
+        }
+    }
+
     fn assert_valid(&self, parent: Option<&MemTreeNode<I>>) {
         let lock = self.get_lock();
         lock.lock();
+
+        let mut rng_state: u32 = self.len() as u32;
 
         assert_eq!(
             parent.map(|p| p as *const _),
@@ -745,6 +1407,56 @@ impl<I: InterruptState> MemTreeNode<I> {
                     .for_each(|child| child.assert_valid(Some(self)));
             }
             MemTreeNode::Leave { files, .. } => {
+                // for f in files.iter() {
+                //     //debug!("file @{:p} id: {:p}@{}", f, &f.id, f.id.get());
+                //     // FIXME something fishi is happening here
+                //     // core::hint::black_box(alloc::format!(
+                //     //     "{}", //
+                //     //     // f,
+                //     //     // &f.id,
+                //     //     f.id.get()
+                //     // ));
+
+                //     #[inline(never)]
+                //     fn foo(foo: core::fmt::Arguments<'_>) {
+                //         use core::fmt::Write;
+                //         let mut str = staticvec::StaticString::<512>::new();
+                //         let _ = write!(str, "{}", foo);
+                //         core::hint::black_box(str);
+                //     }
+
+                //     let id = core::hint::black_box(f.id.get());
+                //     assert!(id <= 100);
+
+                //     foo(format_args!(
+                //         "{}", //
+                //         // f,
+                //         // &f.id,
+                //         id
+                //     ));
+                //     assert!(id <= 100);
+                //     assert_eq!(id, f.id.get());
+
+                //     // rng_state ^= rng_state << 13;
+                //     // rng_state ^= rng_state >> 17;
+                //     // rng_state ^= rng_state << 5;
+
+                //     // let id = f.id.get();
+
+                //     let dummy = Box::new(core::hint::black_box(id));
+
+                //     core::hint::black_box(dummy);
+                // }
+
+                //debug!(
+                //    "@{:p}: {:?}",
+                //    self,
+                //    file
+                //        .iter()
+                //        .map(|f| alloc::format!("{:p}@{}", &f.id, f.id.get()))
+                //        .collect::<Vec<_>>()
+                //);
+
                 assert!(files.iter().is_sorted_by_key(|f| f.id));
             }
         }
@@ -849,10 +1561,14 @@ impl<I: InterruptState> MemTreeLink<I> {
     }
 }
 
-#[cfg(feature = "test")]
+static BORK: AtomicBool = AtomicBool::new(false);
+
+#[multitest(cfg: feature = "test")]
 mod test_mem_only {
     use alloc::{boxed::Box, sync::Arc, vec::Vec};
     use core::{
+        assert_matches::assert_matches,
+        num::NonZero,
         ops::Deref,
         sync::atomic::{AtomicBool, AtomicPtr},
     };
@@ -910,6 +1626,10 @@ mod test_mem_only {
             )),
             name: NodePointer::new(LBA::new(0).unwrap()),
         })
+    }
+
+    fn file_id(id: u64) -> FileId {
+        FileId::try_new(id).unwrap()
     }
 
     #[kernel_test]
@@ -1190,6 +1910,403 @@ mod test_mem_only {
 
         if let MemTreeNode::Leave { files, .. } = root {
             t_assert_eq!(&files.iter().map(|f| f.id.get()).collect::<Vec<_>>(), &[12]);
+        } else {
+            tfail!("Expected to find a leave node at tree root");
+        }
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_delete_no_rebalance() -> Result<(), KernelTestError> {
+        let mut tree = create_empty_tree();
+
+        tree.insert(&TestBlockDevice, create_file_node(1), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(2), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(3), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(4), true)
+            .tunwrap()?;
+
+        tree.assert_valid_full();
+
+        tree.delete(&TestBlockDevice, file_id(3)).tunwrap()?;
+
+        tree.assert_valid_full();
+
+        let root = unsafe {
+            // Safety: we have unique access right now and can ignore the lock
+            tree.get_root().as_ref().unwrap()
+        };
+
+        if let MemTreeNode::Leave { files, .. } = root {
+            t_assert_eq!(
+                &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+                &[1, 2, 4]
+            );
+        } else {
+            tfail!("Expected to find a leave node at tree root");
+        }
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_delete_unbalance_root() -> Result<(), KernelTestError> {
+        let mut tree = create_empty_tree();
+
+        tree.insert(&TestBlockDevice, create_file_node(1), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(3), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(4), true)
+            .tunwrap()?;
+
+        tree.assert_valid_full();
+
+        tree.delete(&TestBlockDevice, file_id(3)).tunwrap()?;
+
+        tree.assert_valid_full();
+
+        let root = unsafe {
+            // Safety: we have unique access right now and can ignore the lock
+            tree.get_root().as_ref().unwrap()
+        };
+
+        if let MemTreeNode::Leave { files, .. } = root {
+            t_assert_eq!(
+                &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+                &[1, 4]
+            );
+        } else {
+            tfail!("Expected to find a leave node at tree root");
+        }
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_delete_in_leave() -> Result<(), KernelTestError> {
+        let mut tree = create_empty_tree();
+
+        tree.insert(&TestBlockDevice, create_file_node(1), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(2), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(3), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(4), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(5), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(6), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(7), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(8), true)
+            .tunwrap()?;
+
+        tree.assert_valid_full();
+
+        tree.delete(&TestBlockDevice, file_id(3)).tunwrap()?;
+
+        tree.assert_valid_full();
+
+        let mut nodes = tree.iter_nodes();
+
+        let _root = nodes.next();
+
+        let Some(MemTreeNode::Leave { files, .. }) = nodes.next() else {
+            tfail!("Expected leave");
+        };
+        t_assert_eq!(
+            &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+            &[1, 2, 4]
+        );
+
+        let Some(MemTreeNode::Leave { files, .. }) = nodes.next() else {
+            tfail!("Expected leave");
+        };
+        t_assert_eq!(
+            &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+            &[5, 6, 7, 8]
+        );
+
+        t_assert!(nodes.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_delete_rotate_left() -> Result<(), KernelTestError> {
+        let mut tree = create_empty_tree();
+
+        tree.insert(&TestBlockDevice, create_file_node(1), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(2), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(3), true)
+            .tunwrap()?;
+
+        tree.insert(&TestBlockDevice, create_file_node(5), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(6), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(7), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(8), true)
+            .tunwrap()?;
+
+        tree.assert_valid_full();
+
+        tree.delete(&TestBlockDevice, file_id(3)).tunwrap()?;
+
+        tree.assert_valid_full();
+
+        let mut nodes = tree.iter_nodes();
+
+        let _root = nodes.next();
+
+        let Some(MemTreeNode::Leave { files, .. }) = nodes.next() else {
+            tfail!("Expected leave");
+        };
+        t_assert_eq!(
+            &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+            &[1, 2, 5]
+        );
+
+        let Some(MemTreeNode::Leave { files, .. }) = nodes.next() else {
+            tfail!("Expected leave");
+        };
+        t_assert_eq!(
+            &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+            &[6, 7, 8]
+        );
+
+        t_assert!(nodes.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_delete_rotate_right() -> Result<(), KernelTestError> {
+        let mut tree = create_empty_tree();
+
+        tree.insert(&TestBlockDevice, create_file_node(1), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(2), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(3), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(4), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(6), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(7), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(8), true)
+            .tunwrap()?;
+
+        tree.assert_valid_full();
+
+        tree.delete(&TestBlockDevice, file_id(7)).tunwrap()?;
+
+        tree.assert_valid_full();
+
+        let mut nodes = tree.iter_nodes();
+
+        let _root = nodes.next();
+
+        let Some(MemTreeNode::Leave { files, .. }) = nodes.next() else {
+            tfail!("Expected leave");
+        };
+        t_assert_eq!(
+            &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+            &[1, 2, 3]
+        );
+
+        let Some(MemTreeNode::Leave { files, .. }) = nodes.next() else {
+            tfail!("Expected leave");
+        };
+        t_assert_eq!(
+            &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+            &[4, 6, 8]
+        );
+
+        t_assert!(nodes.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_delete_merge() -> Result<(), KernelTestError> {
+        let mut tree = create_empty_tree();
+
+        tree.insert(&TestBlockDevice, create_file_node(1), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(2), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(3), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(4), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(6), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(7), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(8), true)
+            .tunwrap()?;
+
+        tree.assert_valid_full();
+
+        tree.delete(&TestBlockDevice, file_id(7)).tunwrap()?;
+        tree.delete(&TestBlockDevice, file_id(3)).tunwrap()?;
+
+        tree.assert_valid_full();
+
+        let mut nodes = tree.iter_nodes();
+
+        if let Some(MemTreeNode::Leave { files, .. }) = nodes.next() {
+            t_assert_eq!(
+                &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+                &[1, 2, 4, 6, 8]
+            );
+        } else {
+            tfail!("Expected to find a leave node at tree root");
+        }
+
+        t_assert!(nodes.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn test_delete_merge_last() -> Result<(), KernelTestError> {
+        let mut tree = create_empty_tree();
+
+        tree.insert(&TestBlockDevice, create_file_node(1), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(2), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(3), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(4), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(6), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(7), true)
+            .tunwrap()?;
+        tree.insert(&TestBlockDevice, create_file_node(8), true)
+            .tunwrap()?;
+
+        tree.assert_valid_full();
+
+        tree.delete(&TestBlockDevice, file_id(3)).tunwrap()?;
+        tree.delete(&TestBlockDevice, file_id(7)).tunwrap()?;
+
+        tree.assert_valid_full();
+
+        let mut nodes = tree.iter_nodes();
+
+        if let Some(MemTreeNode::Leave { files, .. }) = nodes.next() {
+            t_assert_eq!(
+                &files.iter().map(|f| f.id.get()).collect::<Vec<_>>(),
+                &[1, 2, 4, 6, 8]
+            );
+        } else {
+            tfail!("Expected to find a leave node at tree root");
+        }
+
+        Ok(())
+    }
+
+    #[kernel_test(f)]
+    fn test_delete_100_files() -> Result<(), KernelTestError> {
+        let mut tree = create_empty_tree();
+
+        unsafe {
+            NonZero::<u64>::new_unchecked(5);
+        }
+
+        let insert_ids: &[u64] = &[
+            42, 67, 13, 91, 28, 73, 5, 38, 84, 19, 99, 7, 34, 53, 22, 88, 45, 96, 31, 11, 79, 62,
+            16, 55, 3, 94, 49, 81, 26, 50, 72, 9, 39, 100, 63, 29, 86, 47, 14, 97, 1, 66, 24, 57,
+            78, 36, 95, 8, 58, 92, 33, 48, 74, 12, 30, 98, 61, 21, 46, 64, 82, 23, 40, 90, 10, 37,
+            59, 76, 20, 6, 35, 56, 68, 80, 27, 87, 2, 70, 17, 51, 60, 44, 32, 25, 77, 54, 85, 4,
+            15, 93, 43, 18, 41, 52, 83, 65, 71, 89, 75, 69,
+        ];
+
+        let delete_ids: &[u64] = &[
+            27, 61, 45, 88, 74, 99, 12, 33, 6, 56, 91, 39, 18, 85, 23, 64, 77, 14, 52, 94, 8, 47,
+            31, 100, 3, 20, 71, 58, 43, 79, 29, 96, 66, 10, 36, 26, 55, 82, 95, 5, 70, 28, 15, 53,
+            7, 97, 86, 48, 37, 92, 87, 41, 81, 90, 32, 1, 21, 50, 11, 67, 83, 24, 76, 46, 44, 16,
+            80, 22, 60, 4, 35, 25, 34, 30, 59, 49, 2, 40, 78, 68, 9, 72, 63, 17, 19, 84, 13, 42,
+            98, 54, 93, 89, 57, 75, 51, 65, 38, 73, 69, 62,
+        ];
+
+        let mut files = Vec::new();
+
+        for id in insert_ids {
+            let file = create_file_node(*id);
+            files.push(file.clone());
+            tree.insert(&TestBlockDevice, file, true).tunwrap()?;
+        }
+        tree.assert_valid_full();
+
+        for id in delete_ids {
+            trace!("Delete {id}");
+            // TODO temp
+            if *id == 69 {
+                log::warn!("fucked up");
+                // super::BORK.store(true, core::sync::atomic::Ordering::SeqCst);
+            }
+            tree.delete(&TestBlockDevice, file_id(*id)).tunwrap()?;
+
+            for f in &files {
+                if f.id.get() > 100 {
+                    log::error!(
+                        "File ids: {:?}",
+                        files.iter().map(|f| f.id.get()).collect::<Vec<_>>()
+                    );
+                    tfail!("broken after delete {id}");
+                }
+            }
+            if *id == 73 {
+                log::warn!("fucked up");
+            }
+            tree.assert_valid_full();
+
+            for f in &files {
+                if f.id.get() > 100 {
+                    tfail!(
+                        "File ids: {:?}",
+                        files.iter().map(|f| f.id.get()).collect::<Vec<_>>()
+                    );
+                    tfail!("broken after valid check {id}");
+                }
+            }
+        }
+        for f in &files {
+            if f.id.get() > 100 {
+                tfail!(
+                    "File ids: {:?}",
+                    files.iter().map(|f| f.id.get()).collect::<Vec<_>>()
+                );
+                tfail!();
+            }
+        }
+        debug!("Delete done");
+        tree.assert_valid_full();
+
+        let root = unsafe {
+            // Safety: we have unique access right now and can ignore the lock
+            tree.get_root().as_ref().unwrap()
+        };
+
+        if let MemTreeNode::Leave { files, .. } = root {
+            t_assert_eq!(files.len(), 0);
         } else {
             tfail!("Expected to find a leave node at tree root");
         }

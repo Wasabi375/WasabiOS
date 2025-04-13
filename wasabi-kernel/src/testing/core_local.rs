@@ -3,7 +3,7 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use alloc::boxed::Box;
-use shared::sync::lockcell::TicketLock;
+use shared::sync::{lockcell::TicketLock, InterruptState};
 use testing::multiprocessor::TestInterruptState;
 
 use super::panic::CustomPanicHandler;

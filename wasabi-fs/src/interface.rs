@@ -100,7 +100,7 @@ pub trait BlockDevice {
     }
 }
 
-#[cfg(feature = "test")]
+#[cfg(any(feature = "test", test))]
 pub mod test {
     use alloc::boxed::Box;
 

@@ -1,6 +1,6 @@
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
-#![feature(assert_matches, allocator_api, negative_impls, slice_take)]
+#![feature(assert_matches, allocator_api, box_as_ptr, negative_impls, slice_take)]
 #![allow(unused, dead_code)] // TODO temp
 
 use core::{
