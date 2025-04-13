@@ -192,6 +192,8 @@ fn expand_function_rust_test(fun: &ItemFn) -> Result<TokenStream> {
                 );
             }
 
+            host_shared::test_utils::init_test_logger();
+
             let result = test_fn();
 
             let expected_result = #expected_result;

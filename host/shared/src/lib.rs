@@ -8,3 +8,5 @@
 
 pub mod sync;
 
+#[cfg(feature = "test")]
+pub mod test_utils;
