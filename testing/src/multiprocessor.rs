@@ -73,7 +73,8 @@ pub unsafe fn init_interrupt_state(
         // Safety: guard_ptr points to final storage, so it will no longer be modified
         let state = unsafe { &*interrupt_state_ptr }
             .expect("guard_ptr points to final storage so it should be set");
-        assert_eq!(state as *const _, interrupt_state as *const _, "init_interrupt_state must be called with the same argument for interrupt_state every time");
+        assert_eq!((state as *const dyn InterruptState).addr(), (interrupt_state as *const dyn InterruptState).addr(),
+            "init_interrupt_state must be called with the same argument for interrupt_state every time");
     }
 }
 
