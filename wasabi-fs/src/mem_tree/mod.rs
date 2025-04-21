@@ -11,7 +11,6 @@ use core::{
 
 use alloc::{
     boxed::{self, Box},
-    collections::BTreeMap,
     sync::Arc,
     vec::Vec,
 };
@@ -170,7 +169,8 @@ impl<I: InterruptState> MemTree<I> {
                         if id <= max_id.unwrap_or(FileId::MAX) {
                             child.resolve(device)?;
                             current_node = unsafe {
-                                // Safety: we just locked this
+                                // Safety: the link is held by current with was locked in the
+                                // previous iteration
                                 child.as_mut().expect("we just resolved the node")
                             };
                             current_node.get_lock().lock();
@@ -232,7 +232,7 @@ impl<I: InterruptState> MemTree<I> {
         }
     }
 
-    /// Unlocks node and all above nodes
+    /// Unlocks node and all above nodes as well as the root_lock
     ///
     /// # Safety
     ///
@@ -332,6 +332,7 @@ impl<I: InterruptState> MemTree<I> {
             .unwrap_or(files.len());
 
         if files.is_not_full() {
+            log::trace!("simple insert");
             files.insert(insert_pos, file);
 
             unsafe {
@@ -388,12 +389,12 @@ impl<I: InterruptState> MemTree<I> {
             }
             None => unsafe {
                 // Safety: we still hold the locks for all nodes above the leave
-                self.insert_split_at_root(leave, split_id, new_node)
+                self.insert_split_at_root(split_id, new_node)
             },
         }
     }
 
-    /// Insert the `new_node` that was created by a split
+    /// Insert the `new_node` that was created by a split in the parent
     ///
     /// TODO document args
     ///
@@ -503,7 +504,7 @@ impl<I: InterruptState> MemTree<I> {
             }
             None => unsafe {
                 // Safety: we still hold the locks for all nodes above the leave
-                self.insert_split_at_root(old_node, split_id, new_node)
+                self.insert_split_at_root(split_id, new_node)
             },
         }
     }
@@ -518,7 +519,6 @@ impl<I: InterruptState> MemTree<I> {
     /// root_lock must be held
     unsafe fn insert_split_at_root<D: BlockDevice>(
         &self,
-        old_root: &mut MemTreeNode<I>,
         split_id: FileId,
         new_node: MemTreeNode<I>,
     ) -> Result<(), MemTreeError<D>> {
@@ -526,27 +526,13 @@ impl<I: InterruptState> MemTree<I> {
             // Safety: we still hold the root_lock
             self.get_root_mut()
         };
-        let tree_root = unsafe {
-            // Safety: we still hold the root_lock
-            old_root_link
-                .as_ref()
-                .expect("Tree root should be resolved at this point")
-        };
-        assert_eq!(
-            tree_root as *const _, old_root as *const _,
-            "Expected `root` to match the tree root"
-        );
-
         trace!("insert_split_at_root");
 
-        // fill root with a temp dummy value
-        let left_link = core::mem::replace(
-            old_root_link,
-            MemTreeLink {
-                node: None,
-                device_ptr: None,
-            },
-        );
+        let left_link = MemTreeLink {
+            node: old_root_link.node.take(),
+            device_ptr: old_root_link.device_ptr.take(),
+        };
+        assert!(left_link.node.is_some());
 
         let mut right_node = Box::try_new(new_node)?;
         let right_link = MemTreeLink {
@@ -566,7 +552,7 @@ impl<I: InterruptState> MemTree<I> {
             lock: UnsafeTicketLock::new(),
         })?;
 
-        let new_root_ptr = Some(NonNull::from(new_root.as_ref()));
+        let new_root_ptr = NonNull::new(Box::as_mut_ptr(&mut new_root));
         let MemTreeNode::Node { children, .. } = new_root.as_mut() else {
             unreachable!()
         };
@@ -581,6 +567,7 @@ impl<I: InterruptState> MemTree<I> {
             node: Some(new_root),
             device_ptr: None,
         };
+
         unsafe {
             // Safety: we hold the root_lock
             *self.root.get() = new_root;
@@ -1176,8 +1163,6 @@ impl<I: InterruptState> MemTree<I> {
         // Safety: we have the root lock
         let root = unsafe { self.get_root().as_ref().unwrap() };
 
-        debug!("Root at {:p}", root);
-
         root.assert_valid(None);
 
         unsafe {
@@ -1345,17 +1330,6 @@ impl<I: InterruptState> MemTreeNode<I> {
                 assert!(children.last().unwrap().1.is_none());
             }
             MemTreeNode::Leave { files, .. } => {
-                // TODO temp
-                if BORK.load(Ordering::SeqCst) {
-                    log::warn!("bork");
-                }
-                let mut out_str = alloc::string::String::new();
-                use core::fmt::Write;
-                let _ = core::write!(out_str, "@{:p}: ", self);
-                for f in files {
-                    let _ = core::write!(out_str, "{:p}@{}, ", &f.id, f.id.get());
-                }
-                debug!("{out_str}");
                 assert!(files.iter().is_sorted_by_key(|f| f.id));
             }
         }
@@ -1407,56 +1381,6 @@ impl<I: InterruptState> MemTreeNode<I> {
                     .for_each(|child| child.assert_valid(Some(self)));
             }
             MemTreeNode::Leave { files, .. } => {
-                // for f in files.iter() {
-                //     //debug!("file @{:p} id: {:p}@{}", f, &f.id, f.id.get());
-                //     // FIXME something fishi is happening here
-                //     // core::hint::black_box(alloc::format!(
-                //     //     "{}", //
-                //     //     // f,
-                //     //     // &f.id,
-                //     //     f.id.get()
-                //     // ));
-
-                //     #[inline(never)]
-                //     fn foo(foo: core::fmt::Arguments<'_>) {
-                //         use core::fmt::Write;
-                //         let mut str = staticvec::StaticString::<512>::new();
-                //         let _ = write!(str, "{}", foo);
-                //         core::hint::black_box(str);
-                //     }
-
-                //     let id = core::hint::black_box(f.id.get());
-                //     assert!(id <= 100);
-
-                //     foo(format_args!(
-                //         "{}", //
-                //         // f,
-                //         // &f.id,
-                //         id
-                //     ));
-                //     assert!(id <= 100);
-                //     assert_eq!(id, f.id.get());
-
-                //     // rng_state ^= rng_state << 13;
-                //     // rng_state ^= rng_state >> 17;
-                //     // rng_state ^= rng_state << 5;
-
-                //     // let id = f.id.get();
-
-                //     let dummy = Box::new(core::hint::black_box(id));
-
-                //     core::hint::black_box(dummy);
-                // }
-
-                //debug!(
-                //    "@{:p}: {:?}",
-                //    self,
-                //    file
-                //        .iter()
-                //        .map(|f| alloc::format!("{:p}@{}", &f.id, f.id.get()))
-                //        .collect::<Vec<_>>()
-                //);
-
                 assert!(files.iter().is_sorted_by_key(|f| f.id));
             }
         }
@@ -1488,7 +1412,7 @@ pub(crate) struct MemTreeLink<I> {
 ///
 /// This is not strictly true. Access to the MemTreeNode is guarded by locks,
 /// but this is still usefull, as it prevents us from accidentally keeping
-/// pointers around that we no longer "know" about.
+/// pointers around that should no longer be accessed.
 impl<I> !Clone for MemTreeLink<I> {}
 
 impl<I: InterruptState> MemTreeLink<I> {
@@ -1560,8 +1484,6 @@ impl<I: InterruptState> MemTreeLink<I> {
         unsafe { self.node.as_mut().map(|n| n.as_mut()) }
     }
 }
-
-static BORK: AtomicBool = AtomicBool::new(false);
 
 #[multitest(cfg: feature = "test")]
 mod test_mem_only {

@@ -26,4 +26,4 @@ uuid.workspace = true
 
 [dev-dependencies]
 testing = { path = "../testing", optional = false }
-host-shared.workspace = true
+host-shared = { workspace = true, features = [ "test" ] }
