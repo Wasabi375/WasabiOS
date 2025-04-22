@@ -3,9 +3,10 @@ use core::{
     assert_matches::assert_matches,
     cell::{RefCell, UnsafeCell},
     default, error,
+    marker::PhantomData,
     mem::{self, MaybeUninit},
     ops::Deref,
-    ptr::{null_mut, NonNull},
+    ptr::{self, null_mut, NonNull},
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
@@ -101,11 +102,175 @@ impl<I> !Clone for MemTree<I> {}
 
 /// Access mode for finding a leave
 #[derive(Debug, Clone, Copy)]
+#[deprecated]
 enum AccessMode {
     /// only lock the current node
     Readonly,
     /// lock all nodes and set the dirty_children flag
     Update,
+}
+
+use node_guard::NodeGuard;
+mod node_guard {
+    use core::{marker::PhantomData, ptr::NonNull};
+
+    use shared::sync::InterruptState;
+
+    use super::MemTreeNode;
+
+    pub trait Borrow {
+        fn is_mut() -> bool;
+        fn is_ref() -> bool {
+            !Self::is_mut()
+        }
+    }
+    pub trait BorrowMut: Borrow {}
+
+    pub struct Mut {}
+    pub struct Immut {}
+
+    impl Borrow for Immut {
+        fn is_mut() -> bool {
+            false
+        }
+    }
+
+    impl Borrow for Mut {
+        fn is_mut() -> bool {
+            true
+        }
+    }
+    impl BorrowMut for Mut {}
+
+    /// A reference to a MemTreeNode.
+    ///
+    /// This struct gurantees that the reference is valid and the necessary locks
+    /// are held.
+    pub struct NodeGuard<'a, I: InterruptState, BorrowType: Borrow> {
+        node: NonNull<MemTreeNode<I>>,
+        drop_check: bool,
+        _lifetime: PhantomData<&'a ()>,
+        _borrow: PhantomData<BorrowType>,
+    }
+
+    impl<I, B> !Clone for NodeGuard<'_, I, B> {}
+
+    impl<I: InterruptState, B: Borrow> Drop for NodeGuard<'_, I, B> {
+        fn drop(&mut self) {
+            if self.drop_check {
+                if B::is_mut() {
+                    panic!(
+                        "Mut Node guard must not be dropped. Call awaken or into_parent instead"
+                    );
+                } else {
+                    unsafe {
+                        // Safety: we hold the node lock, otherwise the initial reference is invalid.
+                        self.borrow().get_lock().unlock();
+                    }
+                }
+            }
+        }
+    }
+
+    impl<'a, I: InterruptState, B: Borrow> NodeGuard<'a, I, B> {
+        pub fn new(node: &'a mut MemTreeNode<I>) -> Self {
+            Self {
+                node: node.into(),
+                drop_check: true,
+                _lifetime: PhantomData,
+                _borrow: PhantomData,
+            }
+        }
+
+        pub fn awaken_ref(mut self) -> &'a MemTreeNode<I> {
+            self.drop_check = false;
+            // Safety: NodeGuard gurantees we have at least shared access
+            unsafe { self.node.as_ref() }
+        }
+
+        pub fn borrow(&self) -> &MemTreeNode<I> {
+            // Safety: NodeGuard gurantees we have at least shared access
+            unsafe { self.node.as_ref() }
+        }
+
+        pub fn as_ptr(&self) -> NonNull<MemTreeNode<I>> {
+            self.node
+        }
+
+        pub fn unlock(mut self) -> NonNull<MemTreeNode<I>> {
+            self.drop_check = false;
+            let node = self.borrow();
+            unsafe {
+                // Safety: we hold the node lock, otherwise the initial reference is invalid.
+                node.get_lock().unlock();
+            }
+
+            self.as_ptr()
+        }
+    }
+
+    impl<'a, I: InterruptState, B: BorrowMut> NodeGuard<'a, I, B> {
+        pub fn awaken_mut(mut self) -> &'a mut MemTreeNode<I> {
+            self.drop_check = false;
+            // Safety: NodeGuard is BorrowMut, therefor we have unique access
+            unsafe { self.node.as_mut() }
+        }
+
+        /// Get shared access to the parent node
+        ///
+        /// This still requires the current guard to have [AccessMode::Update] access,
+        /// because this gurantees that the parent is still locked
+        pub fn parent_ref<'b>(&'b self) -> Option<NodeGuard<'b, I, Immut>>
+        where
+            'a: 'b,
+        {
+            let node = self.borrow();
+
+            let Some(parent_ptr) = node.get_parent() else {
+                return None;
+            };
+
+            Some(NodeGuard {
+                node: parent_ptr,
+                drop_check: true,
+                _lifetime: PhantomData,
+                _borrow: PhantomData,
+            })
+        }
+
+        /// Convert this guard into a guard of the parent
+        ///
+        /// This will unlock the current node, and also return a ptr to it
+        pub fn into_parent(
+            mut self,
+        ) -> Result<(NodeGuard<'a, I, Mut>, NonNull<MemTreeNode<I>>), Self> {
+            let node = self.borrow();
+
+            let Some(parent_ptr) = node.get_parent() else {
+                return Err(self);
+            };
+            unsafe {
+                // Safety: we hold the node lock, otherwise the initial reference is invalid.
+                node.get_lock().unlock();
+            }
+            self.drop_check = false;
+
+            Ok((
+                NodeGuard {
+                    node: parent_ptr,
+                    drop_check: true,
+                    _lifetime: PhantomData,
+                    _borrow: PhantomData,
+                },
+                self.node,
+            ))
+        }
+
+        pub fn borrow_mut(&mut self) -> &mut MemTreeNode<I> {
+            // Safety: NodeGuard is BorrowMut, therefor we have unique access
+            unsafe { self.node.as_mut() }
+        }
+    }
 }
 
 impl<I: InterruptState> MemTree<I> {
@@ -130,12 +295,11 @@ impl<I: InterruptState> MemTree<I> {
     /// Return the leave that should contain `id` if present.
     ///
     /// The nodes are locked based on [LockStrategy]
-    fn find_leave<D: BlockDevice>(
+    fn find_leave<D: BlockDevice, BorrowType: node_guard::Borrow>(
         &self,
         device: &D,
         id: FileId,
-        access_mode: AccessMode,
-    ) -> Result<&mut MemTreeNode<I>, D::BlockDeviceError> {
+    ) -> Result<NodeGuard<'_, I, BorrowType>, D::BlockDeviceError> {
         self.root_lock.lock();
 
         let mut current_node = unsafe {
@@ -146,7 +310,7 @@ impl<I: InterruptState> MemTree<I> {
 
         current_node.get_lock().lock();
 
-        if matches!(access_mode, AccessMode::Readonly) {
+        if BorrowType::is_ref() {
             unsafe {
                 // Safety: we just locked this
                 self.root_lock.unlock();
@@ -161,7 +325,7 @@ impl<I: InterruptState> MemTree<I> {
                     dirty_children,
                     ..
                 } => {
-                    if matches!(access_mode, AccessMode::Update) {
+                    if BorrowType::is_mut() {
                         *dirty_children = true;
                     }
 
@@ -174,7 +338,7 @@ impl<I: InterruptState> MemTree<I> {
                                 child.as_mut().expect("we just resolved the node")
                             };
                             current_node.get_lock().lock();
-                            if matches!(access_mode, AccessMode::Readonly) {
+                            if BorrowType::is_ref() {
                                 unsafe {
                                     // Safety: we locked this in the previous iteration (child_lock)
                                     lock.unlock();
@@ -185,7 +349,7 @@ impl<I: InterruptState> MemTree<I> {
                     }
                     unreachable!("max_id should always be None for the last entry")
                 }
-                leave @ MemTreeNode::Leave { .. } => return Ok(leave),
+                leave @ MemTreeNode::Leave { .. } => return Ok(NodeGuard::new(leave)),
             }
         }
     }
@@ -237,28 +401,20 @@ impl<I: InterruptState> MemTree<I> {
     /// # Safety
     ///
     /// node, all above nodes and the root_lock must be locked
-    unsafe fn unlock_upwards(&self, node: &MemTreeNode<I>) {
-        let mut current = node;
-
+    unsafe fn unlock_upwards(&self, node: NodeGuard<'_, I, node_guard::Mut>) {
+        let mut current = Ok(node);
         loop {
-            let parent = current.get_parent();
-
-            unsafe {
-                // Safety: current is locked
-                current.get_lock().unlock();
-            }
-
-            if let Some(parent) = parent {
-                current = unsafe {
-                    // Safety: we have the parent lock
-                    parent.as_ref()
+            match current {
+                Ok(node) => {
+                    current = node.into_parent().map(|(p, _)| p);
                 }
-            } else {
-                unsafe {
-                    // Safety: root is locked
-                    self.root_lock.unlock();
+                Err(root_guard) => {
+                    root_guard.unlock();
+                    unsafe {
+                        self.root_lock.unlock();
+                    }
+                    return;
                 }
-                break;
             }
         }
     }
@@ -268,17 +424,13 @@ impl<I: InterruptState> MemTree<I> {
         device: &D,
         id: FileId,
     ) -> Result<Option<Arc<FileNode>>, D::BlockDeviceError> {
-        let leave: &_ = self.find_leave(device, id, AccessMode::Readonly)?;
-        let MemTreeNode::Leave { files, lock, .. } = leave else {
+        let leave = self.find_leave::<_, node_guard::Immut>(device, id)?;
+        let MemTreeNode::Leave { files, lock, .. } = leave.borrow() else {
             panic!("Find leave should always return a leave node");
         };
 
         let result = files.iter().find(|f| f.id == id).cloned();
-        unsafe {
-            // Safety: we locked this in the previous iteration
-            // (child_lock in Node/root case)
-            lock.unlock();
-        }
+
         return Ok(result);
     }
 
@@ -288,20 +440,19 @@ impl<I: InterruptState> MemTree<I> {
         file: Arc<FileNode>,
         create_only: bool, // TODO do I want to create to functions here? Insert/update
     ) -> Result<(), MemTreeError<D>> {
-        let leave = self
-            .find_leave(device, file.id, AccessMode::Update)
+        let mut leave = self
+            .find_leave::<_, node_guard::Mut>(device, file.id)
             .map_err(MemTreeError::from)?;
 
         let MemTreeNode::Leave {
             parent,
             files,
             dirty,
-            lock,
-        } = leave
+            ..
+        } = leave.borrow_mut()
         else {
             panic!("Find leave should always return a leave node");
         };
-        assert!(!lock.is_unlocked());
 
         if let Some(override_pos) = files.iter().position(|f| f.id == file.id) {
             if create_only {
@@ -354,12 +505,6 @@ impl<I: InterruptState> MemTree<I> {
             right_node_files.insert(insert_pos - half_capacity, file);
         }
 
-        unsafe {
-            // Safety: the tree is locked, we no longer need to access this leave
-            // so we can unlock it and continue with updating the nodes above us.
-            lock.unlock();
-        }
-
         let split_id = left_node_files
             .last()
             .expect("This should never be empty")
@@ -376,20 +521,16 @@ impl<I: InterruptState> MemTree<I> {
             lock: UnsafeTicketLock::new(),
         };
 
-        match parent {
-            Some(parent) => {
-                let parent = unsafe {
-                    // Safety: we still hold the locks for all nodes above the leave
-                    parent.as_mut()
-                };
+        match leave.into_parent() {
+            Ok((parent, leave_ptr)) => {
                 unsafe {
                     // Safety: we still hold the locks for all nodes above the leave
-                    self.insert_split(parent, leave, split_id, new_node, new_node_max)
+                    self.insert_split(parent, leave_ptr, split_id, new_node, new_node_max)
                 }
             }
-            None => unsafe {
+            Err(root) => unsafe {
                 // Safety: we still hold the locks for all nodes above the leave
-                self.insert_split_at_root(split_id, new_node)
+                self.insert_split_at_root(root, split_id, new_node)
             },
         }
     }
@@ -403,8 +544,8 @@ impl<I: InterruptState> MemTree<I> {
     /// root_lock must be held
     unsafe fn insert_split<D: BlockDevice>(
         &self,
-        parent: &mut MemTreeNode<I>,
-        old_node: &mut MemTreeNode<I>,
+        mut current: NodeGuard<'_, I, node_guard::Mut>,
+        old_node_ptr: NonNull<MemTreeNode<I>>,
         old_node_new_max: FileId,
         new_node: MemTreeNode<I>,
         new_node_max: FileId,
@@ -414,8 +555,8 @@ impl<I: InterruptState> MemTree<I> {
             children,
             dirty,
             dirty_children,
-            lock,
-        } = parent
+            ..
+        } = current.borrow_mut()
         else {
             panic!("parent must always be a node");
         };
@@ -431,7 +572,8 @@ impl<I: InterruptState> MemTree<I> {
         let old_position = children
             .iter()
             .position(|(child, _max)| {
-                child.node.as_ref().map(|n| n.as_ref() as *const _) == Some(old_node as *const _)
+                child.node.as_ref().map(|n| n.as_ref() as *const _)
+                    == Some(old_node_ptr.as_ptr() as *const _)
             })
             .expect("children should always contain the old node");
 
@@ -451,7 +593,7 @@ impl<I: InterruptState> MemTree<I> {
                 // Safety: parent and all above nodes are locked
                 // old_node is not locked as it was unlocked in the previous recursion
                 // (parent/leave)
-                self.unlock_upwards(parent)
+                self.unlock_upwards(current)
             }
 
             return Ok(());
@@ -471,12 +613,6 @@ impl<I: InterruptState> MemTree<I> {
             right_node_children.insert(insert_position, (new_node_link, new_node_max));
         }
 
-        unsafe {
-            // Safety: the tree is locked from this node up, we no longer need to access this node
-            // so we can unlock it and continue with updating the nodes above us.
-            lock.unlock();
-        }
-
         let split_id = children
             .last()
             .expect("This should never be empty")
@@ -491,20 +627,16 @@ impl<I: InterruptState> MemTree<I> {
             lock: UnsafeTicketLock::new(),
         };
 
-        match next_parent {
-            Some(parent) => {
-                let parent = unsafe {
-                    // Safety: we still hold the locks for all nodes above the leave
-                    parent.as_mut()
-                };
+        match current.into_parent() {
+            Ok((parent, current_ptr)) => {
                 unsafe {
                     // Safety: we still hold the locks for all nodes above the leave
-                    self.insert_split(parent, old_node, split_id, new_node, new_node_max)
+                    self.insert_split(parent, current_ptr, split_id, new_node, new_node_max)
                 }
             }
-            None => unsafe {
+            Err(root) => unsafe {
                 // Safety: we still hold the locks for all nodes above the leave
-                self.insert_split_at_root(split_id, new_node)
+                self.insert_split_at_root(root, split_id, new_node)
             },
         }
     }
@@ -519,20 +651,38 @@ impl<I: InterruptState> MemTree<I> {
     /// root_lock must be held
     unsafe fn insert_split_at_root<D: BlockDevice>(
         &self,
+        root: NodeGuard<'_, I, node_guard::Mut>,
         split_id: FileId,
         new_node: MemTreeNode<I>,
     ) -> Result<(), MemTreeError<D>> {
-        let old_root_link = unsafe {
-            // Safety: we still hold the root_lock
-            self.get_root_mut()
-        };
         trace!("insert_split_at_root");
+        assert!(root.parent_ref().is_none());
+
+        let (old_root_link_node, old_root_link_device) = {
+            let old_root_link = unsafe {
+                // Safety: we still hold the root_lock
+                self.get_root_mut()
+            };
+
+            let root_node_ptr = root.unlock().as_ptr() as *const _;
+
+            let old_root_link_node = old_root_link.node.take();
+            assert!(old_root_link_node.is_some());
+
+            let old_root_link_node_ptr = old_root_link_node
+                .as_ref()
+                .map(|node| Box::as_ptr(node))
+                .expect("root node should be some");
+
+            assert_eq!(old_root_link_node_ptr, root_node_ptr);
+
+            (old_root_link_node, old_root_link.device_ptr.take())
+        };
 
         let left_link = MemTreeLink {
-            node: old_root_link.node.take(),
-            device_ptr: old_root_link.device_ptr.take(),
+            node: old_root_link_node,
+            device_ptr: old_root_link_device,
         };
-        assert!(left_link.node.is_some());
 
         let mut right_node = Box::try_new(new_node)?;
         let right_link = MemTreeLink {
@@ -552,7 +702,7 @@ impl<I: InterruptState> MemTree<I> {
             lock: UnsafeTicketLock::new(),
         })?;
 
-        let new_root_ptr = NonNull::new(Box::as_mut_ptr(&mut new_root));
+        let new_root_ptr = NonNull::from(new_root.as_mut());
         let MemTreeNode::Node { children, .. } = new_root.as_mut() else {
             unreachable!()
         };
@@ -561,7 +711,7 @@ impl<I: InterruptState> MemTree<I> {
                 // Safety: we have unique access so we can ignore the lock
                 child.0.as_mut().expect("We just filled this")
             };
-            *child.get_parent_mut() = new_root_ptr;
+            *child.get_parent_mut() = Some(new_root_ptr);
         }
         let new_root = MemTreeLink {
             node: Some(new_root),
@@ -574,13 +724,14 @@ impl<I: InterruptState> MemTree<I> {
         }
 
         unsafe {
-            // Safety: we hold the root_lock
+            // Safety: we hold the root_lock. We unlocked every node
             self.root_lock.unlock();
         }
 
         Ok(())
     }
 
+    /*
     pub fn delete<D: BlockDevice>(
         &self,
         device: &D,
@@ -1156,6 +1307,7 @@ impl<I: InterruptState> MemTree<I> {
 
         Ok(())
     }
+    */
 
     pub fn assert_valid(&self) {
         self.root_lock.lock();
@@ -1839,6 +1991,7 @@ mod test_mem_only {
         Ok(())
     }
 
+    /*
     #[kernel_test]
     fn test_delete_no_rebalance() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
@@ -2235,4 +2388,5 @@ mod test_mem_only {
 
         Ok(())
     }
+    */
 }
