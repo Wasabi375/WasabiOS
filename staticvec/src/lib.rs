@@ -27,7 +27,6 @@
     exact_size_is_empty,
     generic_const_exprs,
     maybe_uninit_array_assume_init,
-    maybe_uninit_uninit_array,
     maybe_uninit_uninit_array_transpose,
     pattern,
     slice_partition_dedup,
@@ -2818,7 +2817,7 @@ impl<const N: usize> StaticVec<u8, N, usize> {
     #[inline]
     pub(crate) const fn bytes_to_data(values: &[u8]) -> MaybeUninit<[u8; N]> {
         // Get an uninitialized array of bytes, with `N` capacity.
-        let mut res = MaybeUninit::uninit_array::<N>();
+        let mut res = [const { MaybeUninit::uninit() }; N];
         // Move `values.len()` worth of bytes from `values` to `res`. I'm unaware of any other way that
         // this could be done currently that would leave us with something usable to create a StaticVec
         // for which the generic `N` could be *different* from `values.len()`, so thank

@@ -13,7 +13,6 @@
     let_chains,
     maybe_uninit_slice,
     maybe_uninit_array_assume_init,
-    maybe_uninit_uninit_array,
     never_type,
     pointer_is_aligned_to,
     ptr_alignment_type,

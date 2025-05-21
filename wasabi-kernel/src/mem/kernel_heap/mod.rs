@@ -158,7 +158,7 @@ impl GlobalHeapFreezeHeaps {
     const fn new() -> Self {
         Self {
             valid_count: 0,
-            extra_heaps: MaybeUninit::uninit_array(),
+            extra_heaps: [const { MaybeUninit::uninit() }; Self::MAX_HEAPS],
         }
     }
 
@@ -249,9 +249,7 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
             let extras = if freeze_heaps.valid_count > 0 {
                 unsafe {
                     // Safety: the first `valid_extra_heap_count` heaps are initialized
-                    MaybeUninit::slice_assume_init_ref(
-                        &freeze_heaps.extra_heaps[0..freeze_heaps.valid_count],
-                    )
+                    freeze_heaps.extra_heaps[0..freeze_heaps.valid_count].assume_init_ref()
                 }
             } else {
                 &[]
@@ -489,8 +487,7 @@ impl KernelHeap {
         }
 
         trace!("create slab allocators...");
-        let mut slabs: [MaybeUninit<_>; SLAB_ALLOCATOR_SIZES_BYTES.len()] =
-            MaybeUninit::uninit_array();
+        let mut slabs = [const { MaybeUninit::uninit() }; SLAB_ALLOCATOR_SIZES_BYTES.len()];
         for (slab, size) in slabs.iter_mut().zip(SLAB_ALLOCATOR_SIZES_BYTES.iter()) {
             // safety: our safety guarantees, that [KernelHeap::init] is called
             // before anything else, and there we call `nwe_slab.init`.
