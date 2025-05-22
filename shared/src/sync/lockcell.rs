@@ -423,7 +423,9 @@ impl<I: InterruptState> UnsafeTicketLock<I> {
         self.owner.store(!0, Ordering::Release);
         self.current_ticket.fetch_add(1, Ordering::SeqCst);
 
-        I::s_exit_lock(!self.preemtable);
+        unsafe {
+            I::s_exit_lock(!self.preemtable);
+        }
     }
 
     /// "Permanently" shatters the lock. Following calls to [LockCell::lock] will
@@ -512,27 +514,31 @@ impl<T: Send, I: InterruptState> LockCell<T> for TicketLock<T, I> {
 
 impl<T, I: InterruptState> LockCellInternal<T> for TicketLock<T, I> {
     unsafe fn get(&self) -> &T {
-        &*self.data.get()
+        unsafe { &*self.data.get() }
     }
 
     unsafe fn get_mut(&self) -> &mut T {
-        &mut *self.data.get()
+        unsafe { &mut *self.data.get() }
     }
 
     #[track_caller]
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
         assert!(core::ptr::eq(self, guard.lockcell));
 
-        self.unlock_no_guard()
+        unsafe { self.unlock_no_guard() }
     }
 
     #[track_caller]
     unsafe fn unlock_no_guard(&self) {
-        self.lock.unlock();
+        unsafe {
+            self.lock.unlock();
+        }
     }
 
     unsafe fn shatter_permanent(&self) {
-        self.lock.shatter_permanent();
+        unsafe {
+            self.lock.shatter_permanent();
+        }
     }
 
     fn is_unlocked(&self) -> bool {
@@ -693,14 +699,16 @@ impl<T, I: InterruptState> RWCellInternal<T> for ReadWriteCell<T, I> {
     unsafe fn release_read<'s, 'l: 's>(&'s self, guard: &mut ReadCellGuard<'l, T, Self>) {
         assert!(core::ptr::eq(self, guard.rw_cell));
 
-        self.force_release_read()
+        unsafe { self.force_release_read() }
     }
 
     unsafe fn force_release_read(&self) {
         let previous_count = self.access_count.fetch_sub(1, Ordering::SeqCst);
         assert!(previous_count >= 1);
         // NOTE: read does not disable interrupts
-        I::s_exit_lock(false);
+        unsafe {
+            I::s_exit_lock(false);
+        }
     }
 
     fn open_to_read(&self) -> bool {
@@ -710,25 +718,27 @@ impl<T, I: InterruptState> RWCellInternal<T> for ReadWriteCell<T, I> {
 
 impl<T, I: InterruptState> LockCellInternal<T> for ReadWriteCell<T, I> {
     unsafe fn get(&self) -> &T {
-        &*self.data.get()
+        unsafe { &*self.data.get() }
     }
 
     unsafe fn get_mut(&self) -> &mut T {
-        &mut *self.data.get()
+        unsafe { &mut *self.data.get() }
     }
 
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
         assert!(core::ptr::eq(self, guard.lockcell));
 
-        self.unlock_no_guard()
+        unsafe { self.unlock_no_guard() }
     }
 
     unsafe fn unlock_no_guard(&self) {
         let old_lock_value = self.access_count.swap(0, Ordering::SeqCst);
         assert_eq!(old_lock_value, -1);
-        // Safety: this will restore the interrupt state from when we called
-        // enter_lock, so this is safe
-        I::s_exit_lock(!self.preemtable);
+        unsafe {
+            // Safety: this will restore the interrupt state from when we called
+            // enter_lock, so this is safe
+            I::s_exit_lock(!self.preemtable);
+        }
     }
 
     unsafe fn shatter_permanent(&self) {
@@ -773,7 +783,9 @@ macro_rules! unwrapLockWrapper {
                 ///
                 /// caller ensures that the [UnwrapLock] is initialized before it is accessed
                 pub const unsafe fn new_uninit() -> Self {
-                    UnwrapLock::new($lock_type::new(MaybeUninit::uninit()))
+                    unsafe {
+                        UnwrapLock::new($lock_type::new(MaybeUninit::uninit()))
+                    }
                 }
 
                 /// creates a new non preemtable [Self] that is uninitialized
@@ -782,7 +794,9 @@ macro_rules! unwrapLockWrapper {
                 ///
                 /// caller ensures that the [UnwrapLock] is initialized before it is accessed
                 pub const unsafe fn new_non_preemtable_uninit() -> Self {
-                    UnwrapLock::new($lock_type::new_non_preemtable(MaybeUninit::uninit()))
+                    unsafe {
+                        UnwrapLock::new($lock_type::new_non_preemtable(MaybeUninit::uninit()))
+                    }
                 }
             }
         }
@@ -850,26 +864,30 @@ impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCell<T> for UnwrapLock<T, L> {
 
 impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T, L> {
     unsafe fn get(&self) -> &T {
-        self.lockcell.get().assume_init_ref()
+        unsafe { self.lockcell.get().assume_init_ref() }
     }
 
     unsafe fn get_mut(&self) -> &mut T {
-        self.lockcell.get_mut().assume_init_mut()
+        unsafe { self.lockcell.get_mut().assume_init_mut() }
     }
 
     #[track_caller]
     unsafe fn unlock<'s, 'l: 's>(&'s self, guard: &mut LockCellGuard<'l, T, Self>) {
         assert!(core::ptr::eq(self, guard.lockcell));
-        self.lockcell.unlock_no_guard();
+        unsafe {
+            self.lockcell.unlock_no_guard();
+        }
     }
 
     #[track_caller]
     unsafe fn unlock_no_guard(&self) {
-        self.lockcell.unlock_no_guard();
+        unsafe {
+            self.lockcell.unlock_no_guard();
+        }
     }
 
     unsafe fn shatter_permanent(&self) {
-        self.lockcell.shatter_permanent()
+        unsafe { self.lockcell.shatter_permanent() }
     }
 
     fn is_unlocked(&self) -> bool {
@@ -883,23 +901,27 @@ impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<T> for UnwrapLock<T,
 
 impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCellInternal<MaybeUninit<T>> for UnwrapLock<T, L> {
     unsafe fn get(&self) -> &MaybeUninit<T> {
-        self.lockcell.get()
+        unsafe { self.lockcell.get() }
     }
 
     unsafe fn get_mut(&self) -> &mut MaybeUninit<T> {
-        self.lockcell.get_mut()
+        unsafe { self.lockcell.get_mut() }
     }
 
     unsafe fn unlock<'s, 'l: 's>(&'s self, _guard: &mut LockCellGuard<'l, MaybeUninit<T>, Self>) {
-        self.lockcell.unlock_no_guard();
+        unsafe {
+            self.lockcell.unlock_no_guard();
+        }
     }
 
     unsafe fn unlock_no_guard(&self) {
-        self.lockcell.unlock_no_guard();
+        unsafe {
+            self.lockcell.unlock_no_guard();
+        }
     }
 
     unsafe fn shatter_permanent(&self) {
-        self.lockcell.shatter_permanent()
+        unsafe { self.lockcell.shatter_permanent() }
     }
 
     fn is_unlocked(&self) -> bool {
@@ -922,7 +944,9 @@ impl<T: Send, L: RWLockCell<MaybeUninit<T>>> RWLockCell<T> for UnwrapLock<T, L> 
 impl<T: Send, L: RWLockCell<MaybeUninit<T>>> RWCellInternal<T> for UnwrapLock<T, L> {
     unsafe fn release_read<'s, 'l: 's>(&'s self, guard: &mut ReadCellGuard<'l, T, Self>) {
         assert!(core::ptr::eq(self, guard.rw_cell));
-        self.force_release_read();
+        unsafe {
+            self.force_release_read();
+        }
     }
 
     fn open_to_read(&self) -> bool {

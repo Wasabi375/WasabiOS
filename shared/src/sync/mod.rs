@@ -135,7 +135,7 @@ pub trait InterruptState: CoreInfo + 'static {
     where
         Self: Sized,
     {
-        Self::instance().enter_lock(disable_interrupts)
+        unsafe { Self::instance().enter_lock(disable_interrupts) }
     }
 
     /// Signal the kernel that a lock was released. If `enable_interrupts` the
@@ -149,6 +149,6 @@ pub trait InterruptState: CoreInfo + 'static {
     where
         Self: Sized,
     {
-        Self::instance().exit_lock(enable_interrupts)
+        unsafe { Self::instance().exit_lock(enable_interrupts) }
     }
 }

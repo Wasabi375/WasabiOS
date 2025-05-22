@@ -21,7 +21,7 @@ impl<T> Deref for RefOrBox<'_, T> {
     fn deref(&self) -> &Self::Target {
         match self {
             RefOrBox::Ref(value) => value,
-            RefOrBox::Boxed(ref value) => value.borrow(),
+            RefOrBox::Boxed(value) => value.borrow(),
         }
     }
 }
