@@ -22,6 +22,7 @@ pub mod rangeset;
 pub mod sync;
 pub mod task_local;
 pub mod types;
+pub mod r#unsafe;
 
 /// Calculat the number of bytes in n kilo bytes
 #[macro_export]

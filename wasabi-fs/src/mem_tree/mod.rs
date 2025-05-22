@@ -1,11 +1,13 @@
 use core::{
     alloc::AllocError,
     assert_matches::assert_matches,
+    borrow::{Borrow, BorrowMut},
     cell::{RefCell, UnsafeCell},
     default, error,
     marker::PhantomData,
     mem::{self, MaybeUninit},
     ops::Deref,
+    panic,
     ptr::{self, null_mut, NonNull},
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
@@ -17,6 +19,7 @@ use alloc::{
 };
 use log::{debug, trace};
 use shared::{
+    r#unsafe::extend_lifetime_mut,
     sync::{lockcell::UnsafeTicketLock, InterruptState},
     todo_error, todo_warn,
 };
@@ -40,9 +43,9 @@ pub mod iter;
 #[allow(missing_docs)]
 pub enum MemTreeError<D: BlockDevice> {
     #[error("Out of Memory")]
-    Oom(#[from] AllocError), // TODO ensure I don't destroy the locks
+    Oom(#[from] AllocError),
     #[error("Block Device Failure: {0}")]
-    BlockDevice(D::BlockDeviceError), // TODO ensure I don't destroy the locks
+    BlockDevice(D::BlockDeviceError),
     #[error("FileNode with id {0} already exists")]
     FileNodeExists(FileId),
     #[error("FileNode with id {0} does not exist")]
@@ -57,23 +60,39 @@ impl<D: BlockDevice> MemTreeError<D> {
 
 /// An in memory view of the on device file tree
 ///
-/// Any modification of the file tree is done on this data structure
-/// and later saved to the device using a copy on write system, meaning
-/// that the [MainHeader::root] will always point to a complete and valid
-/// file tree.
+/// Any modification of the file tree is done on this data structure and later saved to the device
+/// using a copy on write system, meaning that the [MainHeader::root] will always point to a
+/// complete and valid file tree.
 ///
 /// TODO: how do I ensure that old "used" blocks stay around until the main root is updated
 ///
 /// # Data Structure
 ///
-/// Both the on device tree([TreeNode]) and the in memory view are represented
-/// as a [B+Tree] or to be more exact a [B-Tree] where the files are stored
-/// in the leaves. The keys in internal nodes instead represent the largest key
-/// of the corresponding subtree.
+/// Both the on device tree([TreeNode]) and the in memory view are represented as a [B+Tree] or to
+/// be more exact a [B-Tree] where the files are stored in the leaves. The keys in internal nodes
+/// instead represent the largest key of the corresponding subtree.
 ///
 /// ## Locking
 ///
-/// TODO implement and describe fine grained B-Tree locking:
+/// This implementation uses fine grained locking. The idea is that each node in the tree has it's
+/// own lock. The system by which locks are acquired depend on whether the operation is readonly or
+/// is read/write.
+///
+/// For readonly operation only a few locks are held at a time. First the `root_lock` is acquired.
+/// This allows to read the root node and lock that. After the lock for a node is acquired the node
+/// for the parent (or the `root_lock`) is unlocked again. This way only 2 locks are held at the
+/// same time. The lock for the current level node and the lock for the next level. This allows for
+/// good parallelization as chances are that 2 operations will access separate subtrees.
+///
+/// For read/write operations all locks from the `root_lock` down to the leave are locked and held
+/// until the operation finishes. Locking works similar to readonly operations but the parent's
+/// lock is not released. Read/write operations release the locks from the leave upwards as nodes
+/// are no longer accessed.
+///
+/// Locking nodes from the root down to the leaves allows multiple read operations to run in
+/// parallel. This allso allows to start a write operation while reads are still processing. Reads
+/// will have to wait for any write operation to finish however, because write operations don't
+/// release the `root_lock` until they are finished.
 ///
 /// * https://runshenzhu.github.io/618-final/: Approach #2: Fine Grained Locking
 /// * The Ubiquitous B-Tree (Douglas Comer): 4. B-Trees in a Multiuser Environmen
@@ -112,22 +131,39 @@ enum AccessMode {
 
 use node_guard::NodeGuard;
 mod node_guard {
+    use alloc::boxed::Box;
     use core::{marker::PhantomData, ptr::NonNull};
+    use static_assertions::const_assert;
 
     use shared::sync::InterruptState;
 
-    use super::MemTreeNode;
+    use crate::{
+        fs_structs::{FileId, NODE_MAX_CHILD_COUNT},
+        interface::BlockDevice,
+    };
+
+    use super::{DeleteRebalanceMode, MemTreeLink, MemTreeNode};
 
     pub trait Borrow {
         fn is_mut() -> bool;
         fn is_ref() -> bool {
             !Self::is_mut()
         }
+        fn drop_check() -> bool {
+            Self::is_mut()
+        }
     }
     pub trait BorrowMut: Borrow {}
+    pub trait IntoParent: BorrowMut {}
 
+    /// Marker for Guards that allow for mutable access, this includes
+    /// upgrading into the parent nodes guard
     pub struct Mut {}
+    /// Marker for Guards that only allow for readonly access
     pub struct Immut {}
+    /// Marker for Guards that allow for mutable access, but *can't* be upgraded
+    /// to the parent node's guard
+    pub struct MutChild {}
 
     impl Borrow for Immut {
         fn is_mut() -> bool {
@@ -141,6 +177,17 @@ mod node_guard {
         }
     }
     impl BorrowMut for Mut {}
+    impl IntoParent for Mut {}
+
+    impl Borrow for MutChild {
+        fn is_mut() -> bool {
+            true
+        }
+        fn drop_check() -> bool {
+            false
+        }
+    }
+    impl BorrowMut for MutChild {}
 
     /// A reference to a MemTreeNode.
     ///
@@ -158,7 +205,7 @@ mod node_guard {
     impl<I: InterruptState, B: Borrow> Drop for NodeGuard<'_, I, B> {
         fn drop(&mut self) {
             if self.drop_check {
-                if B::is_mut() {
+                if B::drop_check() {
                     panic!(
                         "Mut Node guard must not be dropped. Call awaken or into_parent instead"
                     );
@@ -173,7 +220,12 @@ mod node_guard {
     }
 
     impl<'a, I: InterruptState, B: Borrow> NodeGuard<'a, I, B> {
-        pub fn new(node: &'a mut MemTreeNode<I>) -> Self {
+        /// Creates a new node guard
+        ///
+        /// # Safety
+        ///
+        /// the node bust be properly locked, depending on `B`.
+        pub unsafe fn new(node: &'a mut MemTreeNode<I>) -> Self {
             Self {
                 node: node.into(),
                 drop_check: true,
@@ -209,7 +261,7 @@ mod node_guard {
         }
     }
 
-    impl<'a, I: InterruptState, B: BorrowMut> NodeGuard<'a, I, B> {
+    impl<'a, I: InterruptState, B: IntoParent> NodeGuard<'a, I, B> {
         pub fn awaken_mut(mut self) -> &'a mut MemTreeNode<I> {
             self.drop_check = false;
             // Safety: NodeGuard is BorrowMut, therefor we have unique access
@@ -240,7 +292,10 @@ mod node_guard {
 
         /// Convert this guard into a guard of the parent
         ///
-        /// This will unlock the current node, and also return a ptr to it
+        /// This will unlock the current node.
+        ///
+        /// Returns a [NodeGuard] for the parent and a ptr to the current node
+        /// or `Err(self)` if no parent exists.
         pub fn into_parent(
             mut self,
         ) -> Result<(NodeGuard<'a, I, Mut>, NonNull<MemTreeNode<I>>), Self> {
@@ -265,10 +320,23 @@ mod node_guard {
                 self.node,
             ))
         }
+    }
 
+    impl<'a, I: InterruptState, B: BorrowMut> NodeGuard<'a, I, B> {
         pub fn borrow_mut(&mut self) -> &mut MemTreeNode<I> {
             // Safety: NodeGuard is BorrowMut, therefor we have unique access
             unsafe { self.node.as_mut() }
+        }
+    }
+
+    impl<I: InterruptState, B: Borrow> core::fmt::Debug for NodeGuard<'_, I, B> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("NodeGuard")
+                .field_with("ptr", |f| f.write_fmt(format_args!("{:#p}", self.node)))
+                .field("mutable", &B::is_mut())
+                .field("do_drop_check", &B::drop_check())
+                .field("drop_check", &self.drop_check)
+                .finish()
         }
     }
 }
@@ -278,7 +346,8 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// # Safety
     ///
-    /// The caller muset ensure the root_lock is held
+    /// The caller muset ensure the root_lock is held and no mut ref
+    /// to the root currently exists
     unsafe fn get_root(&self) -> &MemTreeLink<I> {
         unsafe { &*self.root.get() }
     }
@@ -287,7 +356,8 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// # Safety
     ///
-    /// The caller muset ensure the root_lock is held
+    /// The caller muset ensure the root_lock is held and no mut ref
+    /// to the root currently exists
     unsafe fn get_root_mut(&self) -> &mut MemTreeLink<I> {
         unsafe { &mut *self.root.get() }
     }
@@ -349,59 +419,17 @@ impl<I: InterruptState> MemTree<I> {
                     }
                     unreachable!("max_id should always be None for the last entry")
                 }
-                leave @ MemTreeNode::Leave { .. } => return Ok(NodeGuard::new(leave)),
+                leave @ MemTreeNode::Leave { .. } => unsafe {
+                    // Safety: leave is properly locked
+                    // and we still hold all parent locks for BorrowType::is_mut
+                    return Ok(NodeGuard::new(leave));
+                },
             }
-        }
-    }
-
-    /// Finds the id of the file with the largest id.
-    ///
-    /// # Safety
-    ///
-    /// node must be locked and it's children must be unlocked
-    unsafe fn find_largest_id<D: BlockDevice>(
-        &self,
-        node: &mut MemTreeNode<I>,
-        device: &D,
-    ) -> Result<Option<FileId>, D::BlockDeviceError> {
-        assert!(!node.get_lock().is_unlocked());
-
-        match node {
-            MemTreeNode::Node { children, .. } => {
-                let last_link = &mut children
-                    .iter_mut()
-                    .last()
-                    .expect("B-Tree node can not be empty")
-                    .0
-                    .resolve(device)?;
-
-                let last_child = unsafe {
-                    // node is locked
-                    last_link.as_mut().expect("just resolved")
-                };
-                last_child.get_lock().lock();
-                let result = unsafe {
-                    // Safety: just locked last_child
-                    self.find_largest_id(last_child, device)
-                };
-
-                unsafe {
-                    // Safety: locked above
-                    last_child.get_lock().unlock();
-                }
-
-                result
-            }
-            MemTreeNode::Leave { files, .. } => Ok(files.iter().last().map(|f| f.id)),
         }
     }
 
     /// Unlocks node and all above nodes as well as the root_lock
-    ///
-    /// # Safety
-    ///
-    /// node, all above nodes and the root_lock must be locked
-    unsafe fn unlock_upwards(&self, node: NodeGuard<'_, I, node_guard::Mut>) {
+    fn unlock_upwards(&self, node: NodeGuard<'_, I, node_guard::Mut>) {
         let mut current = Ok(node);
         loop {
             match current {
@@ -456,10 +484,7 @@ impl<I: InterruptState> MemTree<I> {
 
         if let Some(override_pos) = files.iter().position(|f| f.id == file.id) {
             if create_only {
-                unsafe {
-                    // Safety: leave and all above nodes are locked
-                    self.unlock_upwards(leave)
-                }
+                self.unlock_upwards(leave);
 
                 return Err(MemTreeError::FileNodeExists(file.id));
             }
@@ -467,10 +492,7 @@ impl<I: InterruptState> MemTree<I> {
             *dirty = true;
             files[override_pos] = file;
 
-            unsafe {
-                // Safety: leave and all above nodes are locked
-                self.unlock_upwards(leave)
-            }
+            self.unlock_upwards(leave);
 
             return Ok(());
         }
@@ -486,10 +508,7 @@ impl<I: InterruptState> MemTree<I> {
             log::trace!("simple insert");
             files.insert(insert_pos, file);
 
-            unsafe {
-                // Safety: leave and all above nodes are locked
-                self.unlock_upwards(leave)
-            }
+            self.unlock_upwards(leave);
 
             return Ok(());
         }
@@ -523,15 +542,9 @@ impl<I: InterruptState> MemTree<I> {
 
         match leave.into_parent() {
             Ok((parent, leave_ptr)) => {
-                unsafe {
-                    // Safety: we still hold the locks for all nodes above the leave
-                    self.insert_split(parent, leave_ptr, split_id, new_node, new_node_max)
-                }
+                self.insert_split(parent, leave_ptr, split_id, new_node, new_node_max)
             }
-            Err(root) => unsafe {
-                // Safety: we still hold the locks for all nodes above the leave
-                self.insert_split_at_root(root, split_id, new_node)
-            },
+            Err(root) => self.insert_split_at_root(root, split_id, new_node),
         }
     }
 
@@ -539,10 +552,7 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// TODO document args
     ///
-    /// # Safety
-    ///
-    /// root_lock must be held
-    unsafe fn insert_split<D: BlockDevice>(
+    fn insert_split<D: BlockDevice>(
         &self,
         mut current: NodeGuard<'_, I, node_guard::Mut>,
         old_node_ptr: NonNull<MemTreeNode<I>>,
@@ -589,12 +599,7 @@ impl<I: InterruptState> MemTree<I> {
             let new_node_max = Some(new_node_max).take_if(|_| insert_position != children.len());
             children.insert(insert_position, (new_node_link, new_node_max));
 
-            unsafe {
-                // Safety: parent and all above nodes are locked
-                // old_node is not locked as it was unlocked in the previous recursion
-                // (parent/leave)
-                self.unlock_upwards(current)
-            }
+            self.unlock_upwards(current);
 
             return Ok(());
         }
@@ -629,15 +634,9 @@ impl<I: InterruptState> MemTree<I> {
 
         match current.into_parent() {
             Ok((parent, current_ptr)) => {
-                unsafe {
-                    // Safety: we still hold the locks for all nodes above the leave
-                    self.insert_split(parent, current_ptr, split_id, new_node, new_node_max)
-                }
+                self.insert_split(parent, current_ptr, split_id, new_node, new_node_max)
             }
-            Err(root) => unsafe {
-                // Safety: we still hold the locks for all nodes above the leave
-                self.insert_split_at_root(root, split_id, new_node)
-            },
+            Err(root) => self.insert_split_at_root(root, split_id, new_node),
         }
     }
 
@@ -645,11 +644,7 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// `root` should be the tree root and `new_node` should be the new right
     /// subtree after the slpit.
-    ///
-    /// # Safety
-    ///
-    /// root_lock must be held
-    unsafe fn insert_split_at_root<D: BlockDevice>(
+    fn insert_split_at_root<D: BlockDevice>(
         &self,
         root: NodeGuard<'_, I, node_guard::Mut>,
         split_id: FileId,
@@ -704,7 +699,7 @@ impl<I: InterruptState> MemTree<I> {
 
         let new_root_ptr = NonNull::from(new_root.as_mut());
         let MemTreeNode::Node { children, .. } = new_root.as_mut() else {
-            unreachable!()
+            unreachable!() // TODO: why?
         };
         for child in children {
             let child = unsafe {
@@ -731,7 +726,6 @@ impl<I: InterruptState> MemTree<I> {
         Ok(())
     }
 
-    /*
     pub fn delete<D: BlockDevice>(
         &self,
         device: &D,
@@ -741,9 +735,8 @@ impl<I: InterruptState> MemTree<I> {
         // device and not just the in memory FileNode. Therefor in order to keep the tree balanced
         // we have to find the file even if it is not in memory. Therefor it is ok to use
         // find_leave
-
-        let leave = self
-            .find_leave(device, file_id, AccessMode::Update)
+        let mut leave = self
+            .find_leave::<_, node_guard::Mut>(device, file_id)
             .map_err(MemTreeError::from)?;
 
         // TODO temp
@@ -753,18 +746,14 @@ impl<I: InterruptState> MemTree<I> {
             parent,
             files,
             dirty,
-            lock,
-        } = leave
+            ..
+        } = leave.borrow_mut()
         else {
             panic!("Find leave should always return a leave node");
         };
-        assert!(!lock.is_unlocked());
 
         let Some(file_pos) = files.iter().position(|f| f.id == file_id) else {
-            unsafe {
-                // Safety: tree is locked from this node upwards
-                self.unlock_upwards(leave);
-            }
+            self.unlock_upwards(leave);
             return Err(MemTreeError::FileDoesNotExist(file_id));
         };
 
@@ -772,19 +761,12 @@ impl<I: InterruptState> MemTree<I> {
         *dirty = true;
 
         if files.len() >= files.capacity() / 2 || parent.is_none() {
-            unsafe {
-                // Safety: tree is locked from this node upwards
-                self.unlock_upwards(leave);
-            }
+            self.unlock_upwards(leave);
             return Ok(file_node);
         }
 
         if parent.is_some() {
-            unsafe {
-                // Safety: tree is locked from this node upwards
-                self.rebalance_leave(leave, device)
-                    .map_err(MemTreeError::from)?;
-            }
+            self.rebalance_leave(leave, device)?;
         }
 
         Ok(file_node)
@@ -792,522 +774,524 @@ impl<I: InterruptState> MemTree<I> {
 
     /// Rebalances the tree using rotation and merges
     /// starting at a leave
-    ///
-    /// # Safety
-    ///
-    /// the tree must be locked from this node upwards
-    unsafe fn rebalance_leave<D: BlockDevice>(
+    #[inline(always)]
+    fn rebalance_leave<D: BlockDevice>(
         &self,
-        mut unbalanced_node: &mut MemTreeNode<I>,
+        mut unbalanced_node: NodeGuard<'_, I, node_guard::Mut>,
         device: &D,
-    ) -> Result<(), D::BlockDeviceError> {
-        // TODO temp
-        // unbalanced_node.assert_valid_node_only();
+    ) -> Result<(), MemTreeError<D>> {
+        let (mut parent, unbalanced_node_ptr) = unbalanced_node
+            .into_parent()
+            .expect("Rebalance leave should only be called for nodes with parents");
 
-        let unbalanced_addr = unbalanced_node as *const _;
-        let MemTreeNode::Leave { parent, files, .. } = unbalanced_node else {
-            panic!("Expected leave and got node");
-        };
-        trace!("rebalance tree from leave");
+        let ((mut left_guard, left_max_id), (mut right_guard, right_max_id), mode) = self
+            .get_children_for_rebalance(&mut parent, unbalanced_node_ptr, device)
+            .map_err(MemTreeError::from)?;
 
-        let mut parent = parent.expect("Expected non root node");
-        let parent = unsafe {
-            // Safety: the parent is locked and we have the only reference
-            parent.as_mut()
-        };
-        let MemTreeNode::Node {
-            children,
-            parent: parent_parent,
+        let left = left_guard.borrow_mut();
+        let right = right_guard.borrow_mut();
+
+        let MemTreeNode::Leave {
+            parent: parent_ptr,
+            files: left_files,
+            dirty: left_dirty,
             ..
-        } = parent
+        } = left
         else {
-            panic!("parent must always be a node");
+            panic!("all nodes on this level should be leaves");
+        };
+        let MemTreeNode::Leave {
+            files: right_files,
+            dirty: right_dirty,
+            ..
+        } = right
+        else {
+            panic!("all nodes on this level should be leaves");
         };
 
-        let node_index = children
-            .iter()
-            .map(|c| c.0.node.as_ref().map(|node_box| Box::as_ptr(node_box)))
-            .position(|c| c == Some(unbalanced_addr))
-            .expect("parent should always contain it's children");
+        *left_dirty = true;
+        *right_dirty = true;
 
-        if node_index >= 1 {
-            let left = &mut children[node_index - 1].0;
-            let left = unsafe {
-                // Safety: parent is still locked
-                left.resolve(device)?.as_mut().expect("Just resolved")
-            };
+        match mode {
+            DeleteRebalanceMode::TakeFromRight => {
+                let to_move = right_files.remove(0);
+                assert!(right_files.len() >= right_files.capacity() / 2);
 
-            let MemTreeNode::Leave {
-                files: left_files,
-                dirty: left_dirty,
-                lock: left_lock,
-                ..
-            } = left
-            else {
-                panic!("Expected to find leave");
-            };
+                assert!(to_move.id > left_max_id.expect("max id is only none for the right most node, and this is the left node"));
+                *left_max_id = Some(to_move.id);
+                left_files.push(to_move);
+            }
+            DeleteRebalanceMode::TakeFromLeft => {
+                let to_move = left_files.remove(left_files.len() - 1);
+                assert!(left_files.len() >= left_files.capacity() / 2);
 
-            left_lock.lock();
+                *left_max_id = Some(left_files[left_files.len() - 1].id);
 
-            if left_files.len() > left_files.capacity() / 2 {
-                trace!("rotate leaves right");
+                assert!(to_move.id < right_files[0].id);
+                right_files.insert(0, to_move);
+            }
+            DeleteRebalanceMode::Merge { merge_left_index } => {
+                let mut merged_files = left_files.clone();
+                merged_files.extend(right_files.drain_iter(..));
 
-                let last = left_files.remove(left_files.len() - 1);
-                let new_max_id = left_files
-                    .iter()
-                    .last()
-                    .expect("B-tree node should not be empty")
-                    .id;
-                *left_dirty = true;
-                debug!("moved: {}", last.id.get());
-                files.insert(0, last);
+                let merged_max_id = *right_max_id;
 
-                unsafe {
-                    // Safety: just locked above
-                    left_lock.unlock();
-                }
+                let new_node = Box::try_new(MemTreeNode::Leave {
+                    parent: *parent_ptr,
+                    files: merged_files,
+                    dirty: true,
+                    lock: UnsafeTicketLock::new(),
+                })
+                .map_err(|err| MemTreeError::Oom(err))?;
 
-                children[node_index - 1].1.insert(new_max_id);
+                let new_link = MemTreeLink {
+                    node: Some(new_node),
+                    device_ptr: None,
+                };
 
-                unsafe {
-                    // Safety: unbalanced_node and above is locked
-                    self.unlock_upwards(unbalanced_node);
-                }
-                return Ok(());
-            } else {
-                unsafe {
-                    // Safety: just locked above
-                    left_lock.unlock();
-                }
+                drop(left_guard);
+                drop(right_guard);
+
+                let MemTreeNode::Node { children, .. } = parent.borrow_mut() else {
+                    unreachable!("Parents are always non leave nodes");
+                };
+
+                todo_warn!("what to do with the now no longer used on device nodes? How do I store them for later deletion");
+
+                children[merge_left_index] = (new_link, merged_max_id);
+                children.remove(merge_left_index + 1);
+
+                return self.rebalance_node(parent, device);
             }
         }
 
-        if node_index + 1 < children.len() {
-            let right = &mut children[node_index + 1].0;
-            let right = unsafe {
-                // Safety: parent is still locked
-                right.resolve(device)?.as_mut().expect("Just resolved")
-            };
+        drop(left_guard);
+        drop(right_guard);
 
-            let MemTreeNode::Leave {
-                files: right_files,
-                dirty: right_dirty,
-                lock: right_lock,
-                ..
-            } = right
-            else {
-                panic!("Expected to find leave");
-            };
-
-            right_lock.lock();
-
-            if right_files.len() > right_files.capacity() / 2 {
-                trace!("rotate leaves left");
-                let first = right_files.remove(0);
-                let first_file_id = first.id;
-                *right_dirty = true;
-                files.push(first);
-
-                unsafe {
-                    // Safety: just locked above
-                    right_lock.unlock();
-                }
-
-                children[node_index].1.insert(first_file_id);
-
-                unsafe {
-                    // Safety: unbalanced_node and above is locked
-                    self.unlock_upwards(unbalanced_node);
-                }
-                return Ok(());
-            } else {
-                unsafe {
-                    // Safety: just locked above
-                    right_lock.unlock();
-                }
-            }
-        }
-
-        trace!("merge leaves");
-
-        #[allow(dropping_references)]
-        {
-            drop(files);
-            drop(unbalanced_node);
-        }
-
-        let (left_index, right_index) = if node_index + 1 < children.len() {
-            (node_index, node_index + 1)
-        } else {
-            (node_index - 1, node_index)
-        };
-
-        {
-            let [mut left_link, mut right_link] = children
-                .get_disjoint_mut([left_index, right_index])
-                .expect("indices checked above");
-
-            let left = unsafe {
-                // Safety: parent is locked and old references are invalidated
-                left_link.0.resolve(device)?.as_mut().expect("resolved")
-            };
-            let right = unsafe {
-                // Safety: parent is locked and old references are invalidated
-                right_link.0.resolve(device)?.as_mut().expect("resolved")
-            };
-
-            // one of left or right is already locked, because it points to the initial unbalanced_node
-            let other_lock = if node_index == left_index {
-                right.get_lock()
-            } else {
-                left.get_lock()
-            };
-            other_lock.lock();
-
-            let MemTreeNode::Leave {
-                parent: left_parent,
-                files: left_files,
-                dirty: left_dirty,
-                ..
-            } = left
-            else {
-                panic!("expected leave");
-            };
-            let MemTreeNode::Leave {
-                parent: right_parent,
-                files: right_files,
-                ..
-            } = right
-            else {
-                panic!("expected leave");
-            };
-            assert_eq!(left_parent, right_parent);
-
-            // merge the nodes
-            assert!(left_files.len() <= left_files.capacity() / 2);
-            assert!(right_files.len() <= right_files.capacity() / 2);
-            assert!(left_files.len() + right_files.len() == left_files.capacity() - 1);
-
-            left_files.extend(right_files.drain(..));
-            left_link.1 = right_link.1;
-
-            unsafe {
-                // a bit overkill as this is dropped later
-                // Safety: Either right unbalanced_node or the other_lock. Both or locked
-                right.get_lock().unlock();
-            }
-
-            let _old_link = children.remove(right_index);
-            todo_warn!("We need to somehow remember to free the on device block");
-        }
-
-        if let Some(parent_parent) = parent_parent {
-            assert!(children.len() >= children.capacity() / 2);
-
-            if children.len() < children.capacity() / 2 {
-                unsafe {
-                    // Safety: parent is still locked
-                    let merged_node = children[left_index]
-                        .0
-                        .as_mut()
-                        .expect("node should be resolved by now");
-                    let parent = merged_node.get_parent_mut().unwrap().as_mut();
-
-                    // Safety: merged_node and above is locked
-                    merged_node.get_lock().unlock();
-                    // Safety: parent and above are locked
-                    self.rebalance_node(parent, device)?;
-                }
-            }
-        } else if children.len() == 1 {
-            trace!("replace root with single leave!");
-            let new_root_link = children.remove(0);
-            assert!(new_root_link.1.is_none());
-            let mut new_root_link = new_root_link.0;
-
-            let new_root_node = unsafe {
-                // Safety: parent is still locked
-                new_root_link
-                    .as_mut()
-                    .expect("node should be resolved by now")
-            };
-            *new_root_node.get_parent_mut() = None;
-
-            let old_root_link = unsafe {
-                // Safety: root lock is still held
-                self.get_root_mut()
-            };
-
-            let _old_root_link = core::mem::replace(old_root_link, new_root_link);
-            todo_warn!("We need to somehow remember to free the on device block of the old root");
-
-            unsafe {
-                // Safety: reacquire and unlock root is save as it and root_lock is still locked
-                let root_node = self
-                    .get_root_mut()
-                    .as_mut()
-                    .expect("Root is still resolved");
-                self.unlock_upwards(root_node);
-            }
-
-            return Ok(());
-        }
-
-        unsafe {
-            // Safety: parent is still locked
-            let merged_node = children[left_index]
-                .0
-                .as_mut()
-                .expect("node should be resolved by now");
-            // Safety: merged_node and above is locked
-            self.unlock_upwards(merged_node);
-        }
-
+        self.unlock_upwards(parent);
         Ok(())
     }
 
     /// Rebalances the tree using rotation and merges
-    /// starting at a node
-    ///
-    /// # Safety
-    ///
-    /// the tree must be locked from this node upwards
-    unsafe fn rebalance_node<D: BlockDevice>(
+    /// starting at a leave
+    #[inline(always)]
+    fn rebalance_node<D: BlockDevice>(
         &self,
-        mut unbalanced_node: &mut MemTreeNode<I>,
+        mut unbalanced_node: NodeGuard<'_, I, node_guard::Mut>,
         device: &D,
-    ) -> Result<(), D::BlockDeviceError> {
-        // TODO temp
-        // unbalanced_node.assert_valid_node_only();
+    ) -> Result<(), MemTreeError<D>> {
+        let (mut parent, unbalanced_node_ptr) = match unbalanced_node.into_parent() {
+            Ok((parent, unbalanced_node_ptr)) => (parent, unbalanced_node_ptr),
+            Err(mut unbalanced_root_guard) => {
+                let unbalanced_root = unbalanced_root_guard.borrow_mut();
 
-        let unbalanced_addr = unbalanced_node as *const _;
+                if unbalanced_root.len() == 1 {
+                    // Need to awaken the unbalanced root node, as we invalidate it when
+                    // we promote it's only child to root
+                    let unbalanced_root = unbalanced_root_guard.awaken_mut();
+
+                    let MemTreeNode::Node { children, .. } = unbalanced_root else {
+                        panic!("all nodes on this level should be non leave nodes");
+                    };
+
+                    assert_eq!(children.len(), 1);
+                    let (mut new_root_link, max) = children.remove(0);
+
+                    assert!(max.is_none());
+
+                    let new_root = unsafe {
+                        // Safety: we hold the parents lock
+                        new_root_link.as_mut()
+                    }
+                    .expect("this node should have been created/modified in a previous rebalance");
+
+                    new_root.get_lock().lock();
+
+                    *new_root.get_parent_mut() = None;
+
+                    let _old_root_device_ptr = {
+                        let old_root_link = unsafe {
+                            // Safety: we still hold the root lock, because we have a mut node
+                            // guard
+                            self.get_root()
+                        };
+                        old_root_link.device_ptr
+                    };
+
+                    todo_warn!("what to do with the old root device ptr. How to delete");
+
+                    unsafe {
+                        // We manually locked this above
+                        new_root.get_lock().unlock();
+
+                        // Safety: we still hold the root lock, because we have a mut node guard
+                        *self.get_root_mut() = new_root_link;
+
+                        // Safety: we are responsible for the root lock because we called
+                        // `awaken_mut` on the old root.
+                        self.root_lock.unlock();
+                    }
+                } else {
+                    self.unlock_upwards(unbalanced_root_guard);
+                }
+                return Ok(());
+            }
+        };
+
+        let ((mut left_guard, left_max_id), (mut right_guard, right_max_id), mode) = self
+            .get_children_for_rebalance(&mut parent, unbalanced_node_ptr, device)
+            .map_err(MemTreeError::from)?;
+
+        let left = left_guard.borrow_mut();
+        let right = right_guard.borrow_mut();
+
         let MemTreeNode::Node {
-            parent,
-            children: unbalanced_children,
-            lock,
+            parent: parent_ptr,
+            children: left_children,
+            dirty: left_dirty,
             ..
-        } = unbalanced_node
+        } = left
         else {
-            panic!("Expected node");
-        };
-        trace!("rebalance tree node");
-
-        let mut parent = parent.expect("Expected non root node");
-        let parent = unsafe {
-            // Safety: the parent is locked and we have the only reference
-            parent.as_mut()
+            panic!("all nodes on this level should be non leave nodes");
         };
         let MemTreeNode::Node {
-            children,
-            parent: parent_parent,
+            children: right_children,
+            dirty: right_dirty,
             ..
-        } = parent
+        } = right
         else {
-            panic!("parent must always be a node");
+            panic!("all nodes on this level should be non leave nodes");
         };
 
-        let node_index = children
-            .iter()
-            .map(|c| c.0.node.as_ref().map(|node_box| Box::as_ptr(node_box)))
-            .position(|c| c == Some(unbalanced_addr))
-            .expect("parent should always contain it's children");
+        *left_dirty = true;
+        *right_dirty = true;
 
-        if node_index >= 1 {
-            let left = &mut children[node_index - 1].0;
-            let left = unsafe {
-                // Safety: parent is still locked
-                left.resolve(device)?.as_mut().expect("Just resolved")
-            };
+        match mode {
+            DeleteRebalanceMode::TakeFromRight => {
+                let to_move = right_children.remove(0);
+                assert!(right_children.len() >= right_children.capacity() / 2);
 
-            let MemTreeNode::Node {
-                children: left_children,
-                dirty: left_dirty,
-                lock: left_lock,
-                ..
-            } = left
-            else {
-                panic!("Expected to find leave");
-            };
+                let left_new_max = to_move
+                    .1
+                    .expect("This is the left most node, therefor should have the max set");
+                assert!(left_new_max> left_max_id.expect("max id is only none for the right most node, and this is the left node"));
+                *left_max_id = Some(left_new_max);
 
-            left_lock.lock();
+                left_children.push(to_move);
+            }
+            DeleteRebalanceMode::TakeFromLeft => {
+                let mut to_move = left_children.remove(left_children.len() - 1);
+                assert!(left_children.len() >= left_children.capacity() / 2);
 
-            if left_children.len() > left_children.capacity() / 2 {
-                trace!("rotate nodes right");
-                let last = left_children.remove(left_children.len() - 1);
-                let new_max_id = left_children
-                    .iter_mut()
-                    .last()
-                    .expect("B-tree node should not be empty")
+                assert!(to_move.1.is_none());
+                // the max of the parent's link is the max of the "to_move" node.
+                // As the "to_move" node is the last node it's max is set to none currently.
+                // But because it is inserted as the 0th node the max has to be set now.
+                to_move.1 = Some(
+                    left_max_id
+                        .expect("This is the left most node, therefor should have the max set"),
+                );
+                let new_last_left = {
+                    let last_id = left_children.len() - 1;
+                    &mut left_children[last_id]
+                };
+
+                // take because the now last element needs to have None as the max.
+                // I want to move it into the max in the parent link
+                let new_left_max = new_last_left
                     .1
                     .take()
-                    .expect("second to last node in children should always have a max");
-                *left_dirty = true;
-                unbalanced_children.insert(0, last);
+                    .expect("This was the second last node, and therefor should be set");
 
-                unsafe {
-                    // Safety: just locked above
-                    left_lock.unlock();
-                }
+                *left_max_id = Some(new_left_max);
 
-                children[node_index - 1].1.insert(new_max_id);
+                right_children.insert(0, to_move);
+            }
+            DeleteRebalanceMode::Merge { merge_left_index } => {
+                let mut merged_children = StaticVec::new();
+                merged_children.extend(left_children.drain(..));
+                merged_children.extend(right_children.drain(..));
 
-                unsafe {
-                    // Safety: unbalanced_node and above is locked
-                    self.unlock_upwards(unbalanced_node);
-                }
-                return Ok(());
+                let merged_max_id = *right_max_id;
+
+                let new_node = Box::try_new(MemTreeNode::Node {
+                    parent: *parent_ptr,
+                    children: merged_children,
+                    dirty: true,
+                    dirty_children: true,
+                    lock: UnsafeTicketLock::new(),
+                })
+                .map_err(|err| MemTreeError::Oom(err))?;
+
+                let new_link = MemTreeLink {
+                    node: Some(new_node),
+                    device_ptr: None,
+                };
+
+                drop(left_guard);
+                drop(right_guard);
+
+                let MemTreeNode::Node { children, .. } = parent.borrow_mut() else {
+                    unreachable!("Parents are always non leave nodes");
+                };
+
+                todo_warn!("what to do with the now no longer used on device nodes? How do I store them for later deletion");
+
+                children[merge_left_index] = (new_link, merged_max_id);
+                children.remove(merge_left_index + 1);
+
+                return self.rebalance_node(parent, device);
             }
         }
 
-        if node_index + 1 < children.len() {
-            let right = &mut children[node_index + 1].0;
-            let right = unsafe {
-                // Safety: parent is still locked
-                right.resolve(device)?.as_mut().expect("Just resolved")
-            };
+        drop(left_guard);
+        drop(right_guard);
 
-            let MemTreeNode::Node {
-                children: right_children,
-                dirty: right_dirty,
-                lock: right_lock,
-                ..
-            } = right
-            else {
-                panic!("Expected to find leave");
-            };
-
-            right_lock.lock();
-
-            if right_children.len() > right_children.capacity() / 2 {
-                trace!("rotate nodes left");
-                let first = right_children.remove(0);
-                let first_node_max = first.1.expect("First node should always have a max value");
-                *right_dirty = true;
-                unbalanced_children.push(first);
-
-                unsafe {
-                    // Safety: just locked above
-                    right_lock.unlock();
-                }
-
-                children[node_index].1.insert(first_node_max);
-
-                unsafe {
-                    // Safety: unbalanced_node and above is locked
-                    self.unlock_upwards(unbalanced_node);
-                }
-                return Ok(());
-            }
-        }
-
-        trace!("merge nodes");
-
-        #[allow(dropping_references)]
-        {
-            drop(unbalanced_children);
-            drop(unbalanced_node);
-        }
-
-        let (left_index, right_index) = if node_index + 1 < children.len() {
-            (node_index, node_index + 1)
-        } else {
-            (node_index - 1, node_index)
-        };
-
-        {
-            let [mut left_link, mut right_link] = children
-                .get_disjoint_mut([left_index, right_index])
-                .expect("indices checked above");
-
-            let left = unsafe {
-                // Safety: parent is locked and old references are invalidated
-                left_link.0.resolve(device)?.as_mut().expect("resolved")
-            };
-            let right = unsafe {
-                // Safety: parent is locked and old references are invalidated
-                right_link.0.resolve(device)?.as_mut().expect("resolved")
-            };
-
-            // one of left or right is already locked, because it points to the initial unbalanced_node
-            let other_lock = if node_index == left_index {
-                right.get_lock()
-            } else {
-                left.get_lock()
-            };
-            other_lock.lock();
-
-            let left_max = unsafe {
-                // Safety: left is locked
-                self.find_largest_id(left, device)?
-                    .expect("This is never called on an empty root")
-            };
-
-            let MemTreeNode::Node {
-                parent: left_parent,
-                children: left_children,
-                ..
-            } = left
-            else {
-                panic!("expected node");
-            };
-            let left_len = left_children.capacity() / 2;
-            assert_eq!(left_len, left_children.len());
-            let MemTreeNode::Node {
-                parent: right_parent,
-                children: right_children,
-                ..
-            } = right
-            else {
-                panic!("expected node");
-            };
-            assert_eq!(left_parent, right_parent);
-
-            left_children[left_len - 1].1 = Some(left_max);
-            left_children.extend(right_children.drain(..));
-            left_link.1 = right_link.1;
-
-            unsafe {
-                // a bit overkill as this is dropped later
-                // Safety: Either right unbalanced_node or the other_lock. Both or locked
-                right.get_lock().unlock();
-            }
-
-            let _old_link = children.remove(right_index);
-            todo_warn!("We need to somehow remember to free the on device block");
-        }
-
-        assert!(children.len() >= children.capacity() / 2);
-        if let Some(parent_parent) = parent_parent {
-            if children.len() < children.capacity() / 2 {
-                unsafe {
-                    // Safety: parent is still locked
-                    let merged_node = children[left_index]
-                        .0
-                        .as_mut()
-                        .expect("node should be resolved by now");
-                    let parent = merged_node.get_parent_mut().unwrap().as_mut();
-
-                    // Safety: merged_node and above is locked
-                    merged_node.get_lock().unlock();
-                    // Safety: parent and above are locked
-                    self.rebalance_node(parent, device)?;
-                }
-            }
-        }
-
-        unsafe {
-            // Safety: parent is still locked
-            let merged_node = children[left_index]
-                .0
-                .as_mut()
-                .expect("node should be resolved by now");
-            // Safety: merged_node and above is locked
-            self.unlock_upwards(merged_node);
-        }
-
+        self.unlock_upwards(parent);
         Ok(())
     }
-    */
+
+    fn get_children_for_rebalance<'l, 'n: 'l, D: BlockDevice, B: node_guard::BorrowMut>(
+        &self,
+        node: &'l mut NodeGuard<'n, I, B>,
+        unbalanced_ptr: NonNull<MemTreeNode<I>>,
+        device: &D,
+    ) -> Result<
+        (
+            (
+                NodeGuard<'l, I, node_guard::MutChild>,
+                &'l mut Option<FileId>,
+            ),
+            (
+                NodeGuard<'l, I, node_guard::MutChild>,
+                &'l mut Option<FileId>,
+            ),
+            DeleteRebalanceMode,
+        ),
+        D::BlockDeviceError,
+    > {
+        let MemTreeNode::Node {
+            children, parent, ..
+        } = node.borrow_mut()
+        else {
+            panic!("get_children_for_rebalance should only be called for non leave nodes");
+        };
+
+        assert!(
+            children.len() > children.capacity() / 2 || parent.is_none(),
+            "Self should be balanced or root"
+        );
+        assert!(
+            children.len() >= 2,
+            "Even if root we should have at least 2 children" // if not, that means the node has 1 child (the unbalanced node) meaning
+                                                              // the unbalanced node should have beeen promoted to root in the past
+        );
+
+        let unbalanced_index = children
+            .iter()
+            .position(|c| {
+                let link = &c.0;
+                if let Some(node) = link.node.as_ref() {
+                    let ptr = Box::as_ptr(node);
+
+                    ptr == unbalanced_ptr.as_ptr() as *const _
+                } else {
+                    false
+                }
+            })
+            .expect("unbalanced ptr should point into self");
+
+        enum RebalanceVariants {
+            Merge(usize, usize),
+            TakeFromRight,
+            TakeFromLeft,
+        }
+
+        // variant, rebalance
+        let to_check: &[_] = if unbalanced_index == 0 {
+            use RebalanceVariants::*;
+            &[
+                (TakeFromRight, false),
+                (Merge(unbalanced_index, unbalanced_index + 1), false),
+                (Merge(unbalanced_index, unbalanced_index + 1), true),
+                (TakeFromRight, true),
+            ]
+        } else if unbalanced_index == children.len() - 1 {
+            use RebalanceVariants::*;
+            &[
+                (TakeFromLeft, false),
+                (Merge(unbalanced_index - 1, unbalanced_index), false),
+                (Merge(unbalanced_index - 1, unbalanced_index), true),
+                (TakeFromLeft, true),
+            ]
+        } else {
+            use RebalanceVariants::*;
+            &[
+                (TakeFromRight, false),
+                (TakeFromLeft, false),
+                (Merge(unbalanced_index - 1, unbalanced_index), false),
+                (Merge(unbalanced_index, unbalanced_index + 1), false),
+                (Merge(unbalanced_index - 1, unbalanced_index), true),
+                (Merge(unbalanced_index, unbalanced_index + 1), true),
+                (TakeFromRight, true),
+                (TakeFromLeft, true),
+            ]
+        };
+
+        for (variante, resolve) in to_check {
+            match variante {
+                RebalanceVariants::Merge(left, right) => {
+                    let merge_left_index = *left;
+                    let [(left_link, left_max), (right_link, right_max)] =
+                        children.get_disjoint_mut([*left, *right]).unwrap();
+
+                    if *resolve {
+                        left_link.resolve(device)?;
+                        right_link.resolve(device)?;
+                    }
+                    let Some(left) = (unsafe {
+                        // Safety: we have the guard for the parent
+                        left_link.as_mut()
+                    }) else {
+                        continue;
+                    };
+                    let Some(right) = (unsafe {
+                        // Safety: we have the guard for the parent
+                        right_link.as_mut()
+                    }) else {
+                        continue;
+                    };
+
+                    if left.len() + right.len() <= left.cap() {
+                        left.get_lock().lock();
+                        right.get_lock().lock();
+
+                        unsafe {
+                            // Safety: extending the lifetime is safe here, because we can borrow
+                            // from children as 'l.
+                            // This is only valid because we either borrow just for this iteration
+                            // of the loop or return the reference, therefor ending the loop.
+                            // Extend can't be used to keep a reference into the next iteration of
+                            // the loop
+                            return Ok((
+                                (
+                                    // Safety: we just locked this
+                                    NodeGuard::new(extend_lifetime_mut(left)),
+                                    extend_lifetime_mut(left_max),
+                                ),
+                                (
+                                    // Safety: we just locked this
+                                    NodeGuard::new(extend_lifetime_mut(right)),
+                                    extend_lifetime_mut(right_max),
+                                ),
+                                DeleteRebalanceMode::Merge { merge_left_index },
+                            ));
+                        }
+                    }
+                }
+                RebalanceVariants::TakeFromRight => {
+                    let [(left_link, left_max), (right_link, right_max)] = children
+                        .get_disjoint_mut([unbalanced_index, unbalanced_index + 1])
+                        .unwrap();
+
+                    if *resolve {
+                        right_link.resolve(device)?;
+                    }
+
+                    let left = unsafe {
+                        // Safety: we have the guard for the parent
+                        left_link
+                            .as_mut()
+                            .expect("unbalanced node should always be resolved")
+                    };
+                    let Some(right) = (unsafe {
+                        // Safety: we have the guard for the parent
+                        right_link.as_mut()
+                    }) else {
+                        continue;
+                    };
+
+                    if right.len() > right.cap() / 2 {
+                        left.get_lock().lock();
+                        right.get_lock().lock();
+
+                        unsafe {
+                            // Safety: extending the lifetime is safe here, because we can borrow
+                            // from children as 'l.
+                            // This is only valid because we either borrow just for this iteration
+                            // of the loop or return the reference, therefor ending the loop.
+                            // Extend can't be used to keep a reference into the next iteration of
+                            // the loop
+                            return Ok((
+                                (
+                                    // Safety: we just locked this
+                                    NodeGuard::new(extend_lifetime_mut(left)),
+                                    extend_lifetime_mut(left_max),
+                                ),
+                                (
+                                    // Safety: we just locked this
+                                    NodeGuard::new(extend_lifetime_mut(right)),
+                                    extend_lifetime_mut(right_max),
+                                ),
+                                DeleteRebalanceMode::TakeFromRight,
+                            ));
+                        }
+                    }
+                }
+                RebalanceVariants::TakeFromLeft => {
+                    let [(left_link, left_max), (right_link, right_max)] = children
+                        .get_disjoint_mut([unbalanced_index - 1, unbalanced_index])
+                        .unwrap();
+
+                    if *resolve {
+                        left_link.resolve(device)?;
+                    }
+
+                    let Some(left) = (unsafe {
+                        // Safety: we have the guard for the parent
+                        left_link.as_mut()
+                    }) else {
+                        continue;
+                    };
+                    let right = unsafe {
+                        // Safety: we have the guard for the parent
+                        right_link
+                            .as_mut()
+                            .expect("unbalanced node should always be resolved")
+                    };
+
+                    if left.len() > left.cap() / 2 {
+                        left.get_lock().lock();
+                        right.get_lock().lock();
+
+                        unsafe {
+                            // Safety: extending the lifetime is safe here, because we can borrow
+                            // from children as 'l.
+                            // This is only valid because we either borrow just for this iteration
+                            // of the loop or return the reference, therefor ending the loop.
+                            // Extend can't be used to keep a reference into the next iteration of
+                            // the loop
+                            return Ok((
+                                (
+                                    // Safety: we just locked this
+                                    NodeGuard::new(extend_lifetime_mut(left)),
+                                    extend_lifetime_mut(left_max),
+                                ),
+                                (
+                                    // Safety: we just locked this
+                                    NodeGuard::new(extend_lifetime_mut(right)),
+                                    extend_lifetime_mut(right_max),
+                                ),
+                                DeleteRebalanceMode::TakeFromLeft,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        panic!("No valid rebalance variance found. This should never happen for a valid tree");
+    }
 
     pub fn assert_valid(&self) {
         self.root_lock.lock();
@@ -1387,7 +1371,7 @@ pub(crate) enum MemTreeNode<I> {
 
 impl<I: InterruptState> MemTreeNode<I> {
     fn new_from(device_node: TreeNode) -> Self {
-        todo!()
+        todo!("MemTreeNode::new_from")
         //        match device_node {
         //            TreeNode::Leave { parent: _, files } => MemTreeNode::Leave {
         //                files: files.to_vec(),
@@ -1635,6 +1619,12 @@ impl<I: InterruptState> MemTreeLink<I> {
     unsafe fn as_mut(&mut self) -> Option<&mut MemTreeNode<I>> {
         unsafe { self.node.as_mut().map(|n| n.as_mut()) }
     }
+}
+
+enum DeleteRebalanceMode {
+    TakeFromRight,
+    TakeFromLeft,
+    Merge { merge_left_index: usize },
 }
 
 #[multitest(cfg: feature = "test")]
@@ -1991,7 +1981,6 @@ mod test_mem_only {
         Ok(())
     }
 
-    /*
     #[kernel_test]
     fn test_delete_no_rebalance() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
@@ -2297,7 +2286,7 @@ mod test_mem_only {
         Ok(())
     }
 
-    #[kernel_test(f)]
+    #[kernel_test]
     fn test_delete_100_files() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
 
@@ -2331,48 +2320,8 @@ mod test_mem_only {
         tree.assert_valid_full();
 
         for id in delete_ids {
-            trace!("Delete {id}");
-            // TODO temp
-            if *id == 69 {
-                log::warn!("fucked up");
-                // super::BORK.store(true, core::sync::atomic::Ordering::SeqCst);
-            }
             tree.delete(&TestBlockDevice, file_id(*id)).tunwrap()?;
-
-            for f in &files {
-                if f.id.get() > 100 {
-                    log::error!(
-                        "File ids: {:?}",
-                        files.iter().map(|f| f.id.get()).collect::<Vec<_>>()
-                    );
-                    tfail!("broken after delete {id}");
-                }
-            }
-            if *id == 73 {
-                log::warn!("fucked up");
-            }
-            tree.assert_valid_full();
-
-            for f in &files {
-                if f.id.get() > 100 {
-                    tfail!(
-                        "File ids: {:?}",
-                        files.iter().map(|f| f.id.get()).collect::<Vec<_>>()
-                    );
-                    tfail!("broken after valid check {id}");
-                }
-            }
         }
-        for f in &files {
-            if f.id.get() > 100 {
-                tfail!(
-                    "File ids: {:?}",
-                    files.iter().map(|f| f.id.get()).collect::<Vec<_>>()
-                );
-                tfail!();
-            }
-        }
-        debug!("Delete done");
         tree.assert_valid_full();
 
         let root = unsafe {
@@ -2388,5 +2337,4 @@ mod test_mem_only {
 
         Ok(())
     }
-    */
 }

@@ -275,6 +275,8 @@ const_assert!(LEAVE_MAX_FILE_COUNT % 2 == 0);
 
 pub(crate) const NODE_MAX_CHILD_COUNT: usize = 30;
 const_assert!(NODE_MAX_CHILD_COUNT % 2 == 0);
+// this simplifies rebalance
+const_assert!(NODE_MAX_CHILD_COUNT / 2 >= 2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C, u8)]
