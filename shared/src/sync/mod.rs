@@ -89,9 +89,9 @@ pub trait InterruptState: CoreInfo + 'static {
     /// # Safety
     ///
     /// * Caller must call [InterruptState::exit_lock] exactly once with the
-    ///     same parameter for `enable_interrupts`
+    ///   same parameter for `enable_interrupts`
     /// * If `disable_interrupts` caller must ensure that interrupts can be
-    ///     disabled safely
+    ///   disabled safely
     unsafe fn enter_lock(&self, disable_interrupts: bool);
 
     /// Signal the kernel that a lock was released. If `enable_interrupts` the
@@ -100,7 +100,7 @@ pub trait InterruptState: CoreInfo + 'static {
     /// # Safety
     ///
     /// * caller must ensure that this function is called exactly once per invocation
-    ///     of [InterruptState::enter_lock] with the same parameter.
+    ///   of [InterruptState::enter_lock] with the same parameter.
     unsafe fn exit_lock(&self, enable_interrupts: bool);
 
     /// Returns `true` if we're currently in an interrupt
@@ -128,9 +128,9 @@ pub trait InterruptState: CoreInfo + 'static {
     /// # Safety
     ///
     /// * Caller must call [InterruptState::exit_lock] exactly once with the
-    ///     same parameter for `enable_interrupts`
+    ///   same parameter for `enable_interrupts`
     /// * If `disable_interrupts` caller must ensure that interrupts can be
-    ///     disabled safely
+    ///   disabled safely
     unsafe fn s_enter_lock(disable_interrupts: bool)
     where
         Self: Sized,
@@ -144,7 +144,7 @@ pub trait InterruptState: CoreInfo + 'static {
     /// # Safety
     ///
     /// * caller must ensure that this function is called exactly once per invocation
-    ///     of [InterruptState::enter_lock] with the same parameter.
+    ///   of [InterruptState::enter_lock] with the same parameter.
     unsafe fn s_exit_lock(enable_interrupts: bool)
     where
         Self: Sized,

@@ -328,6 +328,12 @@ pub struct UnsafeTicketLock<I> {
 unsafe impl<I: InterruptState> Send for UnsafeTicketLock<I> {}
 unsafe impl<I: InterruptState> Sync for UnsafeTicketLock<I> {}
 
+impl<I> Default for UnsafeTicketLock<I> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<I> UnsafeTicketLock<I> {
     /// creates a new [UnsafeTicketLock]
     pub const fn new() -> Self {
@@ -367,8 +373,7 @@ impl<I> UnsafeTicketLock<I> {
         let shattered = self.shattered.load(Ordering::Acquire);
         let _ = writeln!(
             writer,
-            "[UnsafeTicketLock(c: {}, n: {}, o: {}, s: {})]",
-            current, next, owner, shattered
+            "[UnsafeTicketLock(c: {current}, n: {next}, o: {owner}, s: {shattered})]"
         );
     }
 }

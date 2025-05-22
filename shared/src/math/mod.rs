@@ -46,6 +46,7 @@ impl<T> const NumberConstants for T
 where
     T: Number + ~const core::ops::Add,
 {
+    #[allow(clippy::assign_op_pattern)]
     fn constant(value: usize) -> Self {
         let mut res = Self::ZERO;
         let mut count = 0;

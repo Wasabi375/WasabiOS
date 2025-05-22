@@ -85,6 +85,7 @@ impl<T: 'static> TaskLocalInner<T> {
     }
 
     /// get a unique reference for this [TaskLocal]
+    #[allow(clippy::mut_from_ref)]
     unsafe fn get_mut(&self, init: &TaskLocalInitializer<T>) -> &mut T {
         self.init(init);
         unsafe { (*self.value.get()).assume_init_mut() }
@@ -215,10 +216,10 @@ impl<T: 'static, I: InterruptState> TaskLocal<T, I> {
         // Safety: see read above
         unsafe { *in_use_ptr = true }
 
-        return Some(TaskLocalRef {
-            container: &self,
+        Some(TaskLocalRef {
+            container: self,
             _core_info: PhantomData,
-        });
+        })
     }
 
     fn new_empty_data() -> Box<[TaskLocalInner<T>]> {

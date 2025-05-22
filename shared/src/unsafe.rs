@@ -2,20 +2,22 @@
 
 /// Extends the lifetime of a reference
 ///
-/// # Safety:
+/// # Safety
 ///
 /// Caller must ensure that the resulting lifetime is valid.
 /// This function is UB in nearly all cases.
 pub unsafe fn extend_lifetime<'i, 'o: 'i, T>(i: &'i T) -> &'o T {
+    // Safety: based on function safety
     unsafe { &*(i as *const _) }
 }
 
 /// Extends the lifetime of a reference
 ///
-/// # Safety:
+/// # Safety
 ///
 /// Caller must ensure that the resulting lifetime is valid.
 /// This function is UB in nearly all cases.
 pub unsafe fn extend_lifetime_mut<'i, 'o: 'i, T>(i: &'i mut T) -> &'o mut T {
+    // Safety: based on function safety
     unsafe { &mut *(i as *mut _) }
 }
