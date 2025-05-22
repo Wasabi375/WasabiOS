@@ -211,16 +211,6 @@ fn init_mp() {
     }
 }
 
-#[cfg(feature = "freeze-heap")]
-fn freeze_global_heap() -> Result<(), ()> {
-    wasabi_kernel::mem::kernel_heap::freeze_global_heap().map_err(|_| ())
-}
-
-#[cfg(feature = "freeze-heap")]
-fn try_unfreeze_global_heap() -> Result<(), ()> {
-    wasabi_kernel::mem::kernel_heap::try_unfreeze_global_heap().map_err(|_| ())
-}
-
 /// the main entry point for the kernel in test mode
 fn kernel_test_main() -> ! {
     unsafe {

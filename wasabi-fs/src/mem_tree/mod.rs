@@ -17,7 +17,6 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use log::{debug, trace};
 use shared::{
     r#unsafe::extend_lifetime_mut,
     sync::{lockcell::UnsafeTicketLock, InterruptState},
@@ -505,7 +504,6 @@ impl<I: InterruptState> MemTree<I> {
             .unwrap_or(files.len());
 
         if files.is_not_full() {
-            log::trace!("simple insert");
             files.insert(insert_pos, file);
 
             self.unlock_upwards(leave);
@@ -570,7 +568,6 @@ impl<I: InterruptState> MemTree<I> {
         else {
             panic!("parent must always be a node");
         };
-        trace!("insert_split");
 
         *dirty = true;
 
@@ -650,7 +647,6 @@ impl<I: InterruptState> MemTree<I> {
         split_id: FileId,
         new_node: MemTreeNode<I>,
     ) -> Result<(), MemTreeError<D>> {
-        trace!("insert_split_at_root");
         assert!(root.parent_ref().is_none());
 
         let (old_root_link_node, old_root_link_device) = {
@@ -1636,7 +1632,6 @@ mod test_mem_only {
         ops::Deref,
         sync::atomic::{AtomicBool, AtomicPtr},
     };
-    use log::{debug, trace};
 
     use shared::sync::lockcell::UnsafeTicketLock;
     use staticvec::StaticVec;
