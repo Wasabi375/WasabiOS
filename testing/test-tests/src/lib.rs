@@ -52,6 +52,7 @@ mod tests {
 
     #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Assert)))]
     fn test_t_assert_false() -> Result<(), KernelTestError> {
+        #[allow(clippy::disallowed_names)]
         let foo = false;
         t_assert!(foo);
         Ok(())
