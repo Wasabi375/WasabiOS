@@ -42,7 +42,7 @@ impl CoreInfo for StdInterruptState {
             .lock()
             .unwrap()
             .entry(thread_id.as_u64())
-            .or_insert_with(|| next_core_id())
+            .or_insert_with(next_core_id)
     }
 
     fn is_bsp(&self) -> bool {
