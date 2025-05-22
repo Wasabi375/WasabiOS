@@ -2,13 +2,14 @@ use std::{
     cmp::max,
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
+    ops::Deref,
     path::Path,
     ptr::NonNull,
     sync::Mutex,
 };
 
 use thiserror::Error;
-use wfs::{interface::BlockDevice, BlockSlice, BLOCK_SIZE, LBA};
+use wfs::{BLOCK_SIZE, BlockAligned, BlockSlice, LBA, interface::BlockDevice};
 
 pub struct FileDevice {
     max_block_count: u64,
@@ -74,8 +75,8 @@ impl BlockDevice for FileDevice {
 
         file.seek(SeekFrom::Start(lba.get() * BLOCK_SIZE as u64))?;
 
-        let mut block = Box::new([0; BLOCK_SIZE]);
-        if file.read(block.as_mut())? != BLOCK_SIZE {
+        let mut block = Box::new(BlockAligned([0; BLOCK_SIZE]));
+        if file.read(&mut block.as_mut().0)? != BLOCK_SIZE {
             return Err(Self::BlockDeviceError::other(FileDevicError::UnexpectedEOF));
         }
 
@@ -109,7 +110,9 @@ impl BlockDevice for FileDevice {
 
         file.seek(SeekFrom::Start(lba.get() * BLOCK_SIZE as u64))?;
 
-        if file.write(unsafe { data.as_ref() })? != BLOCK_SIZE {
+        let data = unsafe { data.as_ref() };
+
+        if file.write(&data.0)? != BLOCK_SIZE {
             return Err(Self::BlockDeviceError::other(
                 FileDevicError::IncompleteWrite,
             ));
@@ -165,12 +168,12 @@ impl BlockDevice for FileDevice {
             return Err(Self::BlockDeviceError::other(FileDevicError::UnexpectedEOF));
         }
 
-        if &block != current {
-            return Ok(Err(Box::new(block)));
+        if &block != &current.0 {
+            return Ok(Err(Box::new(BlockAligned(block))));
         }
 
         file.seek(SeekFrom::Start(lba.get() * BLOCK_SIZE as u64))?;
-        if file.write(new)? != BLOCK_SIZE {
+        if file.write(new.deref())? != BLOCK_SIZE {
             return Err(Self::BlockDeviceError::other(
                 FileDevicError::IncompleteWrite,
             ));

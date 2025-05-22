@@ -162,7 +162,7 @@ impl BlockGroup {
 /// Type alias for `[u8; BLOCK_SIZE]`
 ///
 /// See [BLOCK_SIZE]
-pub type BlockSlice = [u8; BLOCK_SIZE];
+pub type BlockSlice = BlockAligned<[u8; BLOCK_SIZE]>;
 
 /// The size of any block used to store data on the disc
 // TODO do I want to/should I increase this to 4KiB/1Page
@@ -228,7 +228,7 @@ impl<T> Block<T> {
         self._data.0
     }
 
-    pub fn block_data(&self) -> NonNull<[u8; BLOCK_SIZE]> {
+    pub fn block_data(&self) -> NonNull<BlockSlice> {
         assert!(size_of::<Self>() == 512);
 
         NonNull::from(self).cast()

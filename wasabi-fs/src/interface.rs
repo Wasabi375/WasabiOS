@@ -7,7 +7,7 @@ use core::{
 use alloc::boxed::Box;
 
 use crate::{
-    blocks_required_for, fs_structs::NodePointer, BlockGroup, BlockSlice, BLOCK_SIZE, LBA,
+    BLOCK_SIZE, BlockGroup, BlockSlice, LBA, blocks_required_for, fs_structs::NodePointer,
 };
 
 pub trait BlockDevice {
@@ -17,6 +17,8 @@ pub trait BlockDevice {
     fn max_block_count(&self) -> Result<u64, Self::BlockDeviceError>;
 
     /// Read a block from the device
+    ///
+    /// The resulting slice will always be algined on block boundaries.
     fn read_block(&self, lba: LBA) -> Result<Box<BlockSlice>, Self::BlockDeviceError>;
 
     /// Read multiple blocks from the device

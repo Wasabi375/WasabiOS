@@ -21,14 +21,14 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
+    BLOCK_SIZE, Block, FS_VERSION, LBA,
     block_allocator::BlockAllocator,
-    existing_fs_check::{check_for_filesystem, FsFound},
+    existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
-        BlockString, BlockStringPart, FileId, FileNode, FsStatus, MainHeader, MainTransientHeader,
-        NodePointer, TreeNode, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH,
+        BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockString, BlockStringPart,
+        FileId, FileNode, FsStatus, MainHeader, MainTransientHeader, NodePointer, TreeNode,
     },
     interface::BlockDevice,
-    Block, BLOCK_SIZE, FS_VERSION, LBA,
 };
 
 pub(crate) const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(0) };
@@ -583,8 +583,9 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
 
 impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
     fn write_tree_node(&mut self, lba: LBA, node: &Block<TreeNode>) -> Result<(), FsError> {
-        let data: NonNull<[u8; BLOCK_SIZE]> = NonNull::from(node).cast();
-        self.device.write_block(lba, data).map_err(map_device_error)
+        self.device
+            .write_block(lba, node.block_data())
+            .map_err(map_device_error)
     }
 
     fn write_string(&mut self, string: &str) -> Result<LBA, FsError> {
