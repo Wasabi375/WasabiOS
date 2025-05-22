@@ -72,7 +72,7 @@ fn expand_cfg_attribute_rust_test(attr: Option<&Expr>) -> TokenStream {
 fn expand_content_rust_test(content: Option<&(Brace, Vec<Item>)>) -> Result<Vec<TokenStream>> {
     let res = if let Some((_, content)) = content {
         content
-            .into_iter()
+            .iter()
             .map(|content| match content {
                 Item::Fn(fun) => expand_function_rust_test(fun),
                 Item::Use(use_) => expand_use_rust_test(use_),
@@ -219,13 +219,13 @@ fn parse_kernel_test_attribute(attr: &Attribute) -> Result<Option<TestArgs>> {
     };
 
     // TODO can I make this more robust? Maybe I can get the required path in the multitest args
-    if last_path_seg.to_string() != "kernel_test" {
+    if *last_path_seg != "kernel_test" {
         return Ok(None);
     }
 
     match attr.meta {
         syn::Meta::Path(_) => Ok(Some(TestArgs::default())),
-        syn::Meta::List(_) | syn::Meta::NameValue(_) => attr.parse_args().map(|args| Some(args)),
+        syn::Meta::List(_) | syn::Meta::NameValue(_) => attr.parse_args().map(Some),
     }
 }
 

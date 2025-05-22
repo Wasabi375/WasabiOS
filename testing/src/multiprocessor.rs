@@ -58,7 +58,7 @@ pub unsafe fn init_interrupt_state(
         Err(guard_ptr) => guard_ptr as *const _,
     };
 
-    while guard_ptr == dummy_ptr as *const _ {
+    while core::ptr::eq(guard_ptr, dummy_ptr) {
         spin_loop();
         guard_ptr = INTERRUPT_STATE_GUARD_PTR.load(Ordering::Relaxed) as *const _;
         assert_ne!(
@@ -68,7 +68,7 @@ pub unsafe fn init_interrupt_state(
         );
     }
 
-    if guard_ptr == interrupt_state_ptr as *const _ {
+    if core::ptr::eq(guard_ptr, interrupt_state_ptr) {
         assert_eq!(MAX_CORE_COUNT.load(Ordering::Relaxed), max_core_count, "init_interrupt_state must be called with the same argument for max_core_count every time");
         // Safety: guard_ptr points to final storage, so it will no longer be modified
         let state = unsafe { &*interrupt_state_ptr }

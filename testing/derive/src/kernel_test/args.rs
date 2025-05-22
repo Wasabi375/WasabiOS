@@ -91,6 +91,7 @@ impl TryFrom<&Signature> for TestFunctionVariance {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TestArgs {
     fn default() -> Self {
         TestArgs {
