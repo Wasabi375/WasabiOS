@@ -23,7 +23,7 @@ pub enum FsFound {
     Btrfs,
 }
 
-const FS_MAGICS: &[(FsFound, u64, &'static [u8])] = {
+const FS_MAGICS: &[(FsFound, u64, &[u8])] = {
     use FsFound::*;
     &[
         (Fat16, 0x36, b"FAT16"),
@@ -75,7 +75,7 @@ pub fn check_for_wasabifs<D: BlockDevice>(device: &D) -> Result<FsFound, D::Bloc
 
     let block = device.read_block(BLOCK)?;
 
-    if &block[OFFSET..OFFSET + MainHeader::MAGIC.len()] != &MainHeader::MAGIC {
+    if block[OFFSET..OFFSET + MainHeader::MAGIC.len()] != MainHeader::MAGIC {
         return Ok(FsFound::None);
     }
 

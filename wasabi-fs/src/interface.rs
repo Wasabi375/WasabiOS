@@ -95,7 +95,7 @@ pub trait BlockDevice {
         } else {
             let count = blocks_required_for!(type: T);
             let data = self.read_blocks(ptr.lba, count)?;
-            unsafe { Ok((data.as_ptr() as *const u8 as *const T).read()) }
+            unsafe { Ok((data.as_ptr() as *const T).read()) }
         }
     }
 }

@@ -1,9 +1,10 @@
-use core::{cmp::max, num::NonZeroU64, usize};
+use core::{cmp::max, num::NonZeroU64};
 
 use alloc::{boxed::Box, vec::Vec};
 use log::debug;
 use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
+use thiserror::Error;
 
 use crate::{
     blocks_required_for,
@@ -25,6 +26,10 @@ pub struct BlockAllocator {
     /// `true` if this is different from the on device version
     dirty: bool,
 }
+
+#[derive(Debug, Error)]
+#[error("Block allocator is not consistent")]
+pub struct BlockAllocatorInconsistent {}
 
 impl BlockAllocator {
     /// Creates a new [BlockAllocator] that is free, except for `initial_usage`.
@@ -261,13 +266,13 @@ impl BlockAllocator {
             }
 
             if remaining_size > group_size {
-                group_size = group_size >> 1;
+                group_size >>= 1;
                 continue;
             }
 
             let Some(group) = self.allocate_group(group_size) else {
                 // failed to allocate at current size. try smaller sizes
-                group_size = group_size >> 1;
+                group_size >>= 1;
                 continue;
             };
 
@@ -296,7 +301,7 @@ impl BlockAllocator {
             }
 
             if current.end() + 1 == free.start {
-                current.count_minus_one + free.count();
+                current.count_minus_one += free.count();
                 break;
             }
 
@@ -324,21 +329,17 @@ impl BlockAllocator {
     /// - free ranges are sorted by their start LBA
     /// - ranges don't overlap
     /// - 2 ranges always have at least 1 LBA between them that is in neither
+    #[allow(clippy::result_unit_err)]
     pub fn check_consistent(&self) -> Result<(), ()> {
-        if self
-            .free
-            .windows(2)
-            .map(|w| {
-                assert!(w.len() == 2);
-                let first = w[0];
-                let second = w[1];
+        if self.free.windows(2).all(|w| {
+            assert!(w.len() == 2);
+            let first = w[0];
+            let second = w[1];
 
-                let past_first_end = first.start + first.count();
+            let past_first_end = first.start + first.count();
 
-                past_first_end < second.start
-            })
-            .all(|p| p)
-        {
+            past_first_end < second.start
+        }) {
             Ok(())
         } else {
             Err(())
@@ -352,6 +353,7 @@ impl BlockAllocator {
     /// It does not check that the free list is actually free.
     ///
     /// This will error if the allocator is dirty. See [Self::is_dirty]
+    #[allow(clippy::result_unit_err)]
     pub fn check_matches_device<D: BlockDevice>(&self, device: &D) -> Result<(), ()> {
         if self.is_dirty() {
             return Err(());
@@ -365,7 +367,7 @@ impl BlockAllocator {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct BlockGroupList {
     pub groups: Vec<BlockGroup>,
 }
@@ -402,9 +404,7 @@ impl Iterator for BlockGroupListBlockIter<'_> {
         if self.current_group.is_none() {
             self.current_group = self.group_iter.next().cloned();
         }
-        let Some(group) = self.current_group else {
-            return None;
-        };
+        let group = self.current_group?;
 
         assert!(self.current_index < group.count());
         let result = group.start + self.current_index;

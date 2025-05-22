@@ -18,7 +18,7 @@ impl<'a, I: InterruptState> MemTreeNodeIter<'a, I> {
         };
         Self {
             tree,
-            open: root.iter().map(|it| *it).collect(),
+            open: root.iter().copied().collect(),
         }
     }
 }
@@ -27,9 +27,7 @@ impl<'a, I: InterruptState> Iterator for MemTreeNodeIter<'a, I> {
     type Item = &'a MemTreeNode<I>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let Some(current) = self.open.pop_front() else {
-            return None;
-        };
+        let current = self.open.pop_front()?;
 
         if let MemTreeNode::Node { children, .. } = current {
             self.open.extend(children.iter().filter_map(|node| unsafe {

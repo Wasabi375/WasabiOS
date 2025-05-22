@@ -6,7 +6,6 @@ use core::{
     marker::PhantomData,
     mem::{size_of, transmute},
     ptr::NonNull,
-    usize,
 };
 
 use alloc::{
@@ -181,6 +180,7 @@ where
         Ok(())
     }
 
+    #[allow(clippy::result_large_err)] // TODO can I fix this somehow? Should I use Box/Arc/etc?
     pub fn close(mut self) -> Result<D, (Self, FsError)> {
         // TODO I want a Drop impl but that conflicts with manually closing and returning the
         // device.
@@ -315,7 +315,7 @@ where
 
         let name_block: Option<LBA> = name
             .as_ref()
-            .map(|name| fs.write_string(&name))
+            .map(|name| fs.write_string(name))
             .transpose()?;
         if let Some(name_block) = name_block {
             header.name = Some(NodePointer::new(name_block));
@@ -456,7 +456,7 @@ where
         }
 
         fs.block_allocator =
-            BlockAllocator::load(&mut fs.device, header.free_blocks).map_err(map_device_error)?;
+            BlockAllocator::load(&fs.device, header.free_blocks).map_err(map_device_error)?;
 
         unsafe {
             // Safety: we checked that the fs is valid, and ensured that read/write access is ok
@@ -559,7 +559,7 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
 
             match tree_node {
                 TreeNode::Leave { parent, files } => {
-                    debug!("parent: {:#?}", parent);
+                    debug!("parent: {parent:#?}");
                     debug!("nodes: {:?}", files.iter().map(|n| n.id));
                     return Ok(files.iter().find(|(node)| node.id == id).cloned());
                 }
@@ -621,7 +621,7 @@ impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
             .write_block(head_lba, string_head.block_data())
             .map_err(map_device_error)?;
 
-        while bytes.len() > 0 {
+        while !bytes.is_empty() {
             let part_lba = blocks
                 .next()
                 .expect("There should be enough blocks allocated for the string");

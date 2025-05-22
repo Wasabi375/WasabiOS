@@ -14,7 +14,6 @@ use core::{
     num::{NonZeroU16, NonZeroU64},
     ops::{Add, AddAssign, Deref, DerefMut, Sub, SubAssign},
     ptr::NonNull,
-    u64,
 };
 
 use nonmax::NonMaxU64;
@@ -53,6 +52,9 @@ impl LBA {
         }
     }
 
+    /// # Safety
+    ///
+    /// `addr` must not be `u64::MAX`
     pub const unsafe fn new_unchecked(addr: u64) -> Self {
         assert!(addr != u64::MAX);
         Self(LittleEndian::from_bits(unsafe {
@@ -113,7 +115,7 @@ impl SubAssign<u64> for LBA {
 
 impl PartialOrd for LBA {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        self.get().partial_cmp(&other.get())
+        Some(self.cmp(other))
     }
 }
 
@@ -204,21 +206,21 @@ pub const FS_VERSION: [u8; 4] = [0, 1, 0, 1];
 pub struct BlockAligned<T>(pub T);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ZST {}
+struct Zst {}
 
 /// Align `T` on block boundaries and ensure it is padded to fill the entire block
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C, align(512))]
 pub struct Block<T> {
     _data: BlockAligned<T>,
-    _pad: BlockAligned<ZST>,
+    _pad: BlockAligned<Zst>,
 }
 
 impl<T> Block<T> {
     pub fn new(data: T) -> Self {
         Self {
             _data: BlockAligned(data),
-            _pad: BlockAligned(ZST {}),
+            _pad: BlockAligned(Zst {}),
         }
     }
 

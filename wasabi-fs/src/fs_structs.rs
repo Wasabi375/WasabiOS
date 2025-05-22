@@ -94,6 +94,9 @@ impl FileId {
         NonMaxU64::new(id).map(|id| FileId(id.into()))
     }
 
+    /// # Safety
+    ///
+    /// `id` must not be `u64::MAX`
     pub unsafe fn new_unchecked(id: u64) -> Self {
         unsafe { FileId(NonMaxU64::new_unchecked(id).into()) }
     }
@@ -182,7 +185,7 @@ const_assert!(size_of::<NodePointer<u8>>() == size_of::<LBA>());
 
 impl<T> Clone for NodePointer<T> {
     fn clone(&self) -> Self {
-        Self::new(self.lba)
+        *self
     }
 }
 impl<T> Copy for NodePointer<T> {}

@@ -1,7 +1,6 @@
 use core::{
     alloc::AllocError,
     assert_matches::assert_matches,
-    borrow::{Borrow, BorrowMut},
     cell::{RefCell, UnsafeCell},
     default, error,
     marker::PhantomData,
@@ -275,14 +274,8 @@ mod node_guard {
         where
             'a: 'b,
         {
-            let node = self.borrow();
-
-            let Some(parent_ptr) = node.get_parent() else {
-                return None;
-            };
-
             Some(NodeGuard {
-                node: parent_ptr,
+                node: self.borrow().get_parent()?,
                 drop_check: true,
                 _lifetime: PhantomData,
                 _borrow: PhantomData,
@@ -295,6 +288,7 @@ mod node_guard {
         ///
         /// Returns a [NodeGuard] for the parent and a ptr to the current node
         /// or `Err(self)` if no parent exists.
+        #[allow(clippy::type_complexity)]
         pub fn into_parent(
             mut self,
         ) -> Result<(NodeGuard<'a, I, Mut>, NonNull<MemTreeNode<I>>), Self> {
@@ -357,6 +351,7 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// The caller muset ensure the root_lock is held and no mut ref
     /// to the root currently exists
+    #[allow(clippy::mut_from_ref)]
     unsafe fn get_root_mut(&self) -> &mut MemTreeLink<I> {
         unsafe { &mut *self.root.get() }
     }
@@ -458,7 +453,7 @@ impl<I: InterruptState> MemTree<I> {
 
         let result = files.iter().find(|f| f.id == id).cloned();
 
-        return Ok(result);
+        Ok(result)
     }
 
     pub fn insert<D: BlockDevice>(
@@ -532,7 +527,7 @@ impl<I: InterruptState> MemTree<I> {
             .id;
 
         let new_node = MemTreeNode::Leave {
-            parent: parent.clone(),
+            parent: *parent,
             files: right_node_files,
             dirty: true,
             lock: UnsafeTicketLock::new(),
@@ -622,7 +617,7 @@ impl<I: InterruptState> MemTree<I> {
             .expect("This node was in the middle of the children array and therefor should have a max value");
 
         let new_node = MemTreeNode::Node {
-            parent: next_parent.clone(),
+            parent: *next_parent,
             children: right_node_children,
             dirty: true,
             dirty_children: true,
@@ -662,7 +657,7 @@ impl<I: InterruptState> MemTree<I> {
 
             let old_root_link_node_ptr = old_root_link_node
                 .as_ref()
-                .map(|node| Box::as_ptr(node))
+                .map(Box::as_ptr)
                 .expect("root node should be some");
 
             assert_eq!(old_root_link_node_ptr, root_node_ptr);
@@ -780,7 +775,13 @@ impl<I: InterruptState> MemTree<I> {
             .into_parent()
             .expect("Rebalance leave should only be called for nodes with parents");
 
-        let ((mut left_guard, left_max_id), (mut right_guard, right_max_id), mode) = self
+        let ChildrenForRebalance {
+            mut left_guard,
+            left_max_id,
+            mut right_guard,
+            right_max_id,
+            mode,
+        } = self
             .get_children_for_rebalance(&mut parent, unbalanced_node_ptr, device)
             .map_err(MemTreeError::from)?;
 
@@ -934,7 +935,13 @@ impl<I: InterruptState> MemTree<I> {
             }
         };
 
-        let ((mut left_guard, left_max_id), (mut right_guard, right_max_id), mode) = self
+        let ChildrenForRebalance {
+            mut left_guard,
+            left_max_id,
+            mut right_guard,
+            right_max_id,
+            mode,
+        } = self
             .get_children_for_rebalance(&mut parent, unbalanced_node_ptr, device)
             .map_err(MemTreeError::from)?;
 
@@ -1052,20 +1059,7 @@ impl<I: InterruptState> MemTree<I> {
         node: &'l mut NodeGuard<'n, I, B>,
         unbalanced_ptr: NonNull<MemTreeNode<I>>,
         device: &D,
-    ) -> Result<
-        (
-            (
-                NodeGuard<'l, I, node_guard::MutChild>,
-                &'l mut Option<FileId>,
-            ),
-            (
-                NodeGuard<'l, I, node_guard::MutChild>,
-                &'l mut Option<FileId>,
-            ),
-            DeleteRebalanceMode,
-        ),
-        D::BlockDeviceError,
-    > {
+    ) -> Result<ChildrenForRebalance<'l, I>, D::BlockDeviceError> {
         let MemTreeNode::Node {
             children, parent, ..
         } = node.borrow_mut()
@@ -1090,7 +1084,7 @@ impl<I: InterruptState> MemTree<I> {
                 if let Some(node) = link.node.as_ref() {
                     let ptr = Box::as_ptr(node);
 
-                    ptr == unbalanced_ptr.as_ptr() as *const _
+                    core::ptr::eq(ptr, unbalanced_ptr.as_ptr())
                 } else {
                     false
                 }
@@ -1169,19 +1163,15 @@ impl<I: InterruptState> MemTree<I> {
                             // of the loop or return the reference, therefor ending the loop.
                             // Extend can't be used to keep a reference into the next iteration of
                             // the loop
-                            return Ok((
-                                (
-                                    // Safety: we just locked this
-                                    NodeGuard::new(extend_lifetime_mut(left)),
-                                    extend_lifetime_mut(left_max),
-                                ),
-                                (
-                                    // Safety: we just locked this
-                                    NodeGuard::new(extend_lifetime_mut(right)),
-                                    extend_lifetime_mut(right_max),
-                                ),
-                                DeleteRebalanceMode::Merge { merge_left_index },
-                            ));
+                            return Ok(ChildrenForRebalance {
+                                // Safety: we just locked this
+                                left_guard: NodeGuard::new(extend_lifetime_mut(left)),
+                                left_max_id: extend_lifetime_mut(left_max),
+                                // Safety: we just locked this
+                                right_guard: NodeGuard::new(extend_lifetime_mut(right)),
+                                right_max_id: extend_lifetime_mut(right_max),
+                                mode: DeleteRebalanceMode::Merge { merge_left_index },
+                            });
                         }
                     }
                 }
@@ -1218,19 +1208,15 @@ impl<I: InterruptState> MemTree<I> {
                             // of the loop or return the reference, therefor ending the loop.
                             // Extend can't be used to keep a reference into the next iteration of
                             // the loop
-                            return Ok((
-                                (
-                                    // Safety: we just locked this
-                                    NodeGuard::new(extend_lifetime_mut(left)),
-                                    extend_lifetime_mut(left_max),
-                                ),
-                                (
-                                    // Safety: we just locked this
-                                    NodeGuard::new(extend_lifetime_mut(right)),
-                                    extend_lifetime_mut(right_max),
-                                ),
-                                DeleteRebalanceMode::TakeFromRight,
-                            ));
+                            return Ok(ChildrenForRebalance {
+                                // Safety: we just locked this
+                                left_guard: NodeGuard::new(extend_lifetime_mut(left)),
+                                left_max_id: extend_lifetime_mut(left_max),
+                                // Safety: we just locked this
+                                right_guard: NodeGuard::new(extend_lifetime_mut(right)),
+                                right_max_id: extend_lifetime_mut(right_max),
+                                mode: DeleteRebalanceMode::TakeFromRight,
+                            });
                         }
                     }
                 }
@@ -1267,19 +1253,15 @@ impl<I: InterruptState> MemTree<I> {
                             // of the loop or return the reference, therefor ending the loop.
                             // Extend can't be used to keep a reference into the next iteration of
                             // the loop
-                            return Ok((
-                                (
-                                    // Safety: we just locked this
-                                    NodeGuard::new(extend_lifetime_mut(left)),
-                                    extend_lifetime_mut(left_max),
-                                ),
-                                (
-                                    // Safety: we just locked this
-                                    NodeGuard::new(extend_lifetime_mut(right)),
-                                    extend_lifetime_mut(right_max),
-                                ),
-                                DeleteRebalanceMode::TakeFromLeft,
-                            ));
+                            return Ok(ChildrenForRebalance {
+                                // Safety: we just locked this
+                                left_guard: NodeGuard::new(extend_lifetime_mut(left)),
+                                left_max_id: extend_lifetime_mut(left_max),
+                                // Safety: we just locked this
+                                right_guard: NodeGuard::new(extend_lifetime_mut(right)),
+                                right_max_id: extend_lifetime_mut(right_max),
+                                mode: DeleteRebalanceMode::TakeFromLeft,
+                            });
                         }
                     }
                 }
@@ -1335,6 +1317,12 @@ impl<I: InterruptState> MemTree<I> {
     }
 }
 
+#[allow(clippy::large_enum_variant)] // MemTreeNode is nearly always stored in a box, also the
+                                     // capacity of children/files is dependent on the space on
+                                     // disk, not in mem.
+                                     // I don't want to use Vec, because I don't want the extra
+                                     // indirection and also having the capacity available
+                                     // independent of leave/node is usefull
 pub(crate) enum MemTreeNode<I> {
     Node {
         parent: Option<NonNull<MemTreeNode<I>>>,
@@ -1453,9 +1441,9 @@ impl<I: InterruptState> MemTreeNode<I> {
 
                     match (first, second) {
                         (Some(first), Some(second)) => assert!(first < second),
-                        (Some(_), None) => assert!(true),
+                        (Some(_), None) => {}
                         (None, Some(_)) | (None, None) => {
-                            assert!(false, "Only the last child should have a max of None")
+                            panic!("Only the last child should have a max of None")
                         }
                     }
                 }
@@ -1495,9 +1483,9 @@ impl<I: InterruptState> MemTreeNode<I> {
 
                     match (first, second) {
                         (Some(first), Some(second)) => assert!(first < second),
-                        (Some(_), None) => assert!(true),
+                        (Some(_), None) => {}
                         (None, Some(_)) | (None, None) => {
-                            assert!(false, "Only the last child should have a max of None")
+                            panic!("Only the last child should have a max of None")
                         }
                     }
                 }
@@ -1615,6 +1603,14 @@ impl<I: InterruptState> MemTreeLink<I> {
     unsafe fn as_mut(&mut self) -> Option<&mut MemTreeNode<I>> {
         unsafe { self.node.as_mut().map(|n| n.as_mut()) }
     }
+}
+
+struct ChildrenForRebalance<'l, I: InterruptState> {
+    left_guard: NodeGuard<'l, I, node_guard::MutChild>,
+    left_max_id: &'l mut Option<FileId>,
+    right_guard: NodeGuard<'l, I, node_guard::MutChild>,
+    right_max_id: &'l mut Option<FileId>,
+    mode: DeleteRebalanceMode,
 }
 
 enum DeleteRebalanceMode {
