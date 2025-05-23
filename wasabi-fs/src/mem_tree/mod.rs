@@ -7,7 +7,7 @@ use core::{
     mem::{self, MaybeUninit},
     ops::Deref,
     panic,
-    ptr::{self, null_mut, NonNull},
+    ptr::{self, NonNull, null_mut},
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
@@ -17,18 +17,18 @@ use alloc::{
     vec::Vec,
 };
 use shared::{
-    r#unsafe::extend_lifetime_mut,
-    sync::{lockcell::UnsafeTicketLock, InterruptState},
+    sync::{InterruptState, lockcell::UnsafeTicketLock},
     todo_error, todo_warn,
+    r#unsafe::extend_lifetime_mut,
 };
-use staticvec::{staticvec, StaticVec};
+use staticvec::{StaticVec, staticvec};
 use testing_derive::multitest;
 use thiserror::Error;
 
 use crate::{
     fs_structs::{
-        FileId, FileNode, MainHeader, NodePointer, TreeNode, LEAVE_MAX_FILE_COUNT,
-        NODE_MAX_CHILD_COUNT,
+        FileId, FileNode, LEAVE_MAX_FILE_COUNT, MainHeader, NODE_MAX_CHILD_COUNT, NodePointer,
+        TreeNode,
     },
     interface::BlockDevice,
 };
@@ -36,6 +36,9 @@ use crate::{
 use self::iter::MemTreeNodeIter;
 
 pub mod iter;
+mod node_guard;
+
+use node_guard::NodeGuard;
 
 #[derive(Error, Debug, PartialEq, Eq, Clone)]
 #[allow(missing_docs)]
@@ -62,7 +65,8 @@ impl<D: BlockDevice> MemTreeError<D> {
 /// using a copy on write system, meaning that the [MainHeader::root] will always point to a
 /// complete and valid file tree.
 ///
-/// TODO: how do I ensure that old "used" blocks stay around until the main root is updated
+/// TODO: how do I ensure that old "used" blocks stay around until the main root is updated on
+/// device
 ///
 /// # Data Structure
 ///
@@ -125,213 +129,6 @@ enum AccessMode {
     Readonly,
     /// lock all nodes and set the dirty_children flag
     Update,
-}
-
-use node_guard::NodeGuard;
-mod node_guard {
-    use alloc::boxed::Box;
-    use core::{marker::PhantomData, ptr::NonNull};
-    use static_assertions::const_assert;
-
-    use shared::sync::InterruptState;
-
-    use crate::{
-        fs_structs::{FileId, NODE_MAX_CHILD_COUNT},
-        interface::BlockDevice,
-    };
-
-    use super::{DeleteRebalanceMode, MemTreeLink, MemTreeNode};
-
-    pub trait Borrow {
-        fn is_mut() -> bool;
-        fn is_ref() -> bool {
-            !Self::is_mut()
-        }
-        fn drop_check() -> bool {
-            Self::is_mut()
-        }
-    }
-    pub trait BorrowMut: Borrow {}
-    pub trait IntoParent: BorrowMut {}
-
-    /// Marker for Guards that allow for mutable access, this includes
-    /// upgrading into the parent nodes guard
-    pub struct Mut {}
-    /// Marker for Guards that only allow for readonly access
-    pub struct Immut {}
-    /// Marker for Guards that allow for mutable access, but *can't* be upgraded
-    /// to the parent node's guard
-    pub struct MutChild {}
-
-    impl Borrow for Immut {
-        fn is_mut() -> bool {
-            false
-        }
-    }
-
-    impl Borrow for Mut {
-        fn is_mut() -> bool {
-            true
-        }
-    }
-    impl BorrowMut for Mut {}
-    impl IntoParent for Mut {}
-
-    impl Borrow for MutChild {
-        fn is_mut() -> bool {
-            true
-        }
-        fn drop_check() -> bool {
-            false
-        }
-    }
-    impl BorrowMut for MutChild {}
-
-    /// A reference to a MemTreeNode.
-    ///
-    /// This struct gurantees that the reference is valid and the necessary locks
-    /// are held.
-    pub struct NodeGuard<'a, I: InterruptState, BorrowType: Borrow> {
-        node: NonNull<MemTreeNode<I>>,
-        drop_check: bool,
-        _lifetime: PhantomData<&'a ()>,
-        _borrow: PhantomData<BorrowType>,
-    }
-
-    impl<I, B> !Clone for NodeGuard<'_, I, B> {}
-
-    impl<I: InterruptState, B: Borrow> Drop for NodeGuard<'_, I, B> {
-        fn drop(&mut self) {
-            if self.drop_check {
-                if B::drop_check() {
-                    panic!(
-                        "Mut Node guard must not be dropped. Call awaken or into_parent instead"
-                    );
-                } else {
-                    unsafe {
-                        // Safety: we hold the node lock, otherwise the initial reference is invalid.
-                        self.borrow().get_lock().unlock();
-                    }
-                }
-            }
-        }
-    }
-
-    impl<'a, I: InterruptState, B: Borrow> NodeGuard<'a, I, B> {
-        /// Creates a new node guard
-        ///
-        /// # Safety
-        ///
-        /// the node bust be properly locked, depending on `B`.
-        pub unsafe fn new(node: &'a mut MemTreeNode<I>) -> Self {
-            Self {
-                node: node.into(),
-                drop_check: true,
-                _lifetime: PhantomData,
-                _borrow: PhantomData,
-            }
-        }
-
-        pub fn awaken_ref(mut self) -> &'a MemTreeNode<I> {
-            self.drop_check = false;
-            // Safety: NodeGuard gurantees we have at least shared access
-            unsafe { self.node.as_ref() }
-        }
-
-        pub fn borrow(&self) -> &MemTreeNode<I> {
-            // Safety: NodeGuard gurantees we have at least shared access
-            unsafe { self.node.as_ref() }
-        }
-
-        pub fn as_ptr(&self) -> NonNull<MemTreeNode<I>> {
-            self.node
-        }
-
-        pub fn unlock(mut self) -> NonNull<MemTreeNode<I>> {
-            self.drop_check = false;
-            let node = self.borrow();
-            unsafe {
-                // Safety: we hold the node lock, otherwise the initial reference is invalid.
-                node.get_lock().unlock();
-            }
-
-            self.as_ptr()
-        }
-    }
-
-    impl<'a, I: InterruptState, B: IntoParent> NodeGuard<'a, I, B> {
-        pub fn awaken_mut(mut self) -> &'a mut MemTreeNode<I> {
-            self.drop_check = false;
-            // Safety: NodeGuard is BorrowMut, therefor we have unique access
-            unsafe { self.node.as_mut() }
-        }
-
-        /// Get shared access to the parent node
-        ///
-        /// This still requires the current guard to have [AccessMode::Update] access,
-        /// because this gurantees that the parent is still locked
-        pub fn parent_ref<'b>(&'b self) -> Option<NodeGuard<'b, I, Immut>>
-        where
-            'a: 'b,
-        {
-            Some(NodeGuard {
-                node: self.borrow().get_parent()?,
-                drop_check: true,
-                _lifetime: PhantomData,
-                _borrow: PhantomData,
-            })
-        }
-
-        /// Convert this guard into a guard of the parent
-        ///
-        /// This will unlock the current node.
-        ///
-        /// Returns a [NodeGuard] for the parent and a ptr to the current node
-        /// or `Err(self)` if no parent exists.
-        #[allow(clippy::type_complexity)]
-        pub fn into_parent(
-            mut self,
-        ) -> Result<(NodeGuard<'a, I, Mut>, NonNull<MemTreeNode<I>>), Self> {
-            let node = self.borrow();
-
-            let Some(parent_ptr) = node.get_parent() else {
-                return Err(self);
-            };
-            unsafe {
-                // Safety: we hold the node lock, otherwise the initial reference is invalid.
-                node.get_lock().unlock();
-            }
-            self.drop_check = false;
-
-            Ok((
-                NodeGuard {
-                    node: parent_ptr,
-                    drop_check: true,
-                    _lifetime: PhantomData,
-                    _borrow: PhantomData,
-                },
-                self.node,
-            ))
-        }
-    }
-
-    impl<'a, I: InterruptState, B: BorrowMut> NodeGuard<'a, I, B> {
-        pub fn borrow_mut(&mut self) -> &mut MemTreeNode<I> {
-            // Safety: NodeGuard is BorrowMut, therefor we have unique access
-            unsafe { self.node.as_mut() }
-        }
-    }
-
-    impl<I: InterruptState, B: Borrow> core::fmt::Debug for NodeGuard<'_, I, B> {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            f.debug_struct("NodeGuard")
-                .field_with("ptr", |f| f.write_fmt(format_args!("{:#p}", self.node)))
-                .field("mutable", &B::is_mut())
-                .field("do_drop_check", &B::drop_check())
-                .field("drop_check", &self.drop_check)
-                .finish()
-        }
-    }
 }
 
 impl<I: InterruptState> MemTree<I> {
@@ -814,7 +611,12 @@ impl<I: InterruptState> MemTree<I> {
                 let to_move = right_files.remove(0);
                 assert!(right_files.len() >= right_files.capacity() / 2);
 
-                assert!(to_move.id > left_max_id.expect("max id is only none for the right most node, and this is the left node"));
+                assert!(
+                    to_move.id
+                        > left_max_id.expect(
+                            "max id is only none for the right most node, and this is the left node"
+                        )
+                );
                 *left_max_id = Some(to_move.id);
                 left_files.push(to_move);
             }
@@ -853,7 +655,9 @@ impl<I: InterruptState> MemTree<I> {
                     unreachable!("Parents are always non leave nodes");
                 };
 
-                todo_warn!("what to do with the now no longer used on device nodes? How do I store them for later deletion");
+                todo_warn!(
+                    "what to do with the now no longer used on device nodes? How do I store them for later deletion"
+                );
 
                 children[merge_left_index] = (new_link, merged_max_id);
                 children.remove(merge_left_index + 1);
@@ -977,7 +781,12 @@ impl<I: InterruptState> MemTree<I> {
                 let left_new_max = to_move
                     .1
                     .expect("This is the left most node, therefor should have the max set");
-                assert!(left_new_max> left_max_id.expect("max id is only none for the right most node, and this is the left node"));
+                assert!(
+                    left_new_max
+                        > left_max_id.expect(
+                            "max id is only none for the right most node, and this is the left node"
+                        )
+                );
                 *left_max_id = Some(left_new_max);
 
                 left_children.push(to_move);
@@ -1038,7 +847,9 @@ impl<I: InterruptState> MemTree<I> {
                     unreachable!("Parents are always non leave nodes");
                 };
 
-                todo_warn!("what to do with the now no longer used on device nodes? How do I store them for later deletion");
+                todo_warn!(
+                    "what to do with the now no longer used on device nodes? How do I store them for later deletion"
+                );
 
                 children[merge_left_index] = (new_link, merged_max_id);
                 children.remove(merge_left_index + 1);
@@ -1317,14 +1128,25 @@ impl<I: InterruptState> MemTree<I> {
     }
 }
 
-#[allow(clippy::large_enum_variant)] // MemTreeNode is nearly always stored in a box, also the
-                                     // capacity of children/files is dependent on the space on
-                                     // disk, not in mem.
-                                     // I don't want to use Vec, because I don't want the extra
-                                     // indirection and also having the capacity available
-                                     // independent of leave/node is usefull
+// NOTE MemTreeNode is nearly always stored in a box, also the
+// capacity of children/files is dependent on the space on
+// disk, not in mem.
+// I don't want to use Vec, because I don't want the extra
+// indirection and also having the capacity available
+// independent of leave/node is usefull
+#[allow(clippy::large_enum_variant)]
+/// A node within a [MemTree]
+///
+/// This is either a `Leave` storing [FileNode] data or an internal `Node`
+/// which connect the leaves into a B-Tree like structure.
+///
+/// This is the in memory representation of a [TreeNode]
+///
+/// When possible data in this enum should be accessed via [NodeGuard] instead of normal references.
+/// Especially parent and child nodes should be accessed via [NodeGuard].
 pub(crate) enum MemTreeNode<I> {
     Node {
+        /// A pointer to the parent node or none if this is the root.
         parent: Option<NonNull<MemTreeNode<I>>>,
         /// child pointers to [MemTreeNode] and the largest file id of the subtree.
         ///
@@ -1342,6 +1164,7 @@ pub(crate) enum MemTreeNode<I> {
         lock: UnsafeTicketLock<I>,
     },
     Leave {
+        /// A pointer to the parent node or none if this is the root.
         parent: Option<NonNull<MemTreeNode<I>>>,
 
         /// files sorted based on their id
@@ -1632,15 +1455,15 @@ mod test_mem_only {
     use shared::sync::lockcell::UnsafeTicketLock;
     use staticvec::StaticVec;
     use testing::{
-        kernel_test, multiprocessor::TestInterruptState, t_assert, t_assert_eq, t_assert_matches,
-        tfail, KernelTestError, TestUnwrapExt,
+        KernelTestError, TestUnwrapExt, kernel_test, multiprocessor::TestInterruptState, t_assert,
+        t_assert_eq, t_assert_matches, tfail,
     };
 
     use crate::{
+        BlockGroup, LBA,
         fs_structs::{BlockListHead, FileId, FileNode, FileType, NodePointer, Perm, Timestamp},
         interface::test::TestBlockDevice,
         mem_tree::MemTreeError,
-        BlockGroup, LBA,
     };
 
     use super::{MemTree, MemTreeLink, MemTreeNode};
