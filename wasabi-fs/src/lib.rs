@@ -8,6 +8,7 @@
     negative_impls
 )]
 #![allow(unused, dead_code)] // TODO temp
+#![warn(unused_must_use, unused_mut, unused_labels)]
 
 use core::{
     mem::{size_of, transmute},

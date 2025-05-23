@@ -467,7 +467,7 @@ impl<I: InterruptState> MemTree<I> {
             device_ptr: old_root_link_device,
         };
 
-        let mut right_node = Box::try_new(new_node)?;
+        let right_node = Box::try_new(new_node)?;
         let right_link = MemTreeLink {
             node: Some(right_node),
             device_ptr: None,
@@ -565,7 +565,7 @@ impl<I: InterruptState> MemTree<I> {
     #[inline(always)]
     fn rebalance_leave<D: BlockDevice>(
         &self,
-        mut unbalanced_node: NodeGuard<'_, I, node_guard::Mut>,
+        unbalanced_node: NodeGuard<'_, I, node_guard::Mut>,
         device: &D,
     ) -> Result<(), MemTreeError<D>> {
         let (mut parent, unbalanced_node_ptr) = unbalanced_node
@@ -678,7 +678,7 @@ impl<I: InterruptState> MemTree<I> {
     #[inline(always)]
     fn rebalance_node<D: BlockDevice>(
         &self,
-        mut unbalanced_node: NodeGuard<'_, I, node_guard::Mut>,
+        unbalanced_node: NodeGuard<'_, I, node_guard::Mut>,
         device: &D,
     ) -> Result<(), MemTreeError<D>> {
         let (mut parent, unbalanced_node_ptr) = match unbalanced_node.into_parent() {
@@ -1281,8 +1281,6 @@ impl<I: InterruptState> MemTreeNode<I> {
     fn assert_valid(&self, parent: Option<&MemTreeNode<I>>) {
         let lock = self.get_lock();
         lock.lock();
-
-        let mut rng_state: u32 = self.len() as u32;
 
         assert_eq!(
             parent.map(|p| p as *const _),
@@ -2103,10 +2101,6 @@ mod test_mem_only {
     #[kernel_test]
     fn test_delete_100_files() -> Result<(), KernelTestError> {
         let mut tree = create_empty_tree();
-
-        unsafe {
-            NonZero::<u64>::new_unchecked(5);
-        }
 
         let insert_ids: &[u64] = &[
             42, 67, 13, 91, 28, 73, 5, 38, 84, 19, 99, 7, 34, 53, 22, 88, 45, 96, 31, 11, 79, 62,

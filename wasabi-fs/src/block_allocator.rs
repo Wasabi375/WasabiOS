@@ -7,11 +7,10 @@ use staticvec::StaticVec;
 use thiserror::Error;
 
 use crate::{
-    blocks_required_for,
+    Block, BlockGroup, LBA, blocks_required_for,
     fs::FsError,
-    fs_structs::{FreeBlockGroups, NodePointer, BLOCK_RANGES_COUNT_PER_BLOCK},
+    fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, FreeBlockGroups, NodePointer},
     interface::BlockDevice,
-    Block, BlockGroup, LBA,
 };
 
 #[derive(Clone)]
@@ -73,7 +72,7 @@ impl BlockAllocator {
         // we need at least 1 block, because the main header does have a concept of
         // "no free list". Instead it just stores a pointer to a block with an empty list.
         let mut free_group_count = max(new.free.len(), 1);
-        let mut blocks_required =
+        let blocks_required =
             counts_required_for!(BLOCK_RANGES_COUNT_PER_BLOCK, free_group_count) as u64;
 
         let mut on_disk_blocks: BlockGroupList;
@@ -89,7 +88,10 @@ impl BlockAllocator {
             {
                 break;
             } else {
-                assert!(free_group_count < new.free.len(), "the count should be larger, otherwise we should already have enough blocks allcoated");
+                assert!(
+                    free_group_count < new.free.len(),
+                    "the count should be larger, otherwise we should already have enough blocks allcoated"
+                );
 
                 // on the next try, try to allocate enough space for the current attempt.
                 // This should converge to a successfull attempt
@@ -128,7 +130,7 @@ impl BlockAllocator {
             let Some(empty_block_lba) = on_disk_block_iter.next() else {
                 break;
             };
-            let mut block = Block::new(FreeBlockGroups {
+            let block = Block::new(FreeBlockGroups {
                 free: StaticVec::new(),
                 next: on_disk_block_iter.peek().map(|n| NodePointer::new(*n)),
             });
@@ -149,7 +151,7 @@ impl BlockAllocator {
     ) -> Result<Self, D::BlockDeviceError> {
         let mut free = Vec::new();
         let on_disk = Some(free_blocks);
-        let mut self_on_disk = Vec::new();
+        let self_on_disk = Vec::new();
 
         let mut next_block = on_disk;
         while let Some(block) = next_block {

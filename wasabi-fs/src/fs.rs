@@ -227,6 +227,10 @@ where
         }
     }
 
+    /// Creates a [FileSystem] that is not fully initialized
+    ///
+    /// this is can be used to either load a file system from device or initialize a
+    /// new fs on the device.
     fn create_fs_device_access(
         device: D,
         access: AccessMode,
@@ -302,16 +306,19 @@ where
                 status: FsStatus::Uninitialized,
             }),
         });
-        fs.write_header(&header);
-        fs.copy_header_to_backup(&header);
+        // Write inital header to device to mark fs blocks
+        // TODO: should this be a compare_swap? Otherwise there is a possible race
+        // between multiple create_internal calls
+        fs.write_header(&header)?;
+        fs.copy_header_to_backup(&header)?;
 
-        let root = Block::new(TreeNode::Node {
+        let root = Block::new(TreeNode::Leave {
             parent: None,
-            children: StaticVec::new(),
+            files: StaticVec::new(),
         });
-        fs.write_tree_node(root_block, &root);
+        fs.write_tree_node(root_block, &root)?;
 
-        fs.block_allocator.write(&mut fs.device);
+        fs.block_allocator.write(&mut fs.device)?;
 
         let name_block: Option<LBA> = name
             .as_ref()
@@ -325,7 +332,6 @@ where
         let Some(transient) = header.transient.as_mut() else {
             unreachable!("main header always contains transient header");
         };
-        transient.status = FsStatus::Ready;
         match access {
             AccessMode::ReadOnly => {
                 transient.open_in_write_mode = false;
@@ -334,10 +340,14 @@ where
                 transient.open_in_write_mode = true;
             }
         }
+        transient.status = FsStatus::Ready;
 
         // write backup and main header
-        fs.copy_header_to_backup(&header);
-        fs.write_header(&header);
+        // NOTE this must be the last device write before fs.created
+        // is called. Otherwise we might leave the FS in an invalid/uninitalized
+        // state after setting the status to Ready.
+        fs.copy_header_to_backup(&header)?;
+        fs.write_header(&header)?;
         fs.header_data = HeaderData {
             name,
             version: FS_VERSION,
@@ -509,7 +519,7 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
     pub fn read_string(&self, string_ptr: NodePointer<BlockString>) -> Result<Box<str>, FsError> {
         let mut string: Vec<u8> = Vec::new();
 
-        let mut head_block = unsafe {
+        let head_block = unsafe {
             // We are reading a string
             self.device.read_pointer(string_ptr)
         }
@@ -588,6 +598,10 @@ impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
             .map_err(map_device_error)
     }
 
+    /// Writes a string to the device
+    ///
+    /// returns the [LBA] of the first block in the [BlockGroupList]
+    /// that contains the string
     fn write_string(&mut self, string: &str) -> Result<LBA, FsError> {
         let length_in_parts = if string.len() > BLOCK_STRING_DATA_LENGTH {
             string.len() - BLOCK_STRING_DATA_LENGTH

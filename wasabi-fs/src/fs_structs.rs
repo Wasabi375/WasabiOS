@@ -2,7 +2,7 @@ use core::{
     default, fmt,
     marker::PhantomData,
     mem::size_of,
-    num::{NonZeroU16, NonZeroU64, NonZeroU8},
+    num::{NonZeroU8, NonZeroU16, NonZeroU64},
 };
 
 use bitflags::bitflags;
@@ -13,7 +13,7 @@ use static_assertions::const_assert;
 use staticvec::{StaticString, StaticVec};
 use uuid::Uuid;
 
-use crate::{fs::MAIN_HEADER_BLOCK, BlockGroup, BLOCK_SIZE, LBA};
+use crate::{BLOCK_SIZE, BlockGroup, LBA, fs::MAIN_HEADER_BLOCK};
 
 /// Either a single [BlockGroup] or a [NodePointer] to a [BlockList]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,7 +285,7 @@ const_assert!(NODE_MAX_CHILD_COUNT / 2 >= 2);
 #[repr(C, u8)]
 pub enum TreeNode {
     Leave {
-        parent: NodePointer<TreeNode>, // TODO do I need the parent pointer?
+        parent: Option<NodePointer<TreeNode>>, // TODO do I need the parent pointer?
         files: StaticVec<FileNode, LEAVE_MAX_FILE_COUNT, u8>,
     },
     Node {
