@@ -27,11 +27,16 @@ pub trait IntoParent: BorrowMut {}
 
 /// Marker for Guards that allow for mutable access, this includes
 /// upgrading into the parent nodes guard
+///
+/// Guard must be manually dropped via [super::MemTree::unlock_upwards] or
+/// [NodeGuard::awaken_ref]/[NodeGuard::awaken_mut]
 pub struct Mut {}
 /// Marker for Guards that only allow for readonly access
 pub struct Immut {}
 /// Marker for Guards that allow for mutable access, but *can't* be upgraded
-/// to the parent node's guard
+/// to the parent node's guard.
+///
+/// Accessing the children is allowed as long as their lock is taken first
 pub struct MutChild {}
 
 impl Borrow for Immut {
@@ -98,6 +103,14 @@ impl<'a, I: InterruptState, B: Borrow> NodeGuard<'a, I, B> {
             drop_check: true,
             _lifetime: PhantomData,
             _borrow: PhantomData,
+        }
+    }
+
+    pub fn lock(node: &'a mut MemTreeNode<I>) -> Self {
+        node.get_lock().lock();
+        unsafe {
+            // Safety: lock just taken
+            Self::new(node)
         }
     }
 

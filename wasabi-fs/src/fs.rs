@@ -14,7 +14,7 @@ use alloc::{
     vec::Vec,
 };
 use log::{debug, error, warn};
-use shared::{counts_required_for, dbg, rangeset::RangeSet, todo_error};
+use shared::{counts_required_for, dbg, rangeset::RangeSet, sync::InterruptState, todo_warn};
 use static_assertions::const_assert;
 use staticvec::StaticVec;
 use thiserror::Error;
@@ -29,6 +29,7 @@ use crate::{
         FileId, FileNode, FsStatus, MainHeader, MainTransientHeader, NodePointer, TreeNode,
     },
     interface::BlockDevice,
+    mem_tree::{self, MemTree},
 };
 
 pub(crate) const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(0) };
@@ -47,6 +48,8 @@ pub enum FsError {
     BlockDevice(Box<dyn Error + Send + Sync>),
     #[error("Block device too small. Max block count is {0}, required: {1}")]
     BlockDeviceToSmall(u64, u64),
+    #[error("Block device is full. Failed to allocate {0} blocks")]
+    BlockDeviceFull(u64),
     #[error("Override check failed")]
     OverrideCheck,
     #[error("File system is full")]
@@ -75,7 +78,7 @@ pub enum FsError {
     StringToLong,
 }
 
-fn map_device_error<E: Error + Send + Sync + 'static>(e: E) -> FsError {
+pub fn map_device_error<E: Error + Send + Sync + 'static>(e: E) -> FsError {
     FsError::BlockDevice(Box::new(e))
 }
 
@@ -93,7 +96,7 @@ pub enum FsReadWrite {}
 impl FsRead for FsReadWrite {}
 impl FsWrite for FsReadWrite {}
 
-pub struct FileSystem<D, S> {
+pub struct FileSystem<D, S, I> {
     device: D,
     max_block_count: u64,
     max_usable_lba: LBA,
@@ -102,6 +105,8 @@ pub struct FileSystem<D, S> {
     block_allocator: BlockAllocator,
 
     header_data: HeaderData,
+
+    mem_tree: MemTree<I>,
 
     access_mode: AccessMode,
 
@@ -129,13 +134,13 @@ enum AccessMode {
     ReadWrite,
 }
 
-impl<D> FileSystem<D, FsDuringCreation> {
+impl<D, I> FileSystem<D, FsDuringCreation, I> {
     /// Converts the state to any finished FsState
     ///
     /// # Safety
     ///
     /// the caller must ensure that the Fs is ready to use
-    unsafe fn created<S>(self) -> FileSystem<D, S> {
+    unsafe fn created<S>(self) -> FileSystem<D, S, I> {
         FileSystem {
             device: self.device,
 
@@ -147,6 +152,8 @@ impl<D> FileSystem<D, FsDuringCreation> {
 
             header_data: self.header_data,
 
+            mem_tree: self.mem_tree,
+
             access_mode: self.access_mode,
 
             _state: PhantomData,
@@ -154,14 +161,26 @@ impl<D> FileSystem<D, FsDuringCreation> {
     }
 }
 
-impl<D, S> FileSystem<D, S>
+impl<D, S, I> FileSystem<D, S, I>
 where
     D: BlockDevice,
+    I: InterruptState,
 {
     /// Ensures that all data is written to the device
     ///
     /// In readonly filesystem this only checks for data consistency
     pub fn flush(&mut self) -> Result<(), FsError> {
+        match self.access_mode {
+            AccessMode::ReadOnly => {
+                // TODO I want to call assert_valid here but I don't want this to panic
+                // self.mem_tree.assert_valid()
+            }
+            AccessMode::ReadWrite => self
+                .mem_tree
+                .flush_to_device(&mut self.device, &mut self.block_allocator)?,
+        }
+
+        // NOTE: should be done last as flushing other data will most likely update the allocator
         if self.block_allocator.is_dirty() {
             assert_matches!(self.access_mode, AccessMode::ReadWrite);
             self.block_allocator.write(&mut self.device)?;
@@ -177,6 +196,7 @@ where
                 self.block_allocator.write(&mut self.device)?;
             }
         }
+
         Ok(())
     }
 
@@ -231,10 +251,12 @@ where
     ///
     /// this is can be used to either load a file system from device or initialize a
     /// new fs on the device.
+    #[inline]
     fn create_fs_device_access(
         device: D,
         access: AccessMode,
-    ) -> Result<FileSystem<D, FsDuringCreation>, FsError> {
+        mem_tree: MemTree<I>,
+    ) -> Result<FileSystem<D, FsDuringCreation, I>, FsError> {
         let max_block_count = device.max_block_count().map_err(map_device_error)?;
         if max_block_count < MIN_BLOCK_COUNT {
             return Err(FsError::BlockDeviceToSmall(
@@ -257,6 +279,8 @@ where
                 uuid: Uuid::nil(),
                 root_ptr: NodePointer::new(ROOT_BLOCK),
             },
+
+            mem_tree,
 
             access_mode: access,
 
@@ -286,7 +310,8 @@ where
             }
         }
 
-        let mut fs = Self::create_fs_device_access(device, AccessMode::ReadWrite)?;
+        let mut fs =
+            Self::create_fs_device_access(device, AccessMode::ReadWrite, MemTree::empty())?;
 
         // create basic header and backup header
         let root_block = ROOT_BLOCK;
@@ -312,13 +337,12 @@ where
         fs.write_header(&header)?;
         fs.copy_header_to_backup(&header)?;
 
-        let root = Block::new(TreeNode::Leave {
-            parent: None,
-            files: StaticVec::new(),
-        });
-        fs.write_tree_node(root_block, &root)?;
+        // TODO do I want to create an empty root(/) directory or should this be
+        // the decission of the caller of create_internal
+        todo_warn!("Create root(/) directory in mem_tree");
 
-        fs.block_allocator.write(&mut fs.device)?;
+        // Flush writes block allocator and initial mem_tree to device
+        fs.flush()?;
 
         let name_block: Option<LBA> = name
             .as_ref()
@@ -362,7 +386,7 @@ where
     }
 
     fn open_internal(device: D, access: AccessMode, force_open: bool) -> Result<Self, FsError> {
-        let mut fs = Self::create_fs_device_access(device, access)?;
+        let mut fs = Self::create_fs_device_access(device, access, MemTree::invalid())?;
 
         let header = fs.header()?;
 
@@ -467,6 +491,7 @@ where
 
         fs.block_allocator =
             BlockAllocator::load(&fs.device, header.free_blocks).map_err(map_device_error)?;
+        fs.mem_tree.set_root_device_ptr(header.root);
 
         unsafe {
             // Safety: we checked that the fs is valid, and ensured that read/write access is ok
@@ -507,7 +532,7 @@ where
     }
 }
 
-impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
+impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
     pub fn header_data(&self) -> &HeaderData {
         &self.header_data
     }
@@ -551,47 +576,9 @@ impl<D: BlockDevice, S: FsRead> FileSystem<D, S> {
 
         Ok(String::from_utf8(string)?.into_boxed_str())
     }
-
-    #[deprecated]
-    pub fn read_file_node(&self, id: FileId) -> Result<Option<FileNode>, FsError> {
-        // TODO use mem_tree instead
-
-        let mut tree_node_ptr = Some(self.header_data.root_ptr);
-
-        while let Some(tree_node) = tree_node_ptr {
-            tree_node_ptr = None;
-            let tree_node = unsafe {
-                // Safety: reading a [TreeNode] should be save, given that our address is correct
-                self.device
-                    .read_pointer(tree_node)
-                    .map_err(map_device_error)?
-            };
-
-            match tree_node {
-                TreeNode::Leave { parent, files } => {
-                    debug!("parent: {parent:#?}");
-                    debug!("nodes: {:?}", files.iter().map(|n| n.id));
-                    return Ok(files.iter().find(|(node)| node.id == id).cloned());
-                }
-                TreeNode::Node {
-                    parent: _,
-                    children,
-                } => {
-                    for (max, ptr) in children {
-                        if id <= max {
-                            tree_node_ptr = Some(ptr);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(None)
-    }
 }
 
-impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
+impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
     fn write_tree_node(&mut self, lba: LBA, node: &Block<TreeNode>) -> Result<(), FsError> {
         self.device
             .write_block(lba, node.block_data())
@@ -659,7 +646,7 @@ impl<D: BlockDevice, S: FsWrite> FileSystem<D, S> {
     }
 }
 
-impl<D: BlockDevice> FileSystem<D, FsReadOnly> {
+impl<D: BlockDevice, I: InterruptState> FileSystem<D, FsReadOnly, I> {
     pub fn create(
         device: D,
         override_check: OverrideCheck,
@@ -674,7 +661,7 @@ impl<D: BlockDevice> FileSystem<D, FsReadOnly> {
     }
 }
 
-impl<D: BlockDevice> FileSystem<D, FsReadWrite> {
+impl<D: BlockDevice, I: InterruptState> FileSystem<D, FsReadWrite, I> {
     pub fn create(
         device: D,
         override_check: OverrideCheck,

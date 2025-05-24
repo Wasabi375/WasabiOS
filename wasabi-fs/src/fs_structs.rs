@@ -177,6 +177,7 @@ pub struct FileNode {
 /// A pointer of type `T` into a [crate::interface::BlockDevice].
 #[derive(Debug, PartialEq, Eq)]
 #[repr(transparent)]
+// TODO rename
 pub struct NodePointer<T> {
     pub lba: LBA,
     _block_type: PhantomData<T>,
@@ -215,9 +216,16 @@ pub struct MainHeader {
     pub uuid: Uuid,
     // _unused1: [u8; 4],
     pub root: NodePointer<TreeNode>,
+    /// Node pointer for the data required for the [crate::block_allocator::BlockAllocator]
     pub free_blocks: NodePointer<FreeBlockGroups>,
+    /// A copy of the header, that should be kept in sync with the main header in the 0th block
     pub backup_header: NodePointer<MainHeader>,
+    /// A name for the filesystem
     pub name: Option<NodePointer<BlockString>>,
+    /// Transient data that describe store the current state of the filesystem.
+    ///
+    /// In theory this data should not be required on disk, but might be useful for recovery
+    /// and error detection.
     pub transient: Option<MainTransientHeader>,
 }
 const_assert!(size_of::<MainHeader>() <= BLOCK_SIZE);
@@ -294,7 +302,7 @@ pub enum TreeNode {
         /// a list of [TreeNode] pointers and their maximum [FileId] value.
         ///
         /// `children[i].0 == children[i].1.follow().max`
-        children: StaticVec<(FileId, NodePointer<TreeNode>), NODE_MAX_CHILD_COUNT, u8>,
+        children: StaticVec<(NodePointer<TreeNode>, Option<FileId>), NODE_MAX_CHILD_COUNT, u8>,
     },
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);

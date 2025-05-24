@@ -417,7 +417,6 @@ impl<I: InterruptState> UnsafeTicketLock<I> {
     /// must only be called if the current execution context holds the lock.
     #[track_caller]
     pub unsafe fn unlock(&self) {
-        // FIXME: this should be correct, buf fails?
         debug_assert!(!self.is_unlocked(), "Lock is already unlocked");
 
         self.owner.store(!0, Ordering::Release);

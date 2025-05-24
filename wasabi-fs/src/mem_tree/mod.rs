@@ -1,6 +1,7 @@
 use core::{
     alloc::AllocError,
     assert_matches::assert_matches,
+    borrow::BorrowMut,
     cell::{RefCell, UnsafeCell},
     default, error,
     marker::PhantomData,
@@ -26,6 +27,9 @@ use testing_derive::multitest;
 use thiserror::Error;
 
 use crate::{
+    Block,
+    block_allocator::BlockAllocator,
+    fs::{FsError, map_device_error},
     fs_structs::{
         FileId, FileNode, LEAVE_MAX_FILE_COUNT, MainHeader, NODE_MAX_CHILD_COUNT, NodePointer,
         TreeNode,
@@ -115,23 +119,63 @@ pub struct MemTree<I> {
 
     /// lock for [Self::root]
     root_lock: UnsafeTicketLock<I>,
-
-    dirty: AtomicBool,
 }
 
 impl<I> !Clone for MemTree<I> {}
 
-/// Access mode for finding a leave
-#[derive(Debug, Clone, Copy)]
-#[deprecated]
-enum AccessMode {
-    /// only lock the current node
-    Readonly,
-    /// lock all nodes and set the dirty_children flag
-    Update,
-}
-
 impl<I: InterruptState> MemTree<I> {
+    /// Creates a new empty [MemTree]
+    pub fn empty() -> Self {
+        let root_node = MemTreeNode::Leave {
+            parent: None,
+            files: StaticVec::new(),
+            dirty: true,
+            lock: UnsafeTicketLock::new(),
+        };
+
+        let root = MemTreeLink {
+            node: Some(Box::new(root_node)),
+            device_ptr: None,
+        };
+
+        MemTree {
+            root: root.into(),
+            root_lock: UnsafeTicketLock::new(),
+        }
+    }
+
+    /// Creates a new [MemTree] that is an invalid state.
+    ///
+    /// In particular the root node is neither available in mem nor on device,
+    /// which leads to a panic if accessed.
+    pub fn invalid() -> Self {
+        let root = MemTreeLink {
+            node: None,
+            device_ptr: None,
+        };
+
+        MemTree {
+            root: root.into(),
+            root_lock: UnsafeTicketLock::new(),
+        }
+    }
+
+    /// Sets the device ptr for the root node
+    ///
+    /// This panics if the root node is availabe either in memory or on device.
+    /// Should only be called if `self` was created using [Self::invalid]
+    pub fn set_root_device_ptr(&mut self, root_device_ptr: NodePointer<TreeNode>) {
+        let root = unsafe {
+            // Safety: we have mut access to self therefor we don't need the lock
+            &mut self.get_root_mut()
+        };
+
+        assert!(root.device_ptr.is_none());
+        assert!(root.node.is_none());
+
+        root.device_ptr = Some(root_device_ptr);
+    }
+
     /// Gets the root node
     ///
     /// # Safety
@@ -526,9 +570,6 @@ impl<I: InterruptState> MemTree<I> {
         let mut leave = self
             .find_leave::<_, node_guard::Mut>(device, file_id)
             .map_err(MemTreeError::from)?;
-
-        // TODO temp
-        // leave.assert_valid_node_only();
 
         let MemTreeNode::Leave {
             parent,
@@ -1095,6 +1136,27 @@ impl<I: InterruptState> MemTree<I> {
             self.root_lock.unlock();
         }
     }
+
+    pub fn flush_to_device<D: BlockDevice>(
+        &self,
+        device: &mut D,
+        block_allocator: &mut BlockAllocator,
+    ) -> Result<(), FsError> {
+        self.root_lock.lock();
+
+        let root_link = unsafe {
+            // Safety: we hold the root lock
+            self.get_root_mut()
+        };
+
+        root_link.flush_to_device(None, device, block_allocator)?;
+
+        unsafe {
+            // Safety: we locked this ourself
+            self.root_lock.unlock();
+        }
+        Ok(())
+    }
 }
 
 #[cfg(any(feature = "test", test))]
@@ -1205,6 +1267,28 @@ impl<I: InterruptState> MemTreeNode<I> {
         //        }
     }
 
+    fn to_tree_node(&self, parent: Option<NodePointer<TreeNode>>) -> TreeNode {
+        match self {
+            MemTreeNode::Node { children, .. } => TreeNode::Node {
+                parent,
+                children: children
+                    .iter()
+                    .map(|(link, max_id)| {
+                        (
+                            link.device_ptr
+                                .expect("device_ptr should be set at this point"),
+                            *max_id,
+                        )
+                    })
+                    .collect(),
+            },
+            MemTreeNode::Leave { files, .. } => TreeNode::Leave {
+                parent,
+                files: files.iter().map(|f| (**f).clone()).collect(),
+            },
+        }
+    }
+
     fn has_dirty_leaves(&self) -> bool {
         match self {
             MemTreeNode::Node {
@@ -1213,6 +1297,13 @@ impl<I: InterruptState> MemTreeNode<I> {
                 ..
             } => *dirty || *dirty_children,
             MemTreeNode::Leave { dirty, .. } => *dirty,
+        }
+    }
+
+    pub fn dirty_mut(&mut self) -> &mut bool {
+        match self {
+            MemTreeNode::Node { dirty, .. } => dirty,
+            MemTreeNode::Leave { dirty, .. } => dirty,
         }
     }
 
@@ -1424,6 +1515,79 @@ impl<I: InterruptState> MemTreeLink<I> {
     unsafe fn as_mut(&mut self) -> Option<&mut MemTreeNode<I>> {
         unsafe { self.node.as_mut().map(|n| n.as_mut()) }
     }
+
+    /// Flushes any in memory changes to the device
+    ///
+    /// # Errors
+    ///
+    /// If this fails with an Error the on device tree should always be in a mostly valid
+    /// state.
+    /// Only the parent ptr might be invalid.t
+    /// TODO that might be a reason not to store it. We don't need it for access anyways.
+    ///
+    /// However there is no guarantee that all writes have been performed.
+    ///
+    /// This function only updates the `dirty` flag of self, therefor the in memory
+    /// tree should still reflect the latest changes.
+    /// It might be possible to attempt to flush changes depending on the device error.
+    fn flush_to_device<D: BlockDevice>(
+        &mut self,
+        parent_ptr: Option<NodePointer<TreeNode>>,
+        device: &mut D,
+        block_allocator: &mut BlockAllocator,
+        // TODO add ignore dirty flag for error recovery
+    ) -> Result<(), FsError> {
+        let Some(node) = self.node.as_mut() else {
+            assert!(
+                self.device_ptr.is_some(),
+                "Using a MemTree that was created by calling 'invalid' is prohibited"
+            );
+            return Ok(());
+        };
+
+        let device_ptr = if let Some(device_ptr) = self.device_ptr {
+            device_ptr
+        } else {
+            let device_ptr = block_allocator
+                .allocate_block()
+                .ok_or(FsError::BlockDeviceFull(1))?;
+            let device_ptr = NodePointer::new(device_ptr);
+            self.device_ptr = Some(device_ptr);
+            device_ptr
+        };
+
+        let mut node = NodeGuard::<_, node_guard::MutChild>::lock(node);
+        let node = node.borrow_mut();
+
+        let dirty = match node {
+            MemTreeNode::Node {
+                children,
+                dirty,
+                dirty_children,
+                ..
+            } => {
+                if *dirty_children {
+                    for (child_link, _) in children {
+                        child_link.flush_to_device(Some(device_ptr), device, block_allocator)?;
+                    }
+                    *dirty_children = false;
+                }
+                *dirty
+            }
+            MemTreeNode::Leave { dirty, .. } => *dirty,
+        };
+        if dirty {
+            let tree_node = Block::new(node.to_tree_node(parent_ptr));
+
+            device
+                .write_block(device_ptr.lba, tree_node.block_data())
+                .map_err(map_device_error)?;
+
+            *node.dirty_mut() = false;
+        }
+
+        Ok(())
+    }
 }
 
 struct ChildrenForRebalance<'l, I: InterruptState> {
@@ -1467,23 +1631,7 @@ mod test_mem_only {
     use super::{MemTree, MemTreeLink, MemTreeNode};
 
     fn create_empty_tree() -> MemTree<TestInterruptState> {
-        let root_node = MemTreeNode::Leave {
-            parent: None,
-            files: StaticVec::new(),
-            dirty: false,
-            lock: UnsafeTicketLock::new(),
-        };
-
-        let root = MemTreeLink {
-            node: Some(Box::new(root_node)),
-            device_ptr: None,
-        };
-
-        MemTree {
-            root: root.into(),
-            root_lock: UnsafeTicketLock::new(),
-            dirty: AtomicBool::new(false),
-        }
+        MemTree::empty()
     }
 
     fn create_file_node(id: u64) -> Arc<FileNode> {

@@ -6,7 +6,7 @@ use x86_64::{
     registers::control::Cr2,
     structures::{
         idt::{InterruptDescriptorTable, InterruptStackFrame},
-        paging::{mapper::TranslateResult, Translate},
+        paging::{Translate, mapper::TranslateResult},
     },
 };
 
@@ -39,7 +39,7 @@ panic_exception_with_error!(security_exception);
 exception_page_fault_fn!(pub(super) page_fault_handler, stack_frame, page_fault, {
     use shared::sync::lockcell::LockCellInternal;
     let page_table = unsafe {
-        // FIXME this is not save, but otherwise we might deadlock and I only want to read right
+        // TODO this is not save, but otherwise we might deadlock and I only want to read right
         // now, so this should be fine :shrug:
         PageTable::get_for_kernel().lockcell.get_mut().assume_init_mut()
     };
