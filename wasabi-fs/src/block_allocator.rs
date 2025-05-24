@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::{
     Block, BlockGroup, LBA, blocks_required_for,
     fs::FsError,
-    fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, FreeBlockGroups, NodePointer},
+    fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, DevicePointer, FreeBlockGroups},
     interface::BlockDevice,
 };
 
@@ -19,7 +19,7 @@ pub struct BlockAllocator {
     free: Vec<BlockGroup>,
     /// The first block of the on disk structure that represents this
     /// allocators data
-    on_disk: Option<NodePointer<FreeBlockGroups>>,
+    on_disk: Option<DevicePointer<FreeBlockGroups>>,
     /// all blocks invovled in storing this allocator data
     self_on_disk: Vec<LBA>,
     /// `true` if this is different from the on device version
@@ -114,7 +114,7 @@ impl BlockAllocator {
             let lba = on_disk_block_iter.next().unwrap();
             let mut block = Block::new(FreeBlockGroups {
                 free: StaticVec::new(),
-                next: on_disk_block_iter.peek().map(|n| NodePointer::new(*n)),
+                next: on_disk_block_iter.peek().map(|n| DevicePointer::new(*n)),
             });
 
             block.free.extend_from_slice(block_data);
@@ -132,7 +132,7 @@ impl BlockAllocator {
             };
             let block = Block::new(FreeBlockGroups {
                 free: StaticVec::new(),
-                next: on_disk_block_iter.peek().map(|n| NodePointer::new(*n)),
+                next: on_disk_block_iter.peek().map(|n| DevicePointer::new(*n)),
             });
 
             device
@@ -147,7 +147,7 @@ impl BlockAllocator {
 
     pub fn load<D: BlockDevice>(
         device: &D,
-        free_blocks: NodePointer<FreeBlockGroups>,
+        free_blocks: DevicePointer<FreeBlockGroups>,
     ) -> Result<Self, D::BlockDeviceError> {
         let mut free = Vec::new();
         let on_disk = Some(free_blocks);

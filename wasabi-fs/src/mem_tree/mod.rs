@@ -31,7 +31,7 @@ use crate::{
     block_allocator::BlockAllocator,
     fs::{FsError, map_device_error},
     fs_structs::{
-        FileId, FileNode, LEAVE_MAX_FILE_COUNT, MainHeader, NODE_MAX_CHILD_COUNT, NodePointer,
+        DevicePointer, FileId, FileNode, LEAVE_MAX_FILE_COUNT, MainHeader, NODE_MAX_CHILD_COUNT,
         TreeNode,
     },
     interface::BlockDevice,
@@ -164,7 +164,7 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// This panics if the root node is availabe either in memory or on device.
     /// Should only be called if `self` was created using [Self::invalid]
-    pub fn set_root_device_ptr(&mut self, root_device_ptr: NodePointer<TreeNode>) {
+    pub fn set_root_device_ptr(&mut self, root_device_ptr: DevicePointer<TreeNode>) {
         let root = unsafe {
             // Safety: we have mut access to self therefor we don't need the lock
             &mut self.get_root_mut()
@@ -1267,7 +1267,7 @@ impl<I: InterruptState> MemTreeNode<I> {
         //        }
     }
 
-    fn to_tree_node(&self, parent: Option<NodePointer<TreeNode>>) -> TreeNode {
+    fn to_tree_node(&self, parent: Option<DevicePointer<TreeNode>>) -> TreeNode {
         match self {
             MemTreeNode::Node { children, .. } => TreeNode::Node {
                 parent,
@@ -1437,7 +1437,7 @@ pub(crate) struct MemTreeLink<I> {
     /// copy. See [MemTree] for the Copy on Write description.
     ///
     /// This is `None` if the node was just created and is not yet stored on the device
-    device_ptr: Option<NodePointer<TreeNode>>,
+    device_ptr: Option<DevicePointer<TreeNode>>,
 }
 
 /// This is required for the safety guarantees in [MemTreeLink]
@@ -1532,7 +1532,7 @@ impl<I: InterruptState> MemTreeLink<I> {
     /// It might be possible to attempt to flush changes depending on the device error.
     fn flush_to_device<D: BlockDevice>(
         &mut self,
-        parent_ptr: Option<NodePointer<TreeNode>>,
+        parent_ptr: Option<DevicePointer<TreeNode>>,
         device: &mut D,
         block_allocator: &mut BlockAllocator,
         // TODO add ignore dirty flag for error recovery
@@ -1551,7 +1551,7 @@ impl<I: InterruptState> MemTreeLink<I> {
             let device_ptr = block_allocator
                 .allocate_block()
                 .ok_or(FsError::BlockDeviceFull(1))?;
-            let device_ptr = NodePointer::new(device_ptr);
+            let device_ptr = DevicePointer::new(device_ptr);
             self.device_ptr = Some(device_ptr);
             device_ptr
         };
@@ -1623,7 +1623,7 @@ mod test_mem_only {
 
     use crate::{
         BlockGroup, LBA,
-        fs_structs::{BlockListHead, FileId, FileNode, FileType, NodePointer, Perm, Timestamp},
+        fs_structs::{BlockListHead, DevicePointer, FileId, FileNode, FileType, Perm, Timestamp},
         interface::test::TestBlockDevice,
         mem_tree::MemTreeError,
     };
@@ -1648,7 +1648,7 @@ mod test_mem_only {
                 LBA::new(0).unwrap(),
                 LBA::new(0).unwrap(),
             )),
-            name: NodePointer::new(LBA::new(0).unwrap()),
+            name: DevicePointer::new(LBA::new(0).unwrap()),
         })
     }
 

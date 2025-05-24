@@ -20,11 +20,11 @@ use crate::{BLOCK_SIZE, BlockGroup, LBA, fs::MAIN_HEADER_BLOCK};
 #[repr(C)]
 pub enum BlockListHead {
     Single(BlockGroup),
-    List(NodePointer<BlockList>),
+    List(DevicePointer<BlockList>),
 }
 
 const BLOCK_LIST_GROUP_COUNT: usize =
-    (512 - (size_of::<u8>() + size_of::<NodePointer<BlockList>>())) / size_of::<BlockGroup>();
+    (512 - (size_of::<u8>() + size_of::<DevicePointer<BlockList>>())) / size_of::<BlockGroup>();
 
 /// A list of [BlockGroup]s.
 ///
@@ -37,7 +37,7 @@ pub struct BlockList {
     /// A list of [BlockGroup]s
     pub blocks: StaticVec<BlockGroup, BLOCK_LIST_GROUP_COUNT, u8>,
     /// The next [BlockList] pointer in case this block is not large enough
-    pub next: Option<NodePointer<BlockList>>,
+    pub next: Option<DevicePointer<BlockList>>,
 }
 const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
 
@@ -45,7 +45,7 @@ const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
 ///
 /// The rest of the string data is stored in [BlockStringPart]s
 pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
-    512 - (size_of::<u32>() + size_of::<Option<NodePointer<BlockStringPart>>>());
+    512 - (size_of::<u32>() + size_of::<Option<DevicePointer<BlockStringPart>>>());
 
 /// A string stored over 1 or multiple blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,13 +53,13 @@ pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
 pub struct BlockString {
     pub length: LittleEndian<u32>,
     pub data: [u8; BLOCK_STRING_DATA_LENGTH],
-    pub next: Option<NodePointer<BlockStringPart>>,
+    pub next: Option<DevicePointer<BlockStringPart>>,
 }
 const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
 
 /// The maximum size of the string data that can be stored in a [BlockStringPart]
 pub(crate) const BLOCK_STRING_PART_DATA_LENGTH: usize =
-    512 - size_of::<Option<NodePointer<BlockStringPart>>>();
+    512 - size_of::<Option<DevicePointer<BlockStringPart>>>();
 
 /// A part of a [BlockString].
 ///
@@ -71,7 +71,7 @@ pub(crate) const BLOCK_STRING_PART_DATA_LENGTH: usize =
 #[repr(C)]
 pub struct BlockStringPart {
     pub data: [u8; BLOCK_STRING_PART_DATA_LENGTH],
-    pub next: Option<NodePointer<BlockStringPart>>,
+    pub next: Option<DevicePointer<BlockStringPart>>,
 }
 const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
 
@@ -171,27 +171,26 @@ pub struct FileNode {
     pub created_at: Timestamp,
     pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
     pub block_data: BlockListHead,
-    pub name: NodePointer<BlockString>,
+    pub name: DevicePointer<BlockString>,
 }
 
 /// A pointer of type `T` into a [crate::interface::BlockDevice].
 #[derive(Debug, PartialEq, Eq)]
 #[repr(transparent)]
-// TODO rename
-pub struct NodePointer<T> {
+pub struct DevicePointer<T> {
     pub lba: LBA,
     _block_type: PhantomData<T>,
 }
-const_assert!(size_of::<NodePointer<u8>>() == size_of::<LBA>());
+const_assert!(size_of::<DevicePointer<u8>>() == size_of::<LBA>());
 
-impl<T> Clone for NodePointer<T> {
+impl<T> Clone for DevicePointer<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T> Copy for NodePointer<T> {}
+impl<T> Copy for DevicePointer<T> {}
 
-impl<T> NodePointer<T> {
+impl<T> DevicePointer<T> {
     pub fn new(lba: LBA) -> Self {
         Self {
             lba,
@@ -215,13 +214,13 @@ pub struct MainHeader {
     pub version: [u8; 4],
     pub uuid: Uuid,
     // _unused1: [u8; 4],
-    pub root: NodePointer<TreeNode>,
+    pub root: DevicePointer<TreeNode>,
     /// Node pointer for the data required for the [crate::block_allocator::BlockAllocator]
-    pub free_blocks: NodePointer<FreeBlockGroups>,
+    pub free_blocks: DevicePointer<FreeBlockGroups>,
     /// A copy of the header, that should be kept in sync with the main header in the 0th block
-    pub backup_header: NodePointer<MainHeader>,
+    pub backup_header: DevicePointer<MainHeader>,
     /// A name for the filesystem
-    pub name: Option<NodePointer<BlockString>>,
+    pub name: Option<DevicePointer<BlockString>>,
     /// Transient data that describe store the current state of the filesystem.
     ///
     /// In theory this data should not be required on disk, but might be useful for recovery
@@ -239,7 +238,7 @@ impl MainHeader {
         assert_ne!(self.backup_header.lba, MAIN_HEADER_BLOCK);
 
         let mut main_copy = self.clone();
-        main_copy.backup_header = NodePointer::new(MAIN_HEADER_BLOCK);
+        main_copy.backup_header = DevicePointer::new(MAIN_HEADER_BLOCK);
         main_copy.transient = None;
 
         main_copy == *backup
@@ -293,16 +292,16 @@ const_assert!(NODE_MAX_CHILD_COUNT / 2 >= 2);
 #[repr(C, u8)]
 pub enum TreeNode {
     Leave {
-        parent: Option<NodePointer<TreeNode>>, // TODO do I need the parent pointer?
+        parent: Option<DevicePointer<TreeNode>>, // TODO do I need the parent pointer?
         files: StaticVec<FileNode, LEAVE_MAX_FILE_COUNT, u8>,
     },
     Node {
         /// The parent of this Node or `None` if this is the root node
-        parent: Option<NodePointer<TreeNode>>, // TODO do I need the parent pointer?
+        parent: Option<DevicePointer<TreeNode>>, // TODO do I need the parent pointer?
         /// a list of [TreeNode] pointers and their maximum [FileId] value.
         ///
         /// `children[i].0 == children[i].1.follow().max`
-        children: StaticVec<(NodePointer<TreeNode>, Option<FileId>), NODE_MAX_CHILD_COUNT, u8>,
+        children: StaticVec<(DevicePointer<TreeNode>, Option<FileId>), NODE_MAX_CHILD_COUNT, u8>,
     },
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);
@@ -322,6 +321,6 @@ pub struct FreeBlockGroups {
     ///
     /// This might be `Some` even if [Self::free] is not full.
     /// The [crate::block_allocator::BlockAllocator] might uses empty [FreeBlockGroups] as reserved blocks.
-    pub next: Option<NodePointer<FreeBlockGroups>>,
+    pub next: Option<DevicePointer<FreeBlockGroups>>,
 }
 const_assert!(size_of::<FreeBlockGroups>() <= BLOCK_SIZE);

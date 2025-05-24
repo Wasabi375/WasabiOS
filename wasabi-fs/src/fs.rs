@@ -26,7 +26,7 @@ use crate::{
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
         BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockString, BlockStringPart,
-        FileId, FileNode, FsStatus, MainHeader, MainTransientHeader, NodePointer, TreeNode,
+        DevicePointer, FileId, FileNode, FsStatus, MainHeader, MainTransientHeader, TreeNode,
     },
     interface::BlockDevice,
     mem_tree::{self, MemTree},
@@ -120,7 +120,7 @@ pub struct HeaderData {
     pub version: [u8; 4],
     pub uuid: Uuid,
 
-    root_ptr: NodePointer<TreeNode>,
+    root_ptr: DevicePointer<TreeNode>,
 }
 
 pub enum OverrideCheck {
@@ -277,7 +277,7 @@ where
                 name: None,
                 version: FS_VERSION,
                 uuid: Uuid::nil(),
-                root_ptr: NodePointer::new(ROOT_BLOCK),
+                root_ptr: DevicePointer::new(ROOT_BLOCK),
             },
 
             mem_tree,
@@ -320,9 +320,9 @@ where
             magic: MainHeader::MAGIC,
             version: FS_VERSION,
             uuid,
-            root: NodePointer::new(root_block),
-            free_blocks: NodePointer::new(free_blocks),
-            backup_header: NodePointer::new(fs.backup_header_lba),
+            root: DevicePointer::new(root_block),
+            free_blocks: DevicePointer::new(free_blocks),
+            backup_header: DevicePointer::new(fs.backup_header_lba),
             name: None,
             transient: Some(MainTransientHeader {
                 magic: MainTransientHeader::MAGIC,
@@ -349,7 +349,7 @@ where
             .map(|name| fs.write_string(name))
             .transpose()?;
         if let Some(name_block) = name_block {
-            header.name = Some(NodePointer::new(name_block));
+            header.name = Some(DevicePointer::new(name_block));
         }
 
         // update transient data in header
@@ -376,7 +376,7 @@ where
             name,
             version: FS_VERSION,
             uuid,
-            root_ptr: NodePointer::new(ROOT_BLOCK),
+            root_ptr: DevicePointer::new(ROOT_BLOCK),
         };
 
         unsafe {
@@ -525,7 +525,7 @@ where
     fn copy_header_to_backup(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
         let mut backup_header = Block::new(header.clone());
         backup_header.transient = None;
-        backup_header.backup_header = NodePointer::new(MAIN_HEADER_BLOCK);
+        backup_header.backup_header = DevicePointer::new(MAIN_HEADER_BLOCK);
         self.device
             .write_block_atomic(self.backup_header_lba, backup_header.block_data())
             .map_err(map_device_error)
@@ -541,7 +541,7 @@ impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
         self.header()
     }
 
-    pub fn read_string(&self, string_ptr: NodePointer<BlockString>) -> Result<Box<str>, FsError> {
+    pub fn read_string(&self, string_ptr: DevicePointer<BlockString>) -> Result<Box<str>, FsError> {
         let mut string: Vec<u8> = Vec::new();
 
         let head_block = unsafe {
@@ -613,7 +613,7 @@ impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
                 .map_err(|_| FsError::StringToLong)?
                 .into(),
             data: [0; BLOCK_STRING_DATA_LENGTH],
-            next: blocks.peek().map(|lba| NodePointer::new(*lba)),
+            next: blocks.peek().map(|lba| DevicePointer::new(*lba)),
         });
         let head_data = bytes
             .split_off(..min(BLOCK_STRING_DATA_LENGTH, bytes.len()))
@@ -629,7 +629,7 @@ impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
                 .expect("There should be enough blocks allocated for the string");
             let mut string_part = Block::new(BlockStringPart {
                 data: [0; BLOCK_STRING_PART_DATA_LENGTH],
-                next: blocks.peek().map(|lba| NodePointer::new(*lba)),
+                next: blocks.peek().map(|lba| DevicePointer::new(*lba)),
             });
             let part_data = bytes
                 .split_off(..min(BLOCK_STRING_PART_DATA_LENGTH, bytes.len()))
