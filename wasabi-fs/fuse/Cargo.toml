@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 wfs = { path  = ".." }
 shared = { path = "../../shared" }
+host-shared.workspace = true
 
 fuser = "0.15.0"
 libc = "0.2.161"

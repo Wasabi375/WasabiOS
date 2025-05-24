@@ -3,6 +3,7 @@ use anyhow::Result;
 use fuser::FileAttr;
 use fuser::FileType;
 use fuser::Request;
+use host_shared::sync::StdInterruptState;
 use libc::ENOENT;
 use log::debug;
 use log::error;
@@ -11,12 +12,13 @@ use std::path::Path;
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 use uuid::Uuid;
+use wfs::BLOCK_SIZE;
 use wfs::blocks_required_for;
+use wfs::fs::FsError;
 use wfs::fs::FsWrite;
 use wfs::fs::OverrideCheck;
 use wfs::fs_structs;
-use wfs::fs_structs::FileId;
-use wfs::BLOCK_SIZE;
+use wfs::fs_structs::FileNode;
 
 use wfs::fs::{FileSystem, FsRead, FsReadOnly, FsReadWrite};
 
@@ -27,7 +29,7 @@ pub mod errno;
 pub mod fake;
 
 pub struct WasabiFuse<S> {
-    file_system: Option<FileSystem<FileDevice, S>>,
+    file_system: Option<FileSystem<FileDevice, S, StdInterruptState>>,
     /// Time to live
     ///
     /// the time the kernel will cache any data provided by this driver
@@ -38,11 +40,11 @@ pub struct WasabiFuse<S> {
 }
 
 impl<S> WasabiFuse<S> {
-    pub fn fs(&self) -> &FileSystem<FileDevice, S> {
+    pub fn fs(&self) -> &FileSystem<FileDevice, S, StdInterruptState> {
         self.file_system.as_ref().expect("Only none during drop")
     }
 
-    pub fn fs_mut(&mut self) -> &mut FileSystem<FileDevice, S> {
+    pub fn fs_mut(&mut self) -> &mut FileSystem<FileDevice, S, StdInterruptState> {
         self.file_system.as_mut().expect("Only none during drop")
     }
 }
@@ -50,7 +52,8 @@ impl<S> WasabiFuse<S> {
 impl WasabiFuse<FsReadOnly> {
     pub fn open(image: &Path) -> Result<Self> {
         let device = FileDevice::open(image).context("failed to open image file")?;
-        let fs = FileSystem::<_, FsReadOnly>::open(device).context("open filesystem readonly")?;
+        let fs =
+            FileSystem::<_, FsReadOnly, _>::open(device).context("open filesystem readonly")?;
 
         Ok(WasabiFuse {
             file_system: Some(fs),
@@ -64,7 +67,8 @@ impl WasabiFuse<FsReadOnly> {
 impl WasabiFuse<FsReadWrite> {
     pub fn open(image: &Path) -> Result<Self> {
         let device = FileDevice::open(image).context("failed to open image file")?;
-        let fs = FileSystem::<_, FsReadWrite>::open(device).context("open filesystem readwrite")?;
+        let fs =
+            FileSystem::<_, FsReadWrite, _>::open(device).context("open filesystem readwrite")?;
 
         Ok(WasabiFuse {
             file_system: Some(fs),
@@ -76,7 +80,7 @@ impl WasabiFuse<FsReadWrite> {
 
     pub fn force_open(image: &Path) -> Result<Self> {
         let device = FileDevice::open(image).context("failed to open image file")?;
-        let fs = FileSystem::<_, FsReadWrite>::force_open(device)
+        let fs = FileSystem::<_, FsReadWrite, _>::force_open(device)
             .context("open filesystem readwrite")?;
 
         Ok(WasabiFuse {
@@ -97,7 +101,7 @@ impl WasabiFuse<FsReadWrite> {
         let device =
             FileDevice::create(image, block_count).context("Failed to create file device")?;
 
-        let fs = FileSystem::<_, FsReadWrite>::create(device, override_check, uuid, name)
+        let fs = FileSystem::<_, FsReadWrite, _>::create(device, override_check, uuid, name)
             .expect("Failed to create filesystem");
 
         Ok(WasabiFuse {
@@ -127,9 +131,9 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         self.fs_mut().flush().unwrap();
     }
 
+    #[allow(unused)]
     fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: fuser::ReplyAttr) {
-        #[allow(deprecated)]
-        let file_node = self.fs().read_file_node(FileId::try_new(ino).unwrap());
+        let file_node: Result<Option<FileNode>, FsError> = todo!();
 
         match file_node {
             Ok(Some(file_node)) => {

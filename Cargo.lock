@@ -645,6 +645,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fuser",
+ "host-shared",
  "libc",
  "log",
  "shared",

@@ -1,7 +1,7 @@
-use libc::{c_int, EBUSY, EINVAL, EIO, ENOMEM, ENOTSUP};
+use libc::{EBUSY, EINVAL, EIO, ENOMEM, ENOTSUP, c_int};
 use wfs::fs::FsError;
 
-/// a best effort guess on what stupid errno value each error corresponds to
+/// a best effort uess on what stupid errno value each error corresponds to
 pub fn fs_error_no(err: FsError) -> c_int {
     match err {
         FsError::BlockDevice(_) => EIO,
@@ -19,5 +19,6 @@ pub fn fs_error_no(err: FsError) -> c_int {
         FsError::MalformedStringLength => EIO,
         FsError::MalformedStringUtf8(_) => EIO,
         FsError::StringToLong => EINVAL,
+        FsError::BlockDeviceFull(_) => ENOMEM,
     }
 }
