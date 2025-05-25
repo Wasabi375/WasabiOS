@@ -13,7 +13,68 @@ use static_assertions::const_assert;
 use staticvec::{StaticString, StaticVec};
 use uuid::Uuid;
 
-use crate::{BLOCK_SIZE, BlockGroup, LBA, fs::MAIN_HEADER_BLOCK};
+use crate::{
+    BLOCK_SIZE, BlockGroup, LBA,
+    block_allocator::{self, BlockAllocator},
+    fs::{FsError, MAIN_HEADER_BLOCK},
+    interface::BlockDevice,
+};
+
+trait BlockLinkedList: Sized {
+    type Next: BlockLinkedList<Next = Self::Next>;
+
+    /// The pointer to the next part of [Self]
+    fn next(&self) -> Option<DevicePointer<Self::Next>>;
+
+    /// Free all blocks within self
+    fn free<D: BlockDevice>(
+        self: DevicePointer<Self>,
+        device: &D,
+        block_allocator: &mut BlockAllocator,
+    ) -> Result<(), D::BlockDeviceError> {
+        let on_device_data = unsafe {
+            // TODO Safety: see function impl
+            device.read_pointer(self)?
+        };
+
+        if let Some(next) = BlockLinkedList::next(&on_device_data) {
+            next.free(device, block_allocator)?;
+        }
+
+        block_allocator.free_block(self.lba);
+
+        Ok(())
+    }
+}
+
+/// A pointer of type `T` into a [crate::interface::BlockDevice].
+#[derive(Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct DevicePointer<T> {
+    pub lba: LBA,
+    _block_type: PhantomData<T>,
+}
+const_assert!(size_of::<DevicePointer<u8>>() == size_of::<LBA>());
+
+impl<T> Clone for DevicePointer<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for DevicePointer<T> {}
+
+impl<T> DevicePointer<T> {
+    pub fn new(lba: LBA) -> Self {
+        Self {
+            lba,
+            _block_type: PhantomData,
+        }
+    }
+}
+
+impl<T> core::ops::Receiver for DevicePointer<T> {
+    type Target = T;
+}
 
 /// Either a single [BlockGroup] or a [NodePointer] to a [BlockList]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +113,15 @@ pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct BlockString(pub DeviceStringHead<BLOCK_STRING_DATA_LENGTH>);
+const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
+
+impl BlockLinkedList for BlockString {
+    type Next = BlockStringPart;
+
+    fn next(&self) -> Option<DevicePointer<Self::Next>> {
+        self.0.next
+    }
+}
 
 /// A string stored over 1 or multiple blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +131,6 @@ pub struct DeviceStringHead<const N: usize> {
     pub data: [u8; N],
     pub next: Option<DevicePointer<BlockStringPart>>,
 }
-const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
 
 /// The maximum size of the string data that can be stored in a [BlockStringPart]
 pub(crate) const BLOCK_STRING_PART_DATA_LENGTH: usize =
@@ -80,6 +149,14 @@ pub struct BlockStringPart {
     pub next: Option<DevicePointer<BlockStringPart>>,
 }
 const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
+
+impl BlockLinkedList for BlockStringPart {
+    type Next = Self;
+
+    fn next(&self) -> Option<DevicePointer<Self::Next>> {
+        self.next
+    }
+}
 
 /// A unique identifier of a node
 ///
@@ -164,7 +241,6 @@ bitflags! {
     }
 }
 
-const I_NODE_MAX_NAME_LEN: usize = 40;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub struct FileNode {
@@ -180,31 +256,6 @@ pub struct FileNode {
     pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
     pub block_data: BlockListHead,
     pub name: DeviceStringHead<100>,
-}
-
-/// A pointer of type `T` into a [crate::interface::BlockDevice].
-#[derive(Debug, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct DevicePointer<T> {
-    pub lba: LBA,
-    _block_type: PhantomData<T>,
-}
-const_assert!(size_of::<DevicePointer<u8>>() == size_of::<LBA>());
-
-impl<T> Clone for DevicePointer<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for DevicePointer<T> {}
-
-impl<T> DevicePointer<T> {
-    pub fn new(lba: LBA) -> Self {
-        Self {
-            lba,
-            _block_type: PhantomData,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,3 +407,29 @@ pub struct FreeBlockGroups {
 }
 const_assert!(size_of::<FreeBlockGroups>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<FreeBlockGroups>() <= 100);
+
+/// The maximum number of entries within a [Directory] block.
+///
+/// If a Directory has more entries a new [Directory] block is linked in [Directory::next]
+pub(crate) const DIRECTORY_BLOCK_ENTRY_COUNT: usize = 500;
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
+pub struct Directory {
+    /// total number of entries within the [Directory]
+    pub entry_count: LittleEndian<u64>,
+    /// [FileId]s of each [FileNode] within this [Directory]
+    pub entries: StaticVec<FileId, DIRECTORY_BLOCK_ENTRY_COUNT, u8>,
+    /// if [Self::entry_count] is greater than [DIRECTORY_BLOCK_ENTRY_COUNT] this
+    /// points to the next [Directory] block
+    pub next: Option<DevicePointer<Directory>>,
+}
+const_assert!(size_of::<Directory>() <= BLOCK_SIZE);
+const_assert!(BLOCK_SIZE - size_of::<Directory>() <= 100);
+
+impl BlockLinkedList for Directory {
+    type Next = Directory;
+
+    fn next(&self) -> Option<DevicePointer<Self::Next>> {
+        self.next
+    }
+}

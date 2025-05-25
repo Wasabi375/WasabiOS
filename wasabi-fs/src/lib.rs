@@ -2,6 +2,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![feature(
     allocator_api,
+    arbitrary_self_types,
     assert_matches,
     box_as_ptr,
     debug_closure_helpers,
