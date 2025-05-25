@@ -18,9 +18,8 @@ use core::{
 };
 
 use nonmax::NonMaxU64;
-use shared::math::IntoU64;
+use shared::{KiB, math::IntoU64};
 use simple_endian::{LittleEndian, SpecificEndian};
-use static_assertions::const_assert;
 
 extern crate alloc;
 
@@ -32,6 +31,8 @@ pub mod interface;
 pub mod mem_tree;
 
 /// Logical Block Address
+///
+/// Each [LBA] addresses a single [Block] on a [interface::BlockDevice].
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LBA(LittleEndian<NonMaxU64>);
@@ -65,6 +66,10 @@ impl LBA {
 
     pub fn from_byte_offset(offset: u64) -> Option<LBA> {
         LBA::new(offset / BLOCK_SIZE as u64)
+    }
+
+    pub fn to_byte_offset(self) -> u64 {
+        self.get() * BLOCK_SIZE as u64
     }
 
     pub fn addr(self) -> NonMaxU64 {
@@ -160,15 +165,16 @@ impl BlockGroup {
     }
 }
 
-/// Type alias for `[u8; BLOCK_SIZE]`
+/// Type alias for `BlockAligned<[u8; BLOCK_SIZE]>`
 ///
-/// See [BLOCK_SIZE]
+/// see [BlockAligned], [BLOCK_SIZE], [Block]
 pub type BlockSlice = BlockAligned<[u8; BLOCK_SIZE]>;
 
 /// The size of any block used to store data on the disc
-// TODO do I want to/should I increase this to 4KiB/1Page
-//  also ensure all fs_structs sizes are properly updated
-pub const BLOCK_SIZE: usize = 512;
+///
+/// See [BlockAligned], [Block], [BlockSlice], [blocks_required_for]
+// NOTE: when changed, also change alignment of BlockAligned and Block.
+pub const BLOCK_SIZE: usize = KiB!(4);
 
 /// Calculate the number of BLOCKs required for `bytes` memory.
 ///
@@ -178,11 +184,14 @@ pub const BLOCK_SIZE: usize = 512;
 /// # #[macro_use] extern crate wfs;
 /// # fn main() {
 /// # use static_assertions::const_assert_eq;
+/// # use shared::KiB;
 /// use wfs::blocks_required_for;
 /// const_assert_eq!(1, blocks_required_for!( type: u8));
 /// const_assert_eq!(1, blocks_required_for!( 512));
 /// const_assert_eq!(1, blocks_required_for!( 8));
-/// const_assert_eq!(2, blocks_required_for!( 1024));
+/// const_assert_eq!(1, blocks_required_for!( KiB!(4)));
+/// const_assert_eq!(2, blocks_required_for!( KiB!(8)));
+/// const_assert_eq!(2, blocks_required_for!( KiB!(4) + 1));
 /// const_assert_eq!(1, blocks_required_for!( size_of::<u32>() * 5));
 /// # }
 /// ```
@@ -199,19 +208,23 @@ macro_rules! blocks_required_for {
 /// The current version of the fs
 ///
 /// See [fs_structs::MainHeader::version]
-pub const FS_VERSION: [u8; 4] = [0, 1, 0, 1];
+pub const FS_VERSION: [u8; 4] = [0, 1, 0, 2];
 
 /// Align `T` on block boundaries
+///
+/// See [BLOCK_SIZE], [Block]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C, align(512))]
+#[repr(C, align(4096))]
 pub struct BlockAligned<T>(pub T);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Zst {}
 
 /// Align `T` on block boundaries and ensure it is padded to fill the entire block
+///
+/// See [BLOCK_SIZE], [BlockAligned], [BlockSlice], [blocks_required_for]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C, align(512))]
+#[repr(C, align(4096))]
 pub struct Block<T> {
     _data: BlockAligned<T>,
     _pad: BlockAligned<Zst>,
@@ -230,13 +243,13 @@ impl<T> Block<T> {
     }
 
     pub fn block_data(&self) -> NonNull<BlockSlice> {
-        assert!(size_of::<Self>() == 512);
+        assert!(size_of::<Self>() == BLOCK_SIZE);
 
         NonNull::from(self).cast()
     }
 
     pub fn multiblock_data(&self) -> NonNull<[u8]> {
-        assert!(size_of::<Self>() % 512 == 0);
+        assert!(size_of::<Self>() % BLOCK_SIZE == 0);
 
         NonNull::slice_from_raw_parts(NonNull::from(self).cast(), size_of::<Self>())
     }

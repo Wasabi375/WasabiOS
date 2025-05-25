@@ -163,7 +163,7 @@ impl BlockDevice for FileDevice {
         let mut file = self.file.lock().unwrap();
         file.seek(SeekFrom::Start(lba.get() * BLOCK_SIZE as u64))?;
 
-        let mut block = [0; BLOCK_SIZE];
+        let mut block = [0; BLOCK_SIZE]; // TODO move buffer to heap?
         if file.read(block.as_mut())? != BLOCK_SIZE {
             return Err(Self::BlockDeviceError::other(FileDevicError::UnexpectedEOF));
         }

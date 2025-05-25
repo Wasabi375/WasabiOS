@@ -3,10 +3,10 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use fuser::MountOption;
-use log::{debug, info, LevelFilter};
+use log::{LevelFilter, debug, info};
 use simple_logger::SimpleLogger;
 use wfs::{
-    blocks_required_for,
+    BLOCK_SIZE, blocks_required_for,
     fs::{FsReadOnly, FsReadWrite, OverrideCheck},
 };
 
@@ -127,7 +127,7 @@ fn info(args: InfoOptions) {
 fn create(mut args: CreateOptions) {
     let size_in_bytes = args.size * 1024u64.pow(args.size_magnitude);
     let block_count = blocks_required_for!(size_in_bytes);
-    let size_in_bytes = block_count * 512;
+    let size_in_bytes = block_count * BLOCK_SIZE as u64;
 
     println!(
         "Create filesystem with {} bytes / {} blocks",

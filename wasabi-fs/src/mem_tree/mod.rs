@@ -1623,7 +1623,10 @@ mod test_mem_only {
 
     use crate::{
         BlockGroup, LBA,
-        fs_structs::{BlockListHead, DevicePointer, FileId, FileNode, FileType, Perm, Timestamp},
+        fs_structs::{
+            BlockListHead, DevicePointer, DeviceStringHead, FileId, FileNode, FileType, Perm,
+            Timestamp,
+        },
         interface::test::TestBlockDevice,
         mem_tree::MemTreeError,
     };
@@ -1641,6 +1644,8 @@ mod test_mem_only {
             typ: FileType::File,
             permissions: [Perm::all(); 4],
             _unused: [0; 3],
+            uid: 0,
+            gid: 0,
             size: 0,
             created_at: Timestamp::zero(),
             modified_at: Timestamp::zero(),
@@ -1648,7 +1653,11 @@ mod test_mem_only {
                 LBA::new(0).unwrap(),
                 LBA::new(0).unwrap(),
             )),
-            name: DevicePointer::new(LBA::new(0).unwrap()),
+            name: DeviceStringHead {
+                length: 0.into(),
+                data: [0; 100],
+                next: None,
+            },
         })
     }
 

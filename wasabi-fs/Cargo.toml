@@ -5,7 +5,8 @@ edition.workspace = true
 
 
 [features] 
-test = ["dep:testing"]
+test = ["dep:testing", "test-tree-branching"]
+test-tree-branching = [] # Tree branching is based on fixed values for unit tests
 
 [dependencies]
 shared = { path = "../shared" }

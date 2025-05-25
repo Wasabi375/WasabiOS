@@ -23,8 +23,9 @@ pub enum BlockListHead {
     List(DevicePointer<BlockList>),
 }
 
-const BLOCK_LIST_GROUP_COUNT: usize =
-    (512 - (size_of::<u8>() + size_of::<DevicePointer<BlockList>>())) / size_of::<BlockGroup>();
+const BLOCK_LIST_GROUP_COUNT: usize = (BLOCK_SIZE
+    - (size_of::<u8>() + size_of::<DevicePointer<BlockList>>()))
+    / size_of::<BlockGroup>();
 
 /// A list of [BlockGroup]s.
 ///
@@ -40,26 +41,31 @@ pub struct BlockList {
     pub next: Option<DevicePointer<BlockList>>,
 }
 const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
+const_assert!(BLOCK_SIZE - size_of::<BlockList>() <= 100);
 
 /// The maximum size of the string data that can be stored in the initial [BlockString].
 ///
 /// The rest of the string data is stored in [BlockStringPart]s
 pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
-    512 - (size_of::<u32>() + size_of::<Option<DevicePointer<BlockStringPart>>>());
+    BLOCK_SIZE - (size_of::<u32>() + size_of::<Option<DevicePointer<BlockStringPart>>>());
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct BlockString(pub DeviceStringHead<BLOCK_STRING_DATA_LENGTH>);
 
 /// A string stored over 1 or multiple blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
-pub struct BlockString {
+pub struct DeviceStringHead<const N: usize> {
     pub length: LittleEndian<u32>,
-    pub data: [u8; BLOCK_STRING_DATA_LENGTH],
+    pub data: [u8; N],
     pub next: Option<DevicePointer<BlockStringPart>>,
 }
 const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
 
 /// The maximum size of the string data that can be stored in a [BlockStringPart]
 pub(crate) const BLOCK_STRING_PART_DATA_LENGTH: usize =
-    512 - size_of::<Option<DevicePointer<BlockStringPart>>>();
+    BLOCK_SIZE - size_of::<Option<DevicePointer<BlockStringPart>>>();
 
 /// A part of a [BlockString].
 ///
@@ -167,11 +173,13 @@ pub struct FileNode {
     pub typ: FileType,
     pub permissions: [Perm; 4],
     pub _unused: [u8; 3],
+    pub uid: u32,
+    pub gid: u32,
     pub size: u64,
     pub created_at: Timestamp,
     pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
     pub block_data: BlockListHead,
-    pub name: DevicePointer<BlockString>,
+    pub name: DeviceStringHead<100>,
 }
 
 /// A pointer of type `T` into a [crate::interface::BlockDevice].
@@ -220,6 +228,7 @@ pub struct MainHeader {
     /// A copy of the header, that should be kept in sync with the main header in the 0th block
     pub backup_header: DevicePointer<MainHeader>,
     /// A name for the filesystem
+    // TODO inline
     pub name: Option<DevicePointer<BlockString>>,
     /// Transient data that describe store the current state of the filesystem.
     ///
@@ -280,16 +289,37 @@ impl Default for MainTransientHeader {
     }
 }
 
-pub(crate) const LEAVE_MAX_FILE_COUNT: usize = 6;
+// NOTE: file and child count are fixed to low values during tests
+// in order to make writing unit tests easier.
+// 1. I want a low number of branches in the tree to make it easier to construct trees manually
+// 2. I want the number of branches to be fixed so as to not break unit tests when adding
+//    fields to [FileNode]
+pub(crate) const LEAVE_MAX_FILE_COUNT: usize = {
+    if cfg!(not(any(test, feature = "test-tree-branching"))) {
+        20
+    } else {
+        6
+    }
+};
 const_assert!(LEAVE_MAX_FILE_COUNT % 2 == 0);
 
-pub(crate) const NODE_MAX_CHILD_COUNT: usize = 30;
+pub(crate) const NODE_MAX_CHILD_COUNT: usize = {
+    if cfg!(not(any(test, feature = "test-tree-branching"))) {
+        // TODO This could be increased to roughly 250.
+        // Right now I want this to be small in order to
+        // test the tree
+        30
+    } else {
+        30
+    }
+};
 const_assert!(NODE_MAX_CHILD_COUNT % 2 == 0);
 // this simplifies rebalance
 const_assert!(NODE_MAX_CHILD_COUNT / 2 >= 2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C, u8)]
+#[allow(clippy::large_enum_variant)]
 pub enum TreeNode {
     Leave {
         parent: Option<DevicePointer<TreeNode>>, // TODO do I need the parent pointer?
@@ -307,7 +337,7 @@ pub enum TreeNode {
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);
 
 /// The number of free [BlockGroup]s that fit within a single [FreeBlockGroups]
-pub(crate) const BLOCK_RANGES_COUNT_PER_BLOCK: usize = 31;
+pub(crate) const BLOCK_RANGES_COUNT_PER_BLOCK: usize = 250;
 
 /// Used to keep track of unsused [BlockGroup]s.
 ///
@@ -324,3 +354,4 @@ pub struct FreeBlockGroups {
     pub next: Option<DevicePointer<FreeBlockGroups>>,
 }
 const_assert!(size_of::<FreeBlockGroups>() <= BLOCK_SIZE);
+const_assert!(BLOCK_SIZE - size_of::<FreeBlockGroups>() <= 100);

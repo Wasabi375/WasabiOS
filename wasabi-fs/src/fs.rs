@@ -26,7 +26,8 @@ use crate::{
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
         BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockString, BlockStringPart,
-        DevicePointer, FileId, FileNode, FsStatus, MainHeader, MainTransientHeader, TreeNode,
+        DevicePointer, DeviceStringHead, FileId, FileNode, FsStatus, MainHeader,
+        MainTransientHeader, TreeNode,
     },
     interface::BlockDevice,
     mem_tree::{self, MemTree},
@@ -549,6 +550,7 @@ impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
             self.device.read_pointer(string_ptr)
         }
         .map_err(map_device_error)?;
+        let head_block = &head_block.0;
 
         string.reserve_exact(head_block.length.to_native() as usize);
 
@@ -608,17 +610,17 @@ impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
         let mut bytes = string.as_bytes();
 
         let head_lba = blocks.next().expect("we just allocated at least 1 block");
-        let mut string_head = Block::new(BlockString {
+        let mut string_head = Block::new(BlockString(DeviceStringHead {
             length: TryInto::<u32>::try_into(string.len())
                 .map_err(|_| FsError::StringToLong)?
                 .into(),
             data: [0; BLOCK_STRING_DATA_LENGTH],
             next: blocks.peek().map(|lba| DevicePointer::new(*lba)),
-        });
+        }));
         let head_data = bytes
             .split_off(..min(BLOCK_STRING_DATA_LENGTH, bytes.len()))
             .expect("we take at max the remaining length");
-        string_head.data[..head_data.len()].copy_from_slice(head_data);
+        string_head.0.data[..head_data.len()].copy_from_slice(head_data);
         self.device
             .write_block(head_lba, string_head.block_data())
             .map_err(map_device_error)?;

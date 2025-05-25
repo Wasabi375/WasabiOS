@@ -6,8 +6,9 @@ use std::{
 use fuser::{
     FileAttr, FileType, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
-use libc::{c_int, ENOENT, ENOTDIR};
+use libc::{ENOENT, ENOTDIR, c_int};
 use log::{debug, warn};
+use shared::KiB;
 
 pub struct WasabiFuseTest;
 
@@ -44,7 +45,7 @@ const HELLO: FileAttr = FileAttr {
     uid: 501,
     gid: 20,
     rdev: 0,
-    blksize: 512,
+    blksize: KiB!(4),
     flags: 0,
 };
 
