@@ -61,47 +61,47 @@ where
 /// Types that implement this can be converted into a u64.
 pub trait IntoU64 {
     /// Converts `self` into u64
-    fn into(self) -> u64;
+    fn into_u64(self) -> u64;
 }
 
 /// Types that implement this can be converted into a i64.
 pub trait IntoI64 {
     /// Converts `self` into i64
-    fn into(self) -> i64;
+    fn into_i64(self) -> i64;
 }
 
 /// Types that implement this can be converted into a usize.
 pub trait IntoUSize {
     /// Converts `self` into i64
-    fn into(self) -> usize;
+    fn into_usize(self) -> usize;
 }
 
 /// Types that implement this can be converted into a usize.
 pub trait IntoISize {
     /// Converts `self` into isize
-    fn into(self) -> isize;
+    fn into_isize(self) -> isize;
 }
 
 macro_rules! impl_into_ui64 {
     ($typ:ident) => {
         impl IntoU64 for $typ {
-            fn into(self) -> u64 {
+            fn into_u64(self) -> u64 {
                 self as u64
             }
         }
         impl IntoI64 for $typ {
-            fn into(self) -> i64 {
+            fn into_i64(self) -> i64 {
                 self as i64
             }
         }
 
         impl IntoUSize for $typ {
-            fn into(self) -> usize {
+            fn into_usize(self) -> usize {
                 self as usize
             }
         }
         impl IntoISize for $typ {
-            fn into(self) -> isize {
+            fn into_isize(self) -> isize {
                 self as isize
             }
         }
