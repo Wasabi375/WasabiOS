@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::{
     BLOCK_SIZE, Block, FS_VERSION, LBA,
-    block_allocator::BlockAllocator,
+    block_allocator::{BlockAllocator, BlockGroupList},
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
         BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockString, BlockStringPart,
@@ -542,23 +542,17 @@ impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
         self.header()
     }
 
-    pub fn read_string(&self, string_ptr: DevicePointer<BlockString>) -> Result<Box<str>, FsError> {
-        let mut string: Vec<u8> = Vec::new();
+    pub fn read_string_head<const N: usize>(
+        &self,
+        head: &DeviceStringHead<N>,
+    ) -> Result<Box<str>, FsError> {
+        let mut string: Vec<u8> = Vec::with_capacity(head.length.to_native() as usize);
 
-        let head_block = unsafe {
-            // We are reading a string
-            self.device.read_pointer(string_ptr)
-        }
-        .map_err(map_device_error)?;
-        let head_block = &head_block.0;
-
-        string.reserve_exact(head_block.length.to_native() as usize);
-
-        let mut length_remaining = head_block.length.to_native() as usize;
-        let mut next_ptr = head_block.next;
+        let mut length_remaining = head.length.to_native() as usize;
+        let mut next_ptr = head.next;
 
         let length_in_block = min(length_remaining, BLOCK_STRING_DATA_LENGTH);
-        string.extend(&head_block.data[..length_in_block]);
+        string.extend(&head.data[..length_in_block]);
         length_remaining -= length_in_block;
 
         while length_remaining > 0 {
@@ -578,6 +572,15 @@ impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
 
         Ok(String::from_utf8(string)?.into_boxed_str())
     }
+
+    pub fn read_string(&self, string_ptr: DevicePointer<BlockString>) -> Result<Box<str>, FsError> {
+        let head_block = unsafe {
+            // We are reading a string
+            self.device.read_pointer(string_ptr)
+        }
+        .map_err(map_device_error)?;
+        self.read_string_head(&head_block.0)
+    }
 }
 
 impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
@@ -587,48 +590,22 @@ impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
             .map_err(map_device_error)
     }
 
-    /// Writes a string to the device
-    ///
-    /// returns the [LBA] of the first block in the [BlockGroupList]
-    /// that contains the string
-    fn write_string(&mut self, string: &str) -> Result<LBA, FsError> {
-        let length_in_parts = if string.len() > BLOCK_STRING_DATA_LENGTH {
-            string.len() - BLOCK_STRING_DATA_LENGTH
-        } else {
-            0
-        };
+    fn write_string_parts(
+        &mut self,
+        parts_substring: &[u8],
+        part_blocks: impl Iterator<Item = LBA>,
+    ) -> Result<DevicePointer<BlockStringPart>, FsError> {
+        let mut bytes = parts_substring;
+        let mut blocks = part_blocks.peekable();
 
-        let part_block_count =
-            counts_required_for!(BLOCK_STRING_PART_DATA_LENGTH, length_in_parts) as u64;
-
-        let blocks = self
-            .block_allocator
-            .allocate(part_block_count + 1)
-            .ok_or(FsError::Full)?;
-        let mut blocks = blocks.block_iter().peekable();
-
-        let mut bytes = string.as_bytes();
-
-        let head_lba = blocks.next().expect("we just allocated at least 1 block");
-        let mut string_head = Block::new(BlockString(DeviceStringHead {
-            length: TryInto::<u32>::try_into(string.len())
-                .map_err(|_| FsError::StringToLong)?
-                .into(),
-            data: [0; BLOCK_STRING_DATA_LENGTH],
-            next: blocks.peek().map(|lba| DevicePointer::new(*lba)),
-        }));
-        let head_data = bytes
-            .split_off(..min(BLOCK_STRING_DATA_LENGTH, bytes.len()))
-            .expect("we take at max the remaining length");
-        string_head.0.data[..head_data.len()].copy_from_slice(head_data);
-        self.device
-            .write_block(head_lba, string_head.block_data())
-            .map_err(map_device_error)?;
+        let first_part_lba = *blocks
+            .peek()
+            .expect("This should never be called with 0 blocks");
 
         while !bytes.is_empty() {
             let part_lba = blocks
                 .next()
-                .expect("There should be enough blocks allocated for the string");
+                .expect("There should be enough blocks for the string");
             let mut string_part = Block::new(BlockStringPart {
                 data: [0; BLOCK_STRING_PART_DATA_LENGTH],
                 next: blocks.peek().map(|lba| DevicePointer::new(*lba)),
@@ -641,8 +618,101 @@ impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
                 .write_block(part_lba, string_part.block_data())
                 .map_err(map_device_error)?;
         }
-
         assert!(blocks.next().is_none());
+
+        Ok(DevicePointer::new(first_part_lba))
+    }
+
+    pub fn write_string_head<const N: usize>(
+        &mut self,
+        head: &mut DeviceStringHead<N>,
+        string: &str,
+    ) -> Result<(), FsError> {
+        let string = string.as_bytes();
+        let (length_in_parts, length_in_head) = if string.len() > BLOCK_STRING_DATA_LENGTH {
+            (
+                string.len() - BLOCK_STRING_DATA_LENGTH,
+                BLOCK_STRING_DATA_LENGTH,
+            )
+        } else {
+            (0, string.len())
+        };
+
+        head.length = TryInto::<u32>::try_into(string.len())
+            .map_err(|_| FsError::StringToLong)?
+            .into();
+        head.data = [0; N];
+        let head_slice = &string[0..length_in_head];
+        head.data[0..head_slice.len()].copy_from_slice(head_slice);
+
+        if length_in_parts == 0 {
+            head.next = None;
+            return Ok(());
+        }
+
+        let part_substr = &string[N..];
+        let part_block_count =
+            counts_required_for!(BLOCK_STRING_PART_DATA_LENGTH, length_in_parts) as u64;
+
+        let blocks = self
+            .block_allocator
+            .allocate(part_block_count)
+            .ok_or(FsError::Full)?;
+
+        let next = self.write_string_parts(part_substr, blocks.block_iter())?;
+        // TODO on error in string_parts I need to free the blocks
+        head.next = Some(next);
+
+        Ok(())
+    }
+
+    /// Writes a string to the device
+    ///
+    /// returns the [LBA] of the first block in the [BlockGroupList]
+    /// that contains the string
+    pub fn write_string(&mut self, string: &str) -> Result<LBA, FsError> {
+        let string = string.as_bytes();
+        let (length_in_parts, length_in_head) = if string.len() > BLOCK_STRING_DATA_LENGTH {
+            (
+                string.len() - BLOCK_STRING_DATA_LENGTH,
+                BLOCK_STRING_DATA_LENGTH,
+            )
+        } else {
+            (0, string.len())
+        };
+
+        let part_block_count =
+            counts_required_for!(BLOCK_STRING_PART_DATA_LENGTH, length_in_parts) as u64;
+
+        let blocks = self
+            .block_allocator
+            .allocate(part_block_count + 1)
+            .ok_or(FsError::Full)?;
+
+        let mut blocks = blocks.block_iter();
+
+        let head_lba = blocks.next().expect("just allocated at least 1 block");
+
+        let mut head = Block::new(BlockString(DeviceStringHead {
+            length: TryInto::<u32>::try_into(string.len())
+                .map_err(|_| FsError::StringToLong)?
+                .into(),
+            data: [0; BLOCK_STRING_DATA_LENGTH],
+            next: None,
+        }));
+        let head_slice = &string[0..length_in_head];
+        head.0.data[0..head_slice.len()].copy_from_slice(head_slice);
+
+        if length_in_parts > 0 {
+            let next = self.write_string_parts(&string[BLOCK_STRING_DATA_LENGTH..], blocks)?;
+            // TODO on error in string_parts I need to free the blocks
+            head.0.next = Some(next);
+        }
+
+        self.device
+            .write_block(head_lba, head.block_data())
+            .map_err(map_device_error)?;
+        // TODO on error in string_parts I need to free the blocks
 
         Ok(head_lba)
     }

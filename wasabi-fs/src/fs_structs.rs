@@ -228,7 +228,8 @@ pub struct MainHeader {
     /// A copy of the header, that should be kept in sync with the main header in the 0th block
     pub backup_header: DevicePointer<MainHeader>,
     /// A name for the filesystem
-    // TODO inline
+    // TODO inline that makes writing the header more anoying, because I need to special handle
+    // the string part
     pub name: Option<DevicePointer<BlockString>>,
     /// Transient data that describe store the current state of the filesystem.
     ///
