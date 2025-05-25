@@ -28,7 +28,6 @@
 pub mod core_local;
 pub mod cpu;
 pub mod crossbeam_epoch;
-pub mod fs;
 pub mod graphics;
 pub mod kernel_info;
 pub mod logger;
@@ -51,22 +50,22 @@ use kernel_info::KernelInfo;
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
 use shared::{
+    KiB,
     cpu::time::timestamp_now_tsc,
     types::{CoreId, Duration},
-    KiB,
 };
 use static_assertions::const_assert;
 use time::time_since_tsc;
 use x86_64::{
-    structures::paging::{PageSize, Size4KiB},
     PhysAddr,
+    structures::paging::{PageSize, Size4KiB},
 };
 
 use crate::{
     core_local::core_boot,
     cpu::{acpi::ACPI, apic, cpuid, halt, interrupts},
 };
-use bootloader_api::{config::Mapping, info::Optional, BootInfo};
+use bootloader_api::{BootInfo, config::Mapping, info::Optional};
 use core::{
     hint::spin_loop,
     sync::atomic::{AtomicU8, Ordering},
