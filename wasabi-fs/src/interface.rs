@@ -7,7 +7,8 @@ use core::{
 use alloc::boxed::Box;
 
 use crate::{
-    BLOCK_SIZE, BlockGroup, BlockSlice, LBA, blocks_required_for, fs_structs::DevicePointer,
+    BLOCK_SIZE, BlockGroup, BlockSlice, LBA, blocks_required_for,
+    fs_structs::{BlockConstructable, DevicePointer},
 };
 
 pub trait BlockDevice {
@@ -86,11 +87,13 @@ pub trait BlockDevice {
     ///
     /// # Safety
     ///
-    /// the caller must ensure that it is safe to construct a `T` via copy
-    /// and that the pointer points to a `T` on the [BlockDevice]
-    // TODO shift safety burden into marker trait
-    // TODO do I want this to be unsafe or do I just assume that on device data is valid?
-    unsafe fn read_pointer<T>(&self, ptr: DevicePointer<T>) -> Result<T, Self::BlockDeviceError> {
+    /// We assume the pointer points to a `T` on the [BlockDevice] and that the
+    /// data on the block device is not corrupted.
+    /// There is no real way to guarantee this and this operation is always unsafe.
+    fn read_pointer<T: BlockConstructable>(
+        &self,
+        ptr: DevicePointer<T>,
+    ) -> Result<T, Self::BlockDeviceError> {
         if size_of::<T>() <= BLOCK_SIZE {
             let data = self.read_block(ptr.lba)?;
 

@@ -20,7 +20,7 @@ use crate::{
     interface::BlockDevice,
 };
 
-trait BlockLinkedList: Sized {
+trait BlockLinkedList: Sized + BlockConstructable {
     type Next: BlockLinkedList<Next = Self::Next>;
 
     /// The pointer to the next part of [Self]
@@ -32,10 +32,7 @@ trait BlockLinkedList: Sized {
         device: &D,
         block_allocator: &mut BlockAllocator,
     ) -> Result<(), D::BlockDeviceError> {
-        let on_device_data = unsafe {
-            // TODO Safety: see function impl
-            device.read_pointer(self)?
-        };
+        let on_device_data = device.read_pointer(self)?;
 
         if let Some(next) = BlockLinkedList::next(&on_device_data) {
             next.free(device, block_allocator)?;
@@ -46,6 +43,12 @@ trait BlockLinkedList: Sized {
         Ok(())
     }
 }
+
+/// A marker trait describing structs that can be constructed from a [super::Block].
+///
+/// This implies that it is safe to construct the struct from a byte slice read
+/// from any block device.
+pub trait BlockConstructable {}
 
 /// A pointer of type `T` into a [crate::interface::BlockDevice].
 #[derive(Debug, PartialEq, Eq)]
@@ -76,12 +79,21 @@ impl<T> core::ops::Receiver for DevicePointer<T> {
     type Target = T;
 }
 
-/// Either a single [BlockGroup] or a [NodePointer] to a [BlockList]
+/// Either a single [BlockGroup] or a [DevicePointer] to a [BlockList]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub enum BlockListHead {
     Single(BlockGroup),
     List(DevicePointer<BlockList>),
+}
+
+impl From<LBA> for BlockListHead {
+    fn from(value: LBA) -> Self {
+        Self::Single(BlockGroup {
+            start: value,
+            count_minus_one: 0,
+        })
+    }
 }
 
 const BLOCK_LIST_GROUP_COUNT: usize = (BLOCK_SIZE
@@ -115,6 +127,8 @@ pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
 pub struct BlockString(pub DeviceStringHead<BLOCK_STRING_DATA_LENGTH>);
 const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
 
+impl BlockConstructable for BlockString {}
+
 impl BlockLinkedList for BlockString {
     type Next = BlockStringPart;
 
@@ -130,6 +144,16 @@ pub struct DeviceStringHead<const N: usize> {
     pub length: LittleEndian<u32>,
     pub data: [u8; N],
     pub next: Option<DevicePointer<BlockStringPart>>,
+}
+
+impl<const N: usize> DeviceStringHead<N> {
+    pub fn empty() -> Self {
+        Self {
+            length: 0.into(),
+            data: [0; N],
+            next: None,
+        }
+    }
 }
 
 /// The maximum size of the string data that can be stored in a [BlockStringPart]
@@ -149,6 +173,8 @@ pub struct BlockStringPart {
     pub next: Option<DevicePointer<BlockStringPart>>,
 }
 const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
+
+impl BlockConstructable for BlockStringPart {}
 
 impl BlockLinkedList for BlockStringPart {
     type Next = Self;
@@ -199,6 +225,9 @@ impl FileId {
             (u64::MAX - 1).to_le(),
         )))
     };
+
+    /// The FileId of the root node
+    pub const ROOT: FileId = Self::MIN;
 }
 
 impl fmt::Display for FileId {
@@ -233,7 +262,7 @@ impl Timestamp {
 }
 
 bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub struct Perm: u8 {
         const EXECUTE = 1 ;
         const WRITE = 1 << 1;
@@ -251,9 +280,15 @@ pub struct FileNode {
     pub _unused: [u8; 3],
     pub uid: u32,
     pub gid: u32,
+    /// The size of the file
+    ///
+    /// Actual value depends on type:
+    ///     File: size of the file
+    ///     Directory: 0 TODO do I want to store something else here?
     pub size: u64,
     pub created_at: Timestamp,
     pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
+    // TODO do I want last accessed?
     pub block_data: BlockListHead,
     pub name: DeviceStringHead<100>,
 }
@@ -289,6 +324,8 @@ pub struct MainHeader {
     pub transient: Option<MainTransientHeader>,
 }
 const_assert!(size_of::<MainHeader>() <= BLOCK_SIZE);
+
+impl BlockConstructable for MainHeader {}
 
 impl MainHeader {
     /// A magic string that must be part of the header
@@ -388,6 +425,8 @@ pub enum TreeNode {
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);
 
+impl BlockConstructable for TreeNode {}
+
 /// The number of free [BlockGroup]s that fit within a single [FreeBlockGroups]
 pub(crate) const BLOCK_RANGES_COUNT_PER_BLOCK: usize = 250;
 
@@ -399,7 +438,7 @@ pub(crate) const BLOCK_RANGES_COUNT_PER_BLOCK: usize = 250;
 pub struct FreeBlockGroups {
     /// Unused [BlockGroup]s
     pub free: StaticVec<BlockGroup, BLOCK_RANGES_COUNT_PER_BLOCK, u8>,
-    /// A [NodePointer] to the next [FreeBlockGroups] of unused [BlockGroup]s.
+    /// A [DevicePointer] to the next [FreeBlockGroups] of unused [BlockGroup]s.
     ///
     /// This might be `Some` even if [Self::free] is not full.
     /// The [crate::block_allocator::BlockAllocator] might uses empty [FreeBlockGroups] as reserved blocks.
@@ -408,11 +447,13 @@ pub struct FreeBlockGroups {
 const_assert!(size_of::<FreeBlockGroups>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<FreeBlockGroups>() <= 100);
 
+impl BlockConstructable for FreeBlockGroups {}
+
 /// The maximum number of entries within a [Directory] block.
 ///
 /// If a Directory has more entries a new [Directory] block is linked in [Directory::next]
 pub(crate) const DIRECTORY_BLOCK_ENTRY_COUNT: usize = 500;
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[repr(C)]
 pub struct Directory {
     /// total number of entries within the [Directory]
@@ -422,9 +463,13 @@ pub struct Directory {
     /// if [Self::entry_count] is greater than [DIRECTORY_BLOCK_ENTRY_COUNT] this
     /// points to the next [Directory] block
     pub next: Option<DevicePointer<Directory>>,
+    /// Set to `true` if this is the first block in the linked list describing the Directory
+    pub is_head: bool,
 }
 const_assert!(size_of::<Directory>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<Directory>() <= 100);
+
+impl BlockConstructable for Directory {}
 
 impl BlockLinkedList for Directory {
     type Next = Directory;

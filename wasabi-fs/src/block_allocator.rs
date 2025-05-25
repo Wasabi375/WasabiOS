@@ -75,7 +75,7 @@ impl BlockAllocator {
 
         let mut loop_count = 0;
         loop {
-            on_disk_blocks = new.allocate(blocks_required).ok_or(FsError::Full)?;
+            on_disk_blocks = new.allocate(blocks_required)?;
 
             // check if the newley allocated blocks mean that the free list changed so much
             // that our new allocation no longer fits.
@@ -207,7 +207,7 @@ impl BlockAllocator {
     ///
     /// Where possible [Self::allocate] should be used, because it
     /// is better at avoiding fragmentation.
-    pub fn allocate_group(&mut self, size: u64) -> Option<BlockGroup> {
+    pub fn allocate_group(&mut self, size: u64) -> Result<BlockGroup, FsError> {
         assert!(size >= 1);
         let mut best: usize = usize::MAX;
         let mut best_rem: u64 = u64::MAX;
@@ -225,12 +225,12 @@ impl BlockAllocator {
         }
 
         if best == usize::MAX {
-            return None;
+            return Err(FsError::NoConsecutiveFreeBlocks(size));
         }
 
         if best_rem == 0 {
             // we can't use swap_remove, because we need to preserve the order
-            return Some(self.free.remove(best));
+            return Ok(self.free.remove(best));
         }
 
         let best = &mut self.free[best];
@@ -242,14 +242,14 @@ impl BlockAllocator {
         best.count_minus_one = best_rem - 1;
 
         debug_assert!(self.check_consistent().is_ok());
-        Some(result)
+        Ok(result)
     }
 
     /// Allocate `count` [LBA]s
     ///
     /// This tries to reduce fragmentation by prefering [BlockGroup]s
     /// with sizes that are powers of 2.
-    pub fn allocate(&mut self, count: u64) -> Option<BlockGroupList> {
+    pub fn allocate(&mut self, count: u64) -> Result<BlockGroupList, FsError> {
         assert!(count >= 1);
 
         let mut list = BlockGroupList::new();
@@ -260,7 +260,7 @@ impl BlockAllocator {
         while remaining_size > 0 {
             if group_size == 0 {
                 self.free(list);
-                return None;
+                return Err(FsError::BlockDeviceFull(count));
             }
 
             if remaining_size > group_size {
@@ -268,7 +268,7 @@ impl BlockAllocator {
                 continue;
             }
 
-            let Some(group) = self.allocate_group(group_size) else {
+            let Ok(group) = self.allocate_group(group_size) else {
                 // failed to allocate at current size. try smaller sizes
                 group_size >>= 1;
                 continue;
@@ -280,7 +280,7 @@ impl BlockAllocator {
 
         assert_eq!(list.block_count(), count);
 
-        Some(list)
+        Ok(list)
     }
 
     pub fn free(&mut self, list: BlockGroupList) {
@@ -309,7 +309,7 @@ impl BlockAllocator {
         debug_assert!(self.check_consistent().is_ok());
     }
 
-    pub fn allocate_block(&mut self) -> Option<LBA> {
+    pub fn allocate_block(&mut self) -> Result<LBA, FsError> {
         self.allocate_group(1).map(|group| group.start)
     }
 

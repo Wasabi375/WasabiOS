@@ -6,7 +6,8 @@
     assert_matches,
     box_as_ptr,
     debug_closure_helpers,
-    negative_impls
+    negative_impls,
+    try_reserve_kind
 )]
 #![allow(unused, dead_code)] // TODO temp
 #![warn(unused_must_use, unused_mut, unused_labels)]
@@ -29,6 +30,7 @@ pub mod existing_fs_check;
 pub mod fs;
 pub mod fs_structs;
 pub mod interface;
+pub mod mem_structs;
 pub mod mem_tree;
 
 /// Logical Block Address
@@ -142,6 +144,7 @@ pub struct BlockGroup {
     ///
     /// A group will always have at least 1 block. Therefor we can store
     /// this as `0`. 2 blocks will be represented as `1`, etc.
+    // TODO why am I doing this. This is a u64
     pub count_minus_one: u64, // TODO LE
 }
 

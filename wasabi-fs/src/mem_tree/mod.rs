@@ -4,6 +4,7 @@ use core::{
     borrow::BorrowMut,
     cell::{RefCell, UnsafeCell},
     default, error,
+    error::Error,
     marker::PhantomData,
     mem::{self, MaybeUninit},
     ops::Deref,
@@ -44,22 +45,22 @@ mod node_guard;
 
 use node_guard::NodeGuard;
 
-#[derive(Error, Debug, PartialEq, Eq, Clone)]
+#[derive(Error, Debug)]
 #[allow(missing_docs)]
-pub enum MemTreeError<D: BlockDevice> {
+pub enum MemTreeError {
     #[error("Out of Memory")]
     Oom(#[from] AllocError),
     #[error("Block Device Failure: {0}")]
-    BlockDevice(D::BlockDeviceError),
+    BlockDevice(Box<dyn Error + Send + Sync>),
     #[error("FileNode with id {0} already exists")]
     FileNodeExists(FileId),
     #[error("FileNode with id {0} does not exist")]
     FileDoesNotExist(FileId),
 }
 
-impl<D: BlockDevice> MemTreeError<D> {
-    pub fn from(value: D::BlockDeviceError) -> Self {
-        Self::BlockDevice(value)
+impl MemTreeError {
+    pub fn from<E: Error + Send + Sync + 'static>(value: E) -> Self {
+        Self::BlockDevice(Box::new(value))
     }
 }
 
@@ -302,7 +303,7 @@ impl<I: InterruptState> MemTree<I> {
         device: &D,
         file: Arc<FileNode>,
         create_only: bool, // TODO do I want to create to functions here? Insert/update
-    ) -> Result<(), MemTreeError<D>> {
+    ) -> Result<(), MemTreeError> {
         let mut leave = self
             .find_leave::<_, node_guard::Mut>(device, file.id)
             .map_err(MemTreeError::from)?;
@@ -386,14 +387,14 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// TODO document args
     ///
-    fn insert_split<D: BlockDevice>(
+    fn insert_split(
         &self,
         mut current: NodeGuard<'_, I, node_guard::Mut>,
         old_node_ptr: NonNull<MemTreeNode<I>>,
         old_node_new_max: FileId,
         new_node: MemTreeNode<I>,
         new_node_max: FileId,
-    ) -> Result<(), MemTreeError<D>> {
+    ) -> Result<(), MemTreeError> {
         let MemTreeNode::Node {
             parent: next_parent,
             children,
@@ -477,12 +478,12 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// `root` should be the tree root and `new_node` should be the new right
     /// subtree after the slpit.
-    fn insert_split_at_root<D: BlockDevice>(
+    fn insert_split_at_root(
         &self,
         root: NodeGuard<'_, I, node_guard::Mut>,
         split_id: FileId,
         new_node: MemTreeNode<I>,
-    ) -> Result<(), MemTreeError<D>> {
+    ) -> Result<(), MemTreeError> {
         assert!(root.parent_ref().is_none());
 
         let (old_root_link_node, old_root_link_device) = {
@@ -562,7 +563,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         device: &D,
         file_id: FileId,
-    ) -> Result<Arc<FileNode>, MemTreeError<D>> {
+    ) -> Result<Arc<FileNode>, MemTreeError> {
         // NOTE: this will have to resolve on-device only nodes because we want to delete from the
         // device and not just the in memory FileNode. Therefor in order to keep the tree balanced
         // we have to find the file even if it is not in memory. Therefor it is ok to use
@@ -608,7 +609,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         unbalanced_node: NodeGuard<'_, I, node_guard::Mut>,
         device: &D,
-    ) -> Result<(), MemTreeError<D>> {
+    ) -> Result<(), MemTreeError> {
         let (mut parent, unbalanced_node_ptr) = unbalanced_node
             .into_parent()
             .expect("Rebalance leave should only be called for nodes with parents");
@@ -721,7 +722,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         unbalanced_node: NodeGuard<'_, I, node_guard::Mut>,
         device: &D,
-    ) -> Result<(), MemTreeError<D>> {
+    ) -> Result<(), MemTreeError> {
         let (mut parent, unbalanced_node_ptr) = match unbalanced_node.into_parent() {
             Ok((parent, unbalanced_node_ptr)) => (parent, unbalanced_node_ptr),
             Err(mut unbalanced_root_guard) => {
@@ -1548,9 +1549,7 @@ impl<I: InterruptState> MemTreeLink<I> {
         let device_ptr = if let Some(device_ptr) = self.device_ptr {
             device_ptr
         } else {
-            let device_ptr = block_allocator
-                .allocate_block()
-                .ok_or(FsError::BlockDeviceFull(1))?;
+            let device_ptr = block_allocator.allocate_block()?;
             let device_ptr = DevicePointer::new(device_ptr);
             self.device_ptr = Some(device_ptr);
             device_ptr

@@ -50,6 +50,11 @@ macro_rules! GiB {
 
 /// Calculates the total number of *entries* to cover a *total size*
 ///
+/// # Arguments
+///
+/// * entry_size
+/// * total_size
+///
 /// # Example
 /// ```no_run
 /// # #[macro_use] extern crate shared;

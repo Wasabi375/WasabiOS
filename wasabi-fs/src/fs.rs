@@ -9,8 +9,11 @@ use core::{
 };
 
 use alloc::{
+    alloc::AllocError,
     boxed::Box,
+    collections::{TryReserveError, TryReserveErrorKind},
     string::{FromUtf8Error, String},
+    sync::Arc,
     vec::Vec,
 };
 use log::{debug, error, warn};
@@ -22,15 +25,16 @@ use uuid::Uuid;
 
 use crate::{
     BLOCK_SIZE, Block, FS_VERSION, LBA,
-    block_allocator::{BlockAllocator, BlockGroupList},
+    block_allocator::{self, BlockAllocator, BlockGroupList},
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
-        BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockString, BlockStringPart,
-        DevicePointer, DeviceStringHead, FileId, FileNode, FsStatus, MainHeader,
-        MainTransientHeader, TreeNode,
+        BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockListHead, BlockString,
+        BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode, FileType, FsStatus,
+        MainHeader, MainTransientHeader, Timestamp, TreeNode,
     },
     interface::BlockDevice,
-    mem_tree::{self, MemTree},
+    mem_structs,
+    mem_tree::{self, MemTree, MemTreeError},
 };
 
 pub(crate) const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(0) };
@@ -40,6 +44,7 @@ pub(crate) const FREE_BLOCKS_BLOCK: LBA = unsafe { LBA::new_unchecked(2) };
 const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, TREE_ROOT_BLOCK, FREE_BLOCKS_BLOCK];
 
 // initially used blocks does not have the backup header, as it has a dynamic address
+// TODO this should include root_directory, etc. Figure out what the real min is
 const MIN_BLOCK_COUNT: u64 = INITALLY_USED_BLOCKS.len() as u64 + 1;
 
 #[derive(Error, Debug)]
@@ -51,10 +56,10 @@ pub enum FsError {
     BlockDeviceToSmall(u64, u64),
     #[error("Block device is full. Failed to allocate {0} blocks")]
     BlockDeviceFull(u64),
+    #[error("Failed to find {0} consecutive free blocks")]
+    NoConsecutiveFreeBlocks(u64),
     #[error("Override check failed")]
     OverrideCheck,
-    #[error("File system is full")]
-    Full,
     #[error("Write allocator failed to allocate blocks for free list")]
     WriteAllocatorFreeList,
     #[error("Main header and backup header did not match")]
@@ -77,6 +82,37 @@ pub enum FsError {
     MalformedStringUtf8(#[from] FromUtf8Error),
     #[error("String length must fit within a u32")]
     StringToLong,
+    #[error("Out of Memory")]
+    Oom,
+    #[error("MemTree operation failed")]
+    MemTreeError(MemTreeError),
+}
+
+impl From<MemTreeError> for FsError {
+    fn from(value: MemTreeError) -> Self {
+        match value {
+            MemTreeError::Oom(_) => FsError::Oom,
+            MemTreeError::BlockDevice(err) => FsError::BlockDevice(err),
+            err => FsError::MemTreeError(err),
+        }
+    }
+}
+
+impl From<AllocError> for FsError {
+    fn from(value: AllocError) -> Self {
+        FsError::Oom
+    }
+}
+
+impl From<TryReserveError> for FsError {
+    fn from(value: TryReserveError) -> Self {
+        match value.kind() {
+            TryReserveErrorKind::CapacityOverflow => panic!(
+                "Capacity overflow should never happen, as that would mean that we have an insane size on the device"
+            ),
+            TryReserveErrorKind::AllocError { .. } => FsError::Oom,
+        }
+    }
 }
 
 pub fn map_device_error<E: Error + Send + Sync + 'static>(e: E) -> FsError {
@@ -338,9 +374,26 @@ where
         fs.write_header(&header)?;
         fs.copy_header_to_backup(&header)?;
 
-        // TODO do I want to create an empty root(/) directory or should this be
-        // the decission of the caller of create_internal
-        todo_warn!("Create root(/) directory in mem_tree");
+        let root_dir = mem_structs::Directory::empty();
+        let root_dir_block = root_dir.store(&mut fs.device, &mut fs.block_allocator)?.lba;
+        let mut root_dir_node = Box::try_new(FileNode {
+            id: FileId::ROOT,
+            parent: None,
+            typ: FileType::Directory,
+            permissions: Default::default(),
+            _unused: Default::default(),
+            uid: 0,
+            gid: 0,
+            size: 0,
+            created_at: Timestamp::zero(),
+            modified_at: Timestamp::zero(),
+            block_data: root_dir_block.into(),
+            name: DeviceStringHead::empty(),
+        })?;
+
+        fs.write_string_head(&mut root_dir_node.name, "/")?;
+        fs.mem_tree
+            .insert(&mut fs.device, root_dir_node.into(), true)?;
 
         // Flush writes block allocator and initial mem_tree to device
         fs.flush()?;
@@ -500,6 +553,7 @@ where
         }
     }
 
+    /// Reads the [MainHeader] from [MAIN_HEADER_BLOCK]
     fn header(&self) -> Result<Box<Block<MainHeader>>, FsError> {
         let data = self
             .device
@@ -654,10 +708,7 @@ impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
         let part_block_count =
             counts_required_for!(BLOCK_STRING_PART_DATA_LENGTH, length_in_parts) as u64;
 
-        let blocks = self
-            .block_allocator
-            .allocate(part_block_count)
-            .ok_or(FsError::Full)?;
+        let blocks = self.block_allocator.allocate(part_block_count)?;
 
         let next = self.write_string_parts(part_substr, blocks.block_iter())?;
         // TODO on error in string_parts I need to free the blocks
@@ -684,10 +735,7 @@ impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
         let part_block_count =
             counts_required_for!(BLOCK_STRING_PART_DATA_LENGTH, length_in_parts) as u64;
 
-        let blocks = self
-            .block_allocator
-            .allocate(part_block_count + 1)
-            .ok_or(FsError::Full)?;
+        let blocks = self.block_allocator.allocate(part_block_count + 1)?;
 
         let mut blocks = blocks.block_iter();
 
