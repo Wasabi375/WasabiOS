@@ -26,10 +26,6 @@ pub struct BlockAllocator {
     dirty: bool,
 }
 
-#[derive(Debug, Error)]
-#[error("Block allocator is not consistent")]
-pub struct BlockAllocatorInconsistent {}
-
 impl BlockAllocator {
     /// Creates a new [BlockAllocator] that is free, except for `initial_usage`.
     pub fn empty(inital_usage: &[LBA], max_lba: LBA) -> Self {

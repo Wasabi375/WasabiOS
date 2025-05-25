@@ -34,10 +34,10 @@ use crate::{
 };
 
 pub(crate) const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(0) };
-pub(crate) const ROOT_BLOCK: LBA = unsafe { LBA::new_unchecked(1) };
+pub(crate) const TREE_ROOT_BLOCK: LBA = unsafe { LBA::new_unchecked(1) };
 pub(crate) const FREE_BLOCKS_BLOCK: LBA = unsafe { LBA::new_unchecked(2) };
 
-const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, ROOT_BLOCK, FREE_BLOCKS_BLOCK];
+const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, TREE_ROOT_BLOCK, FREE_BLOCKS_BLOCK];
 
 // initially used blocks does not have the backup header, as it has a dynamic address
 const MIN_BLOCK_COUNT: u64 = INITALLY_USED_BLOCKS.len() as u64 + 1;
@@ -278,7 +278,7 @@ where
                 name: None,
                 version: FS_VERSION,
                 uuid: Uuid::nil(),
-                root_ptr: DevicePointer::new(ROOT_BLOCK),
+                root_ptr: DevicePointer::new(TREE_ROOT_BLOCK),
             },
 
             mem_tree,
@@ -315,7 +315,7 @@ where
             Self::create_fs_device_access(device, AccessMode::ReadWrite, MemTree::empty())?;
 
         // create basic header and backup header
-        let root_block = ROOT_BLOCK;
+        let root_block = TREE_ROOT_BLOCK;
         let free_blocks = FREE_BLOCKS_BLOCK;
         let mut header = Block::new(MainHeader {
             magic: MainHeader::MAGIC,
@@ -377,7 +377,7 @@ where
             name,
             version: FS_VERSION,
             uuid,
-            root_ptr: DevicePointer::new(ROOT_BLOCK),
+            root_ptr: DevicePointer::new(TREE_ROOT_BLOCK),
         };
 
         unsafe {

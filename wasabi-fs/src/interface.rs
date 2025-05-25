@@ -89,6 +89,7 @@ pub trait BlockDevice {
     /// the caller must ensure that it is safe to construct a `T` via copy
     /// and that the pointer points to a `T` on the [BlockDevice]
     // TODO shift safety burden into marker trait
+    // TODO do I want this to be unsafe or do I just assume that on device data is valid?
     unsafe fn read_pointer<T>(&self, ptr: DevicePointer<T>) -> Result<T, Self::BlockDeviceError> {
         if size_of::<T>() <= BLOCK_SIZE {
             let data = self.read_block(ptr.lba)?;
