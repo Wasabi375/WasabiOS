@@ -126,7 +126,7 @@ impl<I> !Clone for MemTree<I> {}
 
 impl<I: InterruptState> MemTree<I> {
     /// Creates a new empty [MemTree]
-    pub fn empty() -> Self {
+    pub fn empty(device_ptr: Option<DevicePointer<TreeNode>>) -> Self {
         let root_node = MemTreeNode::Leave {
             parent: None,
             files: StaticVec::new(),
@@ -136,7 +136,7 @@ impl<I: InterruptState> MemTree<I> {
 
         let root = MemTreeLink {
             node: Some(Box::new(root_node)),
-            device_ptr: None,
+            device_ptr,
         };
 
         MemTree {
@@ -205,7 +205,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         device: &D,
         id: FileId,
-    ) -> Result<NodeGuard<'_, I, BorrowType>, D::BlockDeviceError> {
+    ) -> Result<NodeGuard<'_, I, BorrowType>, FsError> {
         self.root_lock.lock();
 
         let mut current_node = unsafe {
@@ -287,7 +287,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         device: &D,
         id: FileId,
-    ) -> Result<Option<Arc<FileNode>>, D::BlockDeviceError> {
+    ) -> Result<Option<Arc<FileNode>>, FsError> {
         let leave = self.find_leave::<_, node_guard::Immut>(device, id)?;
         let MemTreeNode::Leave { files, lock, .. } = leave.borrow() else {
             panic!("Find leave should always return a leave node");
@@ -912,7 +912,7 @@ impl<I: InterruptState> MemTree<I> {
         node: &'l mut NodeGuard<'n, I, B>,
         unbalanced_ptr: NonNull<MemTreeNode<I>>,
         device: &D,
-    ) -> Result<ChildrenForRebalance<'l, I>, D::BlockDeviceError> {
+    ) -> Result<ChildrenForRebalance<'l, I>, FsError> {
         let MemTreeNode::Node {
             children, parent, ..
         } = node.borrow_mut()
@@ -1240,32 +1240,41 @@ pub(crate) enum MemTreeNode<I> {
 }
 
 impl<I: InterruptState> MemTreeNode<I> {
-    fn new_from(device_node: TreeNode) -> Self {
-        todo!("MemTreeNode::new_from")
-        //        match device_node {
-        //            TreeNode::Leave { parent: _, files } => MemTreeNode::Leave {
-        //                files: files.to_vec(),
-        //                dirty: AtomicBool::new(false),
-        //            },
-        //            TreeNode::Node {
-        //                parent: _,
-        //                mut children,
-        //            } => MemTreeNode::Node {
-        //                children: children
-        //                    .drain_iter(..)
-        //                    .map(|(id, node_ptr)| {
-        //                        (
-        //                            id,
-        //                            MemTreeLink {
-        //                                node: Atomic::null(),
-        //                                device_ptr: node_ptr,
-        //                            },
-        //                        )
-        //                    })
-        //                    .collect(),
-        //                dirty: AtomicBool::new(false),
-        //            },
-        //        }
+    fn new_from(
+        device_node: TreeNode,
+        parent: Option<NonNull<MemTreeNode<I>>>,
+    ) -> Result<Self, AllocError> {
+        let result = match device_node {
+            TreeNode::Leave { files, .. } => Self::Leave {
+                parent,
+                files: files
+                    .iter()
+                    .map(|f| Arc::try_new(f.clone()))
+                    .collect::<Result<StaticVec<Arc<FileNode>, LEAVE_MAX_FILE_COUNT>, AllocError>>(
+                    )?,
+                dirty: false,
+                lock: UnsafeTicketLock::new(),
+            },
+            TreeNode::Node { children, .. } => Self::Node {
+                parent,
+                children: children
+                    .iter()
+                    .map(|(device_link, max)| {
+                        (
+                            MemTreeLink {
+                                node: None,
+                                device_ptr: Some(*device_link),
+                            },
+                            *max,
+                        )
+                    })
+                    .collect(),
+                dirty: false,
+                dirty_children: false,
+                lock: UnsafeTicketLock::new(),
+            },
+        };
+        Ok(result)
     }
 
     fn to_tree_node(&self, parent: Option<DevicePointer<TreeNode>>) -> TreeNode {
@@ -1451,7 +1460,7 @@ impl<I> !Clone for MemTreeLink<I> {}
 impl<I: InterruptState> MemTreeLink<I> {
     /// Ensures that the link data is loaded into memory.
     #[inline]
-    fn resolve<D: BlockDevice>(&mut self, device: &D) -> Result<&mut Self, D::BlockDeviceError> {
+    fn resolve<D: BlockDevice>(&mut self, device: &D) -> Result<&mut Self, FsError> {
         if self.node.is_some() {
             return Ok(self);
         }
@@ -1462,10 +1471,11 @@ impl<I: InterruptState> MemTreeLink<I> {
 
         let device_node = unsafe {
             // Safety: device_ptr should be a valid pointer on the device
-            device.read_pointer(device_ptr)?
+            device.read_pointer(device_ptr).map_err(map_device_error)?
         };
 
-        self.node = Some(Box::new(MemTreeNode::new_from(device_node)));
+        let parent = None; // FIXME
+        self.node = Some(Box::try_new(MemTreeNode::new_from(device_node, parent)?)?);
 
         Ok(self)
     }
@@ -1633,7 +1643,7 @@ mod test_mem_only {
     use super::{MemTree, MemTreeLink, MemTreeNode};
 
     fn create_empty_tree() -> MemTree<TestInterruptState> {
-        MemTree::empty()
+        MemTree::empty(None)
     }
 
     fn create_file_node(id: u64) -> Arc<FileNode> {

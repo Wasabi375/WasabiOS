@@ -4,21 +4,22 @@ use fuser::FileAttr;
 use fuser::FileType;
 use fuser::Request;
 use host_shared::sync::StdInterruptState;
+use libc::EINVAL;
 use libc::ENOENT;
 use log::debug;
 use log::error;
 use log::warn;
+use shared::todo_warn;
 use std::path::Path;
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 use uuid::Uuid;
 use wfs::BLOCK_SIZE;
 use wfs::blocks_required_for;
-use wfs::fs::FsError;
 use wfs::fs::FsWrite;
 use wfs::fs::OverrideCheck;
 use wfs::fs_structs;
-use wfs::fs_structs::FileNode;
+use wfs::fs_structs::FileId;
 
 use wfs::fs::{FileSystem, FsRead, FsReadOnly, FsReadWrite};
 
@@ -132,8 +133,23 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
     }
 
     #[allow(unused)]
-    fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: fuser::ReplyAttr) {
-        let file_node: Result<Option<FileNode>, FsError> = todo!();
+    fn getattr(
+        &mut self,
+        _req: &Request<'_>,
+        mut ino: u64,
+        _fh: Option<u64>,
+        reply: fuser::ReplyAttr,
+    ) {
+        if ino == 1 {
+            todo_warn!("Hack: Linux uses inode 1 for file system root?");
+            ino = 0;
+        }
+
+        let file_id = match FileId::try_new(ino) {
+            Some(id) => id,
+            None => return reply.error(EINVAL),
+        };
+        let file_node = self.fs().read_file_attr(file_id);
 
         match file_node {
             Ok(Some(file_node)) => {
@@ -174,7 +190,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
                 )
             }
             Ok(None) => {
-                warn!("getattr: inode not found!");
+                warn!("getattr: inode {ino} not found!");
                 reply.error(ENOENT)
             }
             Err(e) => {

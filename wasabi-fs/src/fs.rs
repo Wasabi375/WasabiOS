@@ -43,9 +43,13 @@ pub(crate) const FREE_BLOCKS_BLOCK: LBA = unsafe { LBA::new_unchecked(2) };
 
 const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, TREE_ROOT_BLOCK, FREE_BLOCKS_BLOCK];
 
-// initially used blocks does not have the backup header, as it has a dynamic address
-// TODO this should include root_directory, etc. Figure out what the real min is
-const MIN_BLOCK_COUNT: u64 = INITALLY_USED_BLOCKS.len() as u64 + 1;
+/// The minimum number of blocks required to create a fs.
+///
+/// There is no easy formula for this, value. It has to be at least `INITALLY_USED_BLOCKS + 2`
+/// (backup header, root directory) however this is just a lower bound.
+/// The real value is effected by harder to predict systems like blocks used for
+/// the block_allocator.
+const MIN_BLOCK_COUNT: u64 = 9;
 
 #[derive(Error, Debug)]
 #[allow(missing_docs)]
@@ -347,8 +351,11 @@ where
             }
         }
 
-        let mut fs =
-            Self::create_fs_device_access(device, AccessMode::ReadWrite, MemTree::empty())?;
+        let mut fs = Self::create_fs_device_access(
+            device,
+            AccessMode::ReadWrite,
+            MemTree::empty(Some(DevicePointer::new(TREE_ROOT_BLOCK))),
+        )?;
 
         // create basic header and backup header
         let root_block = TREE_ROOT_BLOCK;
@@ -588,6 +595,12 @@ where
 }
 
 impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
+    pub fn read_file_attr(&self, id: FileId) -> Result<Option<Arc<FileNode>>, FsError> {
+        self.mem_tree
+            .find(&self.device, id)
+            .map_err(map_device_error)
+    }
+
     pub fn header_data(&self) -> &HeaderData {
         &self.header_data
     }
