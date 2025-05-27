@@ -1,4 +1,4 @@
-use libc::{EBUSY, EINVAL, EIO, ENOMEM, ENOSPC, ENOTSUP, c_int};
+use libc::{EBUSY, EINVAL, EIO, ENOENT, ENOMEM, ENOSPC, ENOTSUP, c_int};
 use wfs::{fs::FsError, mem_tree::MemTreeError};
 
 /// a best effort uess on what stupid errno value each error corresponds to
@@ -29,5 +29,6 @@ pub fn fs_error_no(err: FsError) -> c_int {
             MemTreeError::FileNodeExists(_) => EINVAL,
             MemTreeError::FileDoesNotExist(_) => EINVAL,
         },
+        FsError::FileDoesNotExist(_) => ENOENT,
     }
 }

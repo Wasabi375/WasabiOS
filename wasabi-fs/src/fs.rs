@@ -33,7 +33,7 @@ use crate::{
         MainHeader, MainTransientHeader, Timestamp, TreeNode,
     },
     interface::BlockDevice,
-    mem_structs,
+    mem_structs::{self, Directory},
     mem_tree::{self, MemTree, MemTreeError},
 };
 
@@ -90,6 +90,8 @@ pub enum FsError {
     Oom,
     #[error("MemTree operation failed")]
     MemTreeError(MemTreeError),
+    #[error("The requested file({0:?}) does not exist")]
+    FileDoesNotExist(FileId),
 }
 
 impl From<MemTreeError> for FsError {
@@ -645,6 +647,17 @@ impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
         }
         .map_err(map_device_error)?;
         self.read_string_head(&head_block.0)
+    }
+
+    pub fn read_directory(&self, id: FileId) -> Result<Directory, FsError> {
+        let metadata = self
+            .mem_tree
+            .find(&self.device, id)?
+            .ok_or(FsError::FileDoesNotExist(id))?;
+
+        let block_group = metadata.block_data.single();
+        assert_eq!(block_group.count_minus_one, 0);
+        Directory::load(&self.device, DevicePointer::new(block_group.start))
     }
 }
 

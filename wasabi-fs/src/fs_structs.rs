@@ -97,6 +97,15 @@ impl From<LBA> for BlockListHead {
     }
 }
 
+impl BlockListHead {
+    pub fn single(&self) -> &BlockGroup {
+        match self {
+            BlockListHead::Single(g) => g,
+            BlockListHead::List(_) => panic!("BlockListHead is a list, requested Single"),
+        }
+    }
+}
+
 const BLOCK_LIST_GROUP_COUNT: usize = (BLOCK_SIZE
     - (size_of::<u8>() + size_of::<DevicePointer<BlockList>>()))
     / size_of::<BlockGroup>();
@@ -279,6 +288,7 @@ bitflags! {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
+// TODO rename FileMeatadata or something
 pub struct FileNode {
     pub id: FileId,
     pub parent: Option<FileId>,
@@ -297,6 +307,7 @@ pub struct FileNode {
     pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
     // TODO do I want last accessed?
     pub block_data: BlockListHead,
+    // TODO do I want some kind of generation counter?
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

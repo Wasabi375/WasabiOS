@@ -1,30 +1,23 @@
-use anyhow::Context;
-use anyhow::Result;
-use fuser::FileAttr;
-use fuser::FileType;
-use fuser::Request;
+use anyhow::{Context, Result};
+use clap::builder::OsStr;
+use fuser::{FileAttr, FileType, Request};
 use host_shared::sync::StdInterruptState;
-use libc::EINVAL;
-use libc::ENOENT;
-use log::debug;
-use log::error;
-use log::warn;
+use libc::{EINVAL, EIO, ENOENT};
+use log::{debug, error, warn};
 use shared::todo_warn;
-use std::path::Path;
-use std::time::Duration;
-use std::time::UNIX_EPOCH;
+use std::{
+    path::Path,
+    str::FromStr,
+    time::{Duration, UNIX_EPOCH},
+};
 use uuid::Uuid;
-use wfs::BLOCK_SIZE;
-use wfs::blocks_required_for;
-use wfs::fs::FsWrite;
-use wfs::fs::OverrideCheck;
-use wfs::fs_structs;
-use wfs::fs_structs::FileId;
+use wfs::{
+    BLOCK_SIZE, blocks_required_for,
+    fs::{FileSystem, FsError, FsRead, FsReadOnly, FsReadWrite, FsWrite, OverrideCheck},
+    fs_structs::{self, FileId},
+};
 
-use wfs::fs::{FileSystem, FsRead, FsReadOnly, FsReadWrite};
-
-use crate::block_device::FileDevice;
-use crate::fuse::errno::fs_error_no;
+use crate::{block_device::FileDevice, fuse::errno::fs_error_no};
 
 pub mod errno;
 pub mod fake;
@@ -114,6 +107,50 @@ impl WasabiFuse<FsReadWrite> {
     }
 }
 
+impl<S: FsRead> WasabiFuse<S> {
+    fn get_file_attr(&self, id: FileId) -> Result<Option<FileAttr>, FsError> {
+        let file_node = self.fs().read_file_attr(id);
+
+        file_node.map(|node| {
+            node.map(|node| {
+                let mtime = UNIX_EPOCH + Duration::from_secs(node.modified_at.get());
+                let crtime = UNIX_EPOCH + Duration::from_secs(node.created_at.get());
+                let (kind, nlink) = match node.typ {
+                    fs_structs::FileType::File => (FileType::RegularFile, 1),
+                    fs_structs::FileType::Directory => (FileType::Directory, 2),
+                };
+                let perm: u16 = {
+                    let perm: [u8; 4] = unsafe { std::mem::transmute_copy(&node.permissions) };
+                    (perm[0] as u16) << 12
+                        | (perm[1] as u16) << 8
+                        | (perm[2] as u16) << 4
+                        | perm[1] as u16
+                };
+
+                FileAttr {
+                    ino: node.id.get().try_into().unwrap(),
+                    size: node.size,
+                    blocks: blocks_required_for!(node.size),
+                    atime: mtime,
+                    mtime,
+                    ctime: mtime,
+                    crtime,
+                    kind,
+                    // TODO ensure that ordering matches once I decide how
+                    // I want to handle this in my fs
+                    perm,
+                    nlink,
+                    uid: self.uid,
+                    gid: self.gid,
+                    rdev: 0,
+                    blksize: BLOCK_SIZE as u32,
+                    flags: 0,
+                }
+            })
+        })
+    }
+}
+
 impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
     fn init(
         &mut self,
@@ -132,58 +169,86 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         self.fs_mut().flush().unwrap();
     }
 
-    #[allow(unused)]
-    fn getattr(
+    fn readdir(
         &mut self,
         _req: &Request<'_>,
-        mut ino: u64,
-        _fh: Option<u64>,
-        reply: fuser::ReplyAttr,
+        ino: u64,
+        _fh: u64,
+        _offset: i64,
+        mut reply: fuser::ReplyDirectory,
     ) {
+        let dir_id = match FileId::try_new(ino) {
+            Some(id) => id,
+            None => return reply.error(EINVAL),
+        };
+
+        let dir = match self.fs().read_directory(dir_id) {
+            Ok(d) => d,
+            Err(e) => {
+                reply.error(fs_error_no(e));
+                return;
+            }
+        };
+
+        let mut last_full = false;
+        for entry in dir.entries {
+            assert!(!last_full);
+            last_full = reply.add(
+                entry.id.get(),
+                0,
+                FileType::RegularFile,
+                std::ffi::OsString::from_str(&entry.name).unwrap(),
+            );
+        }
+        reply.ok();
+    }
+
+    fn lookup(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &std::ffi::OsStr,
+        reply: fuser::ReplyEntry,
+    ) {
+        let Some(name) = name.to_str() else {
+            reply.error(EINVAL);
+            return;
+        };
+
+        let parent_id = match FileId::try_new(parent) {
+            Some(id) => id,
+            None => return reply.error(EINVAL),
+        };
+
+        let dir = match self.fs().read_directory(parent_id) {
+            Ok(d) => d,
+            Err(e) => {
+                reply.error(fs_error_no(e));
+                return;
+            }
+        };
+
+        let Some(file_entry) = dir.entries.iter().find(|e| e.name.as_ref() == name) else {
+            reply.error(ENOENT);
+            return;
+        };
+
+        match self.get_file_attr(file_entry.id) {
+            Ok(Some(file_attr)) => reply.entry(&self.ttl, &file_attr, 0),
+            Ok(None) => reply.error(EIO),
+            Err(e) => reply.error(fs_error_no(e)),
+        }
+    }
+
+    fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: fuser::ReplyAttr) {
         let file_id = match FileId::try_new(ino) {
             Some(id) => id,
             None => return reply.error(EINVAL),
         };
-        let file_node = self.fs().read_file_attr(file_id);
+        let file_node = self.get_file_attr(file_id);
 
         match file_node {
-            Ok(Some(file_node)) => {
-                let mtime = UNIX_EPOCH + Duration::from_secs(file_node.modified_at.get());
-                let crtime = UNIX_EPOCH + Duration::from_secs(file_node.created_at.get());
-                let (kind, nlink) = match file_node.typ {
-                    fs_structs::FileType::File => (FileType::RegularFile, 1),
-                    fs_structs::FileType::Directory => (FileType::Directory, 2),
-                };
-                let perm: u16 = {
-                    let perm: [u8; 4] = unsafe { std::mem::transmute_copy(&file_node.permissions) };
-                    (perm[0] as u16) << 12
-                        | (perm[1] as u16) << 8
-                        | (perm[2] as u16) << 4
-                        | perm[1] as u16
-                };
-                reply.attr(
-                    &self.ttl,
-                    &dbg!(FileAttr {
-                        ino: file_node.id.get().try_into().unwrap(),
-                        size: file_node.size,
-                        blocks: blocks_required_for!(file_node.size),
-                        atime: mtime,
-                        mtime,
-                        ctime: mtime,
-                        crtime,
-                        kind,
-                        // TODO ensure that ordering matches once I decide how
-                        // I want to handle this in my fs
-                        perm,
-                        nlink,
-                        uid: self.uid,
-                        gid: self.gid,
-                        rdev: 0,
-                        blksize: BLOCK_SIZE as u32,
-                        flags: 0,
-                    }),
-                )
-            }
+            Ok(Some(file_attr)) => reply.attr(&self.ttl, &file_attr),
             Ok(None) => {
                 warn!("getattr: inode {ino} not found!");
                 reply.error(ENOENT)

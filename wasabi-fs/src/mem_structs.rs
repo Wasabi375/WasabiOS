@@ -19,7 +19,7 @@ use staticvec::StaticVec;
 use super::fs::FileSystem;
 
 pub struct Directory {
-    entries: Vec<DirectoryEntry>,
+    pub entries: Vec<DirectoryEntry>,
 }
 
 impl Directory {
@@ -121,7 +121,7 @@ impl Directory {
             for entry in block_entries {
                 let mut fs_entry = FsDirectoryEntry {
                     name: Default::default(),
-                    file_id: entry.file_id,
+                    file_id: entry.id,
                 };
                 fs.write_string_head(&mut fs_entry.name, &entry.name)?;
                 fs_dir.entries.push(fs_entry)
@@ -141,7 +141,7 @@ impl Directory {
 
 pub struct DirectoryEntry {
     pub name: Box<str>,
-    pub file_id: FileId,
+    pub id: FileId,
 }
 
 impl DirectoryEntry {
