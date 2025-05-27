@@ -140,11 +140,6 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         _fh: Option<u64>,
         reply: fuser::ReplyAttr,
     ) {
-        if ino == 1 {
-            todo_warn!("Hack: Linux uses inode 1 for file system root?");
-            ino = 0;
-        }
-
         let file_id = match FileId::try_new(ino) {
             Some(id) => id,
             None => return reply.error(EINVAL),

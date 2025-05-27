@@ -70,7 +70,7 @@ walkdir = "2.5"
 
 # TODO use upstream version once merged and released
 # TODO create PR for nonmax
-simple_endian = { version = "0.3.2", git = "https://github.com/Wasabi375/simple-endian-rs.git", branch = "generic_ops"}
+simple_endian = { version = "0.3.2", git = "https://github.com/Wasabi375/simple-endian-rs.git", branch = "non_zero"}
 
 # TODO use upstream version once I created a PR and it was merged, waiting on simple_endian
 nonmax = { version = "0.5.5", git = "https://github.com/Wasabi375/nonmax.git", branch = "simple_endian", default-features = false , features = ["simple_endian"] }

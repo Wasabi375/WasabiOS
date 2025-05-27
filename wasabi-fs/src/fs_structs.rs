@@ -3,13 +3,14 @@ use core::{
     marker::PhantomData,
     mem::size_of,
     num::{NonZeroU8, NonZeroU16, NonZeroU64},
+    usize,
 };
 
 use bitflags::bitflags;
 use nonmax::NonMaxU64;
 use shared::math::IntoI64;
 use simple_endian::LittleEndian;
-use static_assertions::const_assert;
+use static_assertions::{const_assert, const_assert_ne};
 use staticvec::{StaticString, StaticVec};
 use uuid::Uuid;
 
@@ -192,42 +193,48 @@ impl BlockLinkedList for BlockStringPart {
 /// It is possible for [FileId] to be the same on different file systems
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub struct FileId(LittleEndian<NonMaxU64>);
+pub struct FileId(LittleEndian<NonZeroU64>);
 
 impl FileId {
-    pub fn new(id: NonMaxU64) -> Self {
+    pub fn new(id: NonZeroU64) -> Self {
         FileId(id.into())
     }
 
     pub fn try_new(id: u64) -> Option<Self> {
-        NonMaxU64::new(id).map(|id| FileId(id.into()))
+        NonZeroU64::new(id).map(|id| FileId(id.into()))
     }
 
     /// # Safety
     ///
     /// `id` must not be `u64::MAX`
     pub unsafe fn new_unchecked(id: u64) -> Self {
-        unsafe { FileId(NonMaxU64::new_unchecked(id).into()) }
+        unsafe { FileId(NonZeroU64::new_unchecked(id).into()) }
     }
 
     pub fn get(self) -> u64 {
         self.0.to_native().get()
     }
 
-    pub const MIN: FileId = unsafe {
-        // Safety: 0 is a valid non-max
-        FileId(LittleEndian::from_bits(NonMaxU64::new_unchecked(0)))
-    };
+    pub const MIN: FileId = FileId::new_const::<1>();
 
-    pub const MAX: FileId = unsafe {
-        // Safety: MAX - 1 is a valid non-max
-        FileId(LittleEndian::from_bits(NonMaxU64::new_unchecked(
-            (u64::MAX - 1).to_le(),
-        )))
-    };
+    pub const MAX: FileId = FileId::new_const::<{ u64::MAX }>();
+
+    /// Creates a const file id
+    ///
+    /// This is the same as `FileId::new(N).unwrap()` but works in a const context.
+    /// [Self:new] and [Self::new_unchecked] are not `const` because they rely on
+    /// traits that are not yet const stable (rust internal trait attribute).
+    pub const fn new_const<const N: u64>() -> Self {
+        if N == 0 {
+            panic!("FileId::new_const<0>() is an illegal constant");
+        }
+        FileId(LittleEndian::from_bits(unsafe {
+            NonZeroU64::new_unchecked(N.to_le())
+        }))
+    }
 
     /// The FileId of the root node
-    pub const ROOT: FileId = Self::MIN;
+    pub const ROOT: FileId = Self::new_const::<1>();
 }
 
 impl fmt::Display for FileId {
