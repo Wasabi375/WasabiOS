@@ -1662,11 +1662,6 @@ mod test_mem_only {
                 LBA::new(0).unwrap(),
                 LBA::new(0).unwrap(),
             )),
-            name: DeviceStringHead {
-                length: 0.into(),
-                data: [0; 100],
-                next: None,
-            },
         })
     }
 

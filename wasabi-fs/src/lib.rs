@@ -212,7 +212,7 @@ macro_rules! blocks_required_for {
 /// The current version of the fs
 ///
 /// See [fs_structs::MainHeader::version]
-pub const FS_VERSION: [u8; 4] = [0, 1, 0, 2];
+pub const FS_VERSION: [u8; 4] = [0, 1, 0, 3];
 
 /// Align `T` on block boundaries
 ///

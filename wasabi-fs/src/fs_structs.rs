@@ -147,8 +147,8 @@ pub struct DeviceStringHead<const N: usize> {
     pub next: Option<DevicePointer<BlockStringPart>>,
 }
 
-impl<const N: usize> DeviceStringHead<N> {
-    pub fn empty() -> Self {
+impl<const N: usize> Default for DeviceStringHead<N> {
+    fn default() -> Self {
         Self {
             length: 0.into(),
             data: [0; N],
@@ -297,7 +297,6 @@ pub struct FileNode {
     pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
     // TODO do I want last accessed?
     pub block_data: BlockListHead,
-    pub name: DeviceStringHead<100>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -456,17 +455,23 @@ const_assert!(BLOCK_SIZE - size_of::<FreeBlockGroups>() <= 100);
 
 impl BlockConstructable for FreeBlockGroups {}
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectoryEntry {
+    pub name: DeviceStringHead<100>,
+    pub file_id: FileId,
+}
+
 /// The maximum number of entries within a [Directory] block.
 ///
 /// If a Directory has more entries a new [Directory] block is linked in [Directory::next]
-pub(crate) const DIRECTORY_BLOCK_ENTRY_COUNT: usize = 500;
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) const DIRECTORY_BLOCK_ENTRY_COUNT: usize = 33;
 #[repr(C)]
 pub struct Directory {
     /// total number of entries within the [Directory]
     pub entry_count: LittleEndian<u64>,
     /// [FileId]s of each [FileNode] within this [Directory]
-    pub entries: StaticVec<FileId, DIRECTORY_BLOCK_ENTRY_COUNT, u8>,
+    pub entries: StaticVec<DirectoryEntry, DIRECTORY_BLOCK_ENTRY_COUNT, u8>,
     /// if [Self::entry_count] is greater than [DIRECTORY_BLOCK_ENTRY_COUNT] this
     /// points to the next [Directory] block
     pub next: Option<DevicePointer<Directory>>,
@@ -474,9 +479,20 @@ pub struct Directory {
     pub is_head: bool,
 }
 const_assert!(size_of::<Directory>() <= BLOCK_SIZE);
-const_assert!(BLOCK_SIZE - size_of::<Directory>() <= 100);
+const_assert!(BLOCK_SIZE - size_of::<Directory>() <= size_of::<DirectoryEntry>());
 
 impl BlockConstructable for Directory {}
+
+impl Default for Directory {
+    fn default() -> Self {
+        Self {
+            entry_count: 0.into(),
+            entries: StaticVec::new(),
+            next: None,
+            is_head: true,
+        }
+    }
+}
 
 impl BlockLinkedList for Directory {
     type Next = Directory;

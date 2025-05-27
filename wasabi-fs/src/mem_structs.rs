@@ -1,20 +1,25 @@
 use core::cmp::{max, min};
 
 use crate::block_allocator::BlockAllocator;
-use crate::fs::{FsError, map_device_error};
-use crate::fs_structs::{DIRECTORY_BLOCK_ENTRY_COUNT, Directory as FsDirectory};
+use crate::fs::{FsError, FsWrite, map_device_error};
+use crate::fs_structs::{
+    DIRECTORY_BLOCK_ENTRY_COUNT, Directory as FsDirectory, DirectoryEntry as FsDirectoryEntry,
+};
 use crate::{Block, block_allocator, blocks_required_for};
 use crate::{
     fs_structs::{DevicePointer, FileId},
     interface::BlockDevice,
 };
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use shared::counts_required_for;
 use shared::math::IntoU64;
+use shared::sync::InterruptState;
 use staticvec::StaticVec;
 
+use super::fs::FileSystem;
+
 pub struct Directory {
-    entries: Vec<FileId>,
+    entries: Vec<DirectoryEntry>,
 }
 
 impl Directory {
@@ -46,7 +51,15 @@ impl Directory {
                 assert_eq!(expected_rest, fs_dir.entry_count.to_native());
             }
             expected_rest -= fs_dir.entries.len().into_u64();
-            entries.extend(fs_dir.entries);
+
+            for fs_entry in fs_dir
+                .entries
+                .iter()
+                .map(|entry| DirectoryEntry::load(device, entry))
+            {
+                let fs_entry = fs_entry?;
+                entries.push(fs_entry);
+            }
 
             next = fs_dir.next;
         }
@@ -56,10 +69,9 @@ impl Directory {
     }
 
     /// Stores the directory to a [BlockDevice]
-    pub fn store<D: BlockDevice>(
+    pub fn store<D: BlockDevice, S: FsWrite, I: InterruptState>(
         &self,
-        device: &mut D,
-        block_allocator: &mut BlockAllocator,
+        fs: &mut FileSystem<D, S, I>,
     ) -> Result<DevicePointer<FsDirectory>, FsError> {
         let block_count =
             counts_required_for!(DIRECTORY_BLOCK_ENTRY_COUNT, self.entries.len()) as u64;
@@ -67,20 +79,20 @@ impl Directory {
         if block_count == 0 {
             assert!(self.entries.is_empty());
 
-            let block = block_allocator.allocate_block()?;
+            let block = fs.block_allocator.allocate_block()?;
             let fs_dir = Block::new(FsDirectory {
                 entry_count: 0.into(),
                 entries: StaticVec::new(),
                 next: None,
                 is_head: true,
             });
-            device
+            fs.device
                 .write_block(block, fs_dir.block_data())
                 .map_err(map_device_error)?;
             return Ok(DevicePointer::new(block));
         }
 
-        let blocks = block_allocator.allocate(block_count)?;
+        let blocks = fs.block_allocator.allocate(block_count)?;
 
         let mut fs_dir = Block::new(FsDirectory::default());
 
@@ -100,21 +112,40 @@ impl Directory {
             fs_dir.entry_count = entry_count.into_u64().into();
             entry_count -= block_entry_count;
 
-            let block_entries = entries
+            let block_entries: &[DirectoryEntry] = entries
                 .split_off(..block_entry_count)
                 .expect("There should still be block_entry_count entries left");
 
             fs_dir.entries.clear();
-            fs_dir.entries.extend_from_slice(block_entries);
+
+            for entry in block_entries {
+                let mut fs_entry = FsDirectoryEntry {
+                    name: Default::default(),
+                    file_id: entry.file_id,
+                };
+                fs.write_string_head(&mut fs_entry.name, &entry.name)?;
+                fs_dir.entries.push(fs_entry)
+            }
 
             fs_dir.next = block_iter.peek().map(|lba| DevicePointer::new(*lba));
 
-            device
+            fs.device
                 .write_block(block, fs_dir.block_data())
                 .map_err(map_device_error)?;
         }
         assert_eq!(entry_count, 0);
 
         Ok(DevicePointer::new(head_lba))
+    }
+}
+
+pub struct DirectoryEntry {
+    pub name: Box<str>,
+    pub file_id: FileId,
+}
+
+impl DirectoryEntry {
+    pub fn load<D: BlockDevice>(device: &D, fs_entry: &FsDirectoryEntry) -> Result<Self, FsError> {
+        todo!()
     }
 }

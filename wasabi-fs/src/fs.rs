@@ -138,12 +138,12 @@ impl FsRead for FsReadWrite {}
 impl FsWrite for FsReadWrite {}
 
 pub struct FileSystem<D, S, I> {
-    device: D,
+    pub device: D,
     max_block_count: u64,
     max_usable_lba: LBA,
     backup_header_lba: LBA,
 
-    block_allocator: BlockAllocator,
+    pub block_allocator: BlockAllocator,
 
     header_data: HeaderData,
 
@@ -382,8 +382,8 @@ where
         fs.copy_header_to_backup(&header)?;
 
         let root_dir = mem_structs::Directory::empty();
-        let root_dir_block = root_dir.store(&mut fs.device, &mut fs.block_allocator)?.lba;
-        let mut root_dir_node = Box::try_new(FileNode {
+        let root_dir_block = root_dir.store(&mut fs)?.lba;
+        let root_dir_node = Box::try_new(FileNode {
             id: FileId::ROOT,
             parent: None,
             typ: FileType::Directory,
@@ -395,10 +395,8 @@ where
             created_at: Timestamp::zero(),
             modified_at: Timestamp::zero(),
             block_data: root_dir_block.into(),
-            name: DeviceStringHead::empty(),
         })?;
 
-        fs.write_string_head(&mut root_dir_node.name, "/")?;
         fs.mem_tree
             .insert(&mut fs.device, root_dir_node.into(), true)?;
 
