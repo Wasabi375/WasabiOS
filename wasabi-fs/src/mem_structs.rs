@@ -142,6 +142,7 @@ impl Directory {
 pub struct DirectoryEntry {
     pub name: Box<str>,
     pub id: FileId,
+    // TODO do I want to store the filetype here? At least fuse thinks that readdir should know it
 }
 
 impl DirectoryEntry {

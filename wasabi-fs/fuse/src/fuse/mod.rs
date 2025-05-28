@@ -3,7 +3,7 @@ use clap::builder::OsStr;
 use fuser::{FileAttr, FileType, Request};
 use host_shared::sync::StdInterruptState;
 use libc::{EINVAL, EIO, ENOENT};
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 use shared::todo_warn;
 use std::{
     path::Path,
@@ -21,6 +21,21 @@ use crate::{block_device::FileDevice, fuse::errno::fs_error_no};
 
 pub mod errno;
 pub mod fake;
+
+macro_rules! handle_fs_err {
+    ($expr:expr, $reply:expr) => {
+        handle_fs_err!($expr, $reply, ())
+    };
+    ($expr:expr, $reply:expr, $err_res:expr) => {
+        match $expr {
+            Ok(res) => res,
+            Err(err) => {
+                $reply.error(fs_error_no(err));
+                return $err_res;
+            }
+        }
+    };
+}
 
 pub struct WasabiFuse<S> {
     file_system: Option<FileSystem<FileDevice, S, StdInterruptState>>,
@@ -115,9 +130,9 @@ impl<S: FsRead> WasabiFuse<S> {
             node.map(|node| {
                 let mtime = UNIX_EPOCH + Duration::from_secs(node.modified_at.get());
                 let crtime = UNIX_EPOCH + Duration::from_secs(node.created_at.get());
-                let (kind, nlink) = match node.typ {
-                    fs_structs::FileType::File => (FileType::RegularFile, 1),
-                    fs_structs::FileType::Directory => (FileType::Directory, 2),
+                let kind = match node.typ {
+                    fs_structs::FileType::File => FileType::RegularFile,
+                    fs_structs::FileType::Directory => FileType::Directory,
                 };
                 let perm: u16 = {
                     let perm: [u8; 4] = unsafe { std::mem::transmute_copy(&node.permissions) };
@@ -136,10 +151,8 @@ impl<S: FsRead> WasabiFuse<S> {
                     ctime: mtime,
                     crtime,
                     kind,
-                    // TODO ensure that ordering matches once I decide how
-                    // I want to handle this in my fs
                     perm,
-                    nlink,
+                    nlink: 1,
                     uid: self.uid,
                     gid: self.gid,
                     rdev: 0,
@@ -157,6 +170,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         req: &Request<'_>,
         config: &mut fuser::KernelConfig,
     ) -> std::prelude::v1::Result<(), libc::c_int> {
+        trace!("fuser::init");
         debug!("init request: config: {config:?}");
         debug!("gid: {}, uid: {}, pid: {}", req.gid(), req.uid(), req.pid());
         self.uid = req.uid();
@@ -165,6 +179,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
     }
 
     fn destroy(&mut self) {
+        trace!("fuser::destroy");
         debug!("Shutdown");
         self.fs_mut().flush().unwrap();
     }
@@ -177,26 +192,27 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         _offset: i64,
         mut reply: fuser::ReplyDirectory,
     ) {
+        trace!("fuser::readdir(ino: {ino}");
         let dir_id = match FileId::try_new(ino) {
             Some(id) => id,
             None => return reply.error(EINVAL),
         };
 
-        let dir = match self.fs().read_directory(dir_id) {
-            Ok(d) => d,
-            Err(e) => {
-                reply.error(fs_error_no(e));
-                return;
-            }
-        };
+        let dir = handle_fs_err!(self.fs().read_directory(dir_id), reply);
 
         let mut last_full = false;
         for entry in dir.entries {
             assert!(!last_full);
+
+            let Some(entry_meta) = handle_fs_err!(self.fs().read_file_attr(entry.id), reply) else {
+                reply.error(EIO);
+                return;
+            };
+
             last_full = reply.add(
                 entry.id.get(),
                 0,
-                FileType::RegularFile,
+                map_file_type(entry_meta.typ),
                 std::ffi::OsString::from_str(&entry.name).unwrap(),
             );
         }
@@ -210,6 +226,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         name: &std::ffi::OsStr,
         reply: fuser::ReplyEntry,
     ) {
+        trace!("fuser::lookup(name: {name:?}, parent: {parent}");
         let Some(name) = name.to_str() else {
             reply.error(EINVAL);
             return;
@@ -220,14 +237,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
             None => return reply.error(EINVAL),
         };
 
-        let dir = match self.fs().read_directory(parent_id) {
-            Ok(d) => d,
-            Err(e) => {
-                reply.error(fs_error_no(e));
-                return;
-            }
-        };
-
+        let dir = handle_fs_err!(self.fs().read_directory(parent_id), reply);
         let Some(file_entry) = dir.entries.iter().find(|e| e.name.as_ref() == name) else {
             reply.error(ENOENT);
             return;
@@ -241,6 +251,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
     }
 
     fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: fuser::ReplyAttr) {
+        trace!("fuser::getattr(ino: {ino})");
         let file_id = match FileId::try_new(ino) {
             Some(id) => id,
             None => return reply.error(EINVAL),
@@ -280,5 +291,12 @@ impl<S> Drop for WasabiFuse<S> {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+}
+
+fn map_file_type(typ: fs_structs::FileType) -> FileType {
+    match typ {
+        fs_structs::FileType::File => FileType::RegularFile,
+        fs_structs::FileType::Directory => FileType::Directory,
     }
 }
