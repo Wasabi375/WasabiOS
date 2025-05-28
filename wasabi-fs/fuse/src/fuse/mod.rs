@@ -1,20 +1,21 @@
 use anyhow::{Context, Result};
-use clap::builder::OsStr;
 use fuser::{FileAttr, FileType, Request};
 use host_shared::sync::StdInterruptState;
-use libc::{EINVAL, EIO, ENOENT};
+#[allow(unused_imports)]
+use libc::{EINVAL, EIO, ENOENT, ENOSYS};
 use log::{debug, error, trace, warn};
-use shared::todo_warn;
 use std::{
     path::Path,
     str::FromStr,
+    sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
 use uuid::Uuid;
 use wfs::{
     BLOCK_SIZE, blocks_required_for,
     fs::{FileSystem, FsError, FsRead, FsReadOnly, FsReadWrite, FsWrite, OverrideCheck},
-    fs_structs::{self, FileId},
+    fs_structs::{self, FileId, FileNode, Perm, Timestamp},
+    mem_structs,
 };
 
 use crate::{block_device::FileDevice, fuse::errno::fs_error_no};
@@ -30,6 +31,7 @@ macro_rules! handle_fs_err {
         match $expr {
             Ok(res) => res,
             Err(err) => {
+                log::error!("handle fs error: {err}");
                 $reply.error(fs_error_no(err));
                 return $err_res;
             }
@@ -126,41 +128,38 @@ impl<S: FsRead> WasabiFuse<S> {
     fn get_file_attr(&self, id: FileId) -> Result<Option<FileAttr>, FsError> {
         let file_node = self.fs().read_file_attr(id);
 
-        file_node.map(|node| {
-            node.map(|node| {
-                let mtime = UNIX_EPOCH + Duration::from_secs(node.modified_at.get());
-                let crtime = UNIX_EPOCH + Duration::from_secs(node.created_at.get());
-                let kind = match node.typ {
-                    fs_structs::FileType::File => FileType::RegularFile,
-                    fs_structs::FileType::Directory => FileType::Directory,
-                };
-                let perm: u16 = {
-                    let perm: [u8; 4] = unsafe { std::mem::transmute_copy(&node.permissions) };
-                    (perm[0] as u16) << 12
-                        | (perm[1] as u16) << 8
-                        | (perm[2] as u16) << 4
-                        | perm[1] as u16
-                };
+        file_node.map(|node| node.map(|node| self.map_node_to_attr(node)))
+    }
 
-                FileAttr {
-                    ino: node.id.get().try_into().unwrap(),
-                    size: node.size,
-                    blocks: blocks_required_for!(node.size),
-                    atime: mtime,
-                    mtime,
-                    ctime: mtime,
-                    crtime,
-                    kind,
-                    perm,
-                    nlink: 1,
-                    uid: self.uid,
-                    gid: self.gid,
-                    rdev: 0,
-                    blksize: BLOCK_SIZE as u32,
-                    flags: 0,
-                }
-            })
-        })
+    fn map_node_to_attr(&self, node: Arc<FileNode>) -> FileAttr {
+        let mtime = UNIX_EPOCH + Duration::from_secs(node.modified_at.get());
+        let crtime = UNIX_EPOCH + Duration::from_secs(node.created_at.get());
+        let kind = match node.typ {
+            fs_structs::FileType::File => FileType::RegularFile,
+            fs_structs::FileType::Directory => FileType::Directory,
+        };
+        let perm: u16 = {
+            let perm: [u8; 4] = unsafe { std::mem::transmute_copy(&node.permissions) };
+            (perm[0] as u16) << 12 | (perm[1] as u16) << 8 | (perm[2] as u16) << 4 | perm[1] as u16
+        };
+
+        FileAttr {
+            ino: node.id.get().try_into().unwrap(),
+            size: node.size,
+            blocks: blocks_required_for!(node.size),
+            atime: mtime,
+            mtime,
+            ctime: mtime,
+            crtime,
+            kind,
+            perm,
+            nlink: 1,
+            uid: self.uid,
+            gid: self.gid,
+            rdev: 0,
+            blksize: BLOCK_SIZE as u32,
+            flags: 0,
+        }
     }
 }
 
@@ -192,7 +191,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         _offset: i64,
         mut reply: fuser::ReplyDirectory,
     ) {
-        trace!("fuser::readdir(ino: {ino}");
+        trace!("fuser::readdir(ino: {ino})");
         let dir_id = match FileId::try_new(ino) {
             Some(id) => id,
             None => return reply.error(EINVAL),
@@ -226,7 +225,7 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         name: &std::ffi::OsStr,
         reply: fuser::ReplyEntry,
     ) {
-        trace!("fuser::lookup(name: {name:?}, parent: {parent}");
+        trace!("fuser::lookup(name: {name:?}, parent: {parent})");
         let Some(name) = name.to_str() else {
             reply.error(EINVAL);
             return;
@@ -269,6 +268,55 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
                 reply.error(fs_error_no(e));
             }
         }
+    }
+
+    fn mkdir(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &std::ffi::OsStr,
+        mode: u32,
+        _umask: u32,
+        reply: fuser::ReplyEntry,
+    ) {
+        trace!("fuser::mkdir(parent: {parent}, name: {name:?}, mode: {mode:o})");
+
+        let parent_id = match FileId::try_new(parent) {
+            Some(id) => id,
+            None => return reply.error(EINVAL),
+        };
+
+        let uid = self.uid;
+        let gid = self.gid;
+        let fs = self.fs_mut();
+
+        let _parent = handle_fs_err!(fs.read_directory(parent_id), reply);
+
+        let new_dir = mem_structs::Directory::default();
+        let new_dir_block = handle_fs_err!(new_dir.store(fs), reply).lba;
+
+        let new_node = Arc::new(FileNode {
+            id: fs.get_and_inc_file_id(),
+            parent: Some(parent_id),
+            typ: fs_structs::FileType::Directory,
+            permissions: [Perm::empty(); 4],
+            _unused: [0; 3],
+            uid,
+            gid,
+            size: 0,
+            created_at: Timestamp::zero(),
+            modified_at: Timestamp::zero(),
+            block_data: new_dir_block.into(),
+        });
+
+        handle_fs_err!(
+            fs.mem_tree
+                .insert(&mut fs.device, new_node.clone(), true)
+                .map_err(FsError::from),
+            reply
+        );
+
+        reply.entry(&self.ttl, &self.map_node_to_attr(new_node), 0);
     }
 }
 

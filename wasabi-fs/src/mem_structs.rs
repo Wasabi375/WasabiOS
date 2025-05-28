@@ -22,14 +22,15 @@ pub struct Directory {
     pub entries: Vec<DirectoryEntry>,
 }
 
-impl Directory {
-    /// Creates a new empty directory
-    pub fn empty() -> Self {
+impl Default for Directory {
+    fn default() -> Self {
         Directory {
             entries: Vec::new(),
         }
     }
+}
 
+impl Directory {
     /// Loads a directory from a [BlockDevice]
     pub fn load<D: BlockDevice>(
         device: &D,

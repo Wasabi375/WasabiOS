@@ -28,7 +28,7 @@ use crate::{
     block_allocator::{self, BlockAllocator, BlockGroupList},
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
-        BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockListHead, BlockString,
+        self, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockListHead, BlockString,
         BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode, FileType, FsStatus,
         MainHeader, MainTransientHeader, Timestamp, TreeNode,
     },
@@ -92,6 +92,8 @@ pub enum FsError {
     MemTreeError(MemTreeError),
     #[error("The requested file({0:?}) does not exist")]
     FileDoesNotExist(FileId),
+    #[error("Expected FileId {0} to be a directory. It is a {1:?}")]
+    NotADirectory(FileId, fs_structs::FileType),
 }
 
 impl From<MemTreeError> for FsError {
@@ -149,7 +151,7 @@ pub struct FileSystem<D, S, I> {
 
     header_data: HeaderData,
 
-    mem_tree: MemTree<I>,
+    pub mem_tree: MemTree<I>,
 
     access_mode: AccessMode,
 
@@ -160,8 +162,11 @@ pub struct FileSystem<D, S, I> {
 #[derive(Debug)]
 pub struct HeaderData {
     pub name: Option<Box<str>>,
+    pub name_head: Option<DevicePointer<BlockString>>,
     pub version: [u8; 4],
     pub uuid: Uuid,
+
+    pub next_file_id: FileId,
 
     root_ptr: DevicePointer<TreeNode>,
 }
@@ -239,6 +244,8 @@ where
                 self.block_allocator.write(&mut self.device)?;
             }
         }
+
+        self.write_header()?;
 
         Ok(())
     }
@@ -318,8 +325,10 @@ where
 
             header_data: HeaderData {
                 name: None,
+                name_head: None,
                 version: FS_VERSION,
                 uuid: Uuid::nil(),
+                next_file_id: FileId::ROOT,
                 root_ptr: DevicePointer::new(TREE_ROOT_BLOCK),
             },
 
@@ -376,14 +385,15 @@ where
                 open_in_write_mode: true,
                 status: FsStatus::Uninitialized,
             }),
+            next_file_id: FileId::ROOT.next(),
         });
         // Write inital header to device to mark fs blocks
         // TODO: should this be a compare_swap? Otherwise there is a possible race
         // between multiple create_internal calls
-        fs.write_header(&header)?;
+        fs.write_main_header(&header)?;
         fs.copy_header_to_backup(&header)?;
 
-        let root_dir = mem_structs::Directory::empty();
+        let root_dir = mem_structs::Directory::default();
         let root_dir_block = root_dir.store(&mut fs)?.lba;
         let root_dir_node = Box::try_new(FileNode {
             id: FileId::ROOT,
@@ -432,11 +442,13 @@ where
         // is called. Otherwise we might leave the FS in an invalid/uninitalized
         // state after setting the status to Ready.
         fs.copy_header_to_backup(&header)?;
-        fs.write_header(&header)?;
+        fs.write_main_header(&header)?;
         fs.header_data = HeaderData {
             name,
+            name_head: name_block.map(DevicePointer::new),
             version: FS_VERSION,
             uuid,
+            next_file_id: header.next_file_id,
             root_ptr: DevicePointer::new(TREE_ROOT_BLOCK),
         };
 
@@ -491,9 +503,11 @@ where
 
         fs.header_data = HeaderData {
             name,
+            name_head: header.name,
             version: header.version,
             uuid: header.uuid,
             root_ptr: header.root,
+            next_file_id: header.next_file_id,
         };
 
         let new_header = if force_open {
@@ -578,7 +592,32 @@ where
         Ok(data)
     }
 
-    fn write_header(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
+    fn write_header(&mut self) -> Result<(), FsError> {
+        // TODO I need a better way to reproduce the header for updates
+        let header = Block::new(MainHeader {
+            magic: MainHeader::MAGIC,
+            version: FS_VERSION,
+            uuid: self.header_data.uuid,
+            root: DevicePointer::new(TREE_ROOT_BLOCK),
+            free_blocks: DevicePointer::new(FREE_BLOCKS_BLOCK),
+            backup_header: DevicePointer::new(self.backup_header_lba),
+            name: self.header_data.name_head,
+            transient: Some(MainTransientHeader {
+                magic: MainTransientHeader::MAGIC,
+                mount_count: 1,
+                open_in_write_mode: self.access_mode == AccessMode::ReadWrite,
+                status: FsStatus::Ready,
+            }),
+            next_file_id: FileId::ROOT.next(),
+        });
+
+        self.copy_header_to_backup(&header)?;
+        self.write_main_header(&header)?;
+
+        Ok(())
+    }
+
+    fn write_main_header(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
         self.device
             .write_block_atomic(MAIN_HEADER_BLOCK, header.block_data())
             .map_err(map_device_error)
@@ -655,6 +694,10 @@ impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
             .find(&self.device, id)?
             .ok_or(FsError::FileDoesNotExist(id))?;
 
+        if metadata.typ != fs_structs::FileType::Directory {
+            return Err(FsError::NotADirectory(id, metadata.typ));
+        }
+
         let block_group = metadata.block_data.single();
         assert_eq!(block_group.count_minus_one, 0);
         Directory::load(&self.device, DevicePointer::new(block_group.start))
@@ -662,6 +705,12 @@ impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
 }
 
 impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
+    pub fn get_and_inc_file_id(&mut self) -> FileId {
+        let next = self.header_data.next_file_id;
+        self.header_data.next_file_id = self.header_data.next_file_id.next();
+        next
+    }
+
     fn write_tree_node(&mut self, lba: LBA, node: &Block<TreeNode>) -> Result<(), FsError> {
         self.device
             .write_block(lba, node.block_data())

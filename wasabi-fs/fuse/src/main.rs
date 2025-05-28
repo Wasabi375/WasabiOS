@@ -158,7 +158,7 @@ fn mount(args: MountOptions) {
     let mut options = vec![
         fuser::MountOption::AutoUnmount,
         fuser::MountOption::AllowRoot,
-        fuser::MountOption::RO,
+        fuser::MountOption::RW,
         fuser::MountOption::FSName(name),
     ];
 

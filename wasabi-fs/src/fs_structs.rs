@@ -215,13 +215,17 @@ impl FileId {
 
     /// # Safety
     ///
-    /// `id` must not be `u64::MAX`
+    /// `id` must not be `0`
     pub unsafe fn new_unchecked(id: u64) -> Self {
         unsafe { FileId(NonZeroU64::new_unchecked(id).into()) }
     }
 
     pub fn get(self) -> u64 {
         self.0.to_native().get()
+    }
+
+    pub fn next(self) -> Self {
+        unsafe { Self::new_unchecked(self.get() + 1) }
     }
 
     pub const MIN: FileId = FileId::new_const::<1>();
@@ -339,6 +343,11 @@ pub struct MainHeader {
     /// In theory this data should not be required on disk, but might be useful for recovery
     /// and error detection.
     pub transient: Option<MainTransientHeader>,
+
+    /// The next free file id.
+    ///
+    /// FileIds are incremented for now
+    pub next_file_id: FileId,
 }
 const_assert!(size_of::<MainHeader>() <= BLOCK_SIZE);
 

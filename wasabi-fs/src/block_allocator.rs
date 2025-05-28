@@ -26,6 +26,8 @@ pub struct BlockAllocator {
     dirty: bool,
 }
 
+// FIXME: there seems to be a bug. Somehow there is not enough space to create an empty dir
+// in an empty fs that is 1MB in size. There should be enough space
 impl BlockAllocator {
     /// Creates a new [BlockAllocator] that is free, except for `initial_usage`.
     pub fn empty(inital_usage: &[LBA], max_lba: LBA) -> Self {
