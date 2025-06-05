@@ -82,6 +82,8 @@ impl LBA {
     pub fn get(self) -> u64 {
         self.0.to_native().get()
     }
+
+    pub const MAX: LBA = unsafe { Self::new_unchecked(u64::MAX - 1) };
 }
 
 impl Add<u64> for LBA {

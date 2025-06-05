@@ -17,7 +17,7 @@ use alloc::{
     vec::Vec,
 };
 use log::{debug, error, warn};
-use shared::{counts_required_for, dbg, rangeset::RangeSet, sync::InterruptState, todo_warn};
+use shared::{counts_required_for, rangeset::RangeSet, sync::InterruptState, todo_warn};
 use static_assertions::const_assert;
 use staticvec::StaticVec;
 use thiserror::Error;
@@ -29,8 +29,8 @@ use crate::{
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
         self, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockListHead, BlockString,
-        BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode, FileType, FsStatus,
-        MainHeader, MainTransientHeader, Timestamp, TreeNode,
+        BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode, FileType,
+        FreeBlockGroups, FsStatus, MainHeader, MainTransientHeader, Timestamp, TreeNode,
     },
     interface::BlockDevice,
     mem_structs::{self, Directory},
@@ -39,9 +39,8 @@ use crate::{
 
 pub(crate) const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(0) };
 pub(crate) const TREE_ROOT_BLOCK: LBA = unsafe { LBA::new_unchecked(1) };
-pub(crate) const FREE_BLOCKS_BLOCK: LBA = unsafe { LBA::new_unchecked(2) };
 
-const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, TREE_ROOT_BLOCK, FREE_BLOCKS_BLOCK];
+const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, TREE_ROOT_BLOCK];
 
 /// The minimum number of blocks required to create a fs.
 ///
@@ -49,6 +48,7 @@ const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, TREE_ROOT_BLOCK, FREE_
 /// (backup header, root directory) however this is just a lower bound.
 /// The real value is effected by harder to predict systems like blocks used for
 /// the block_allocator.
+// TODO figure out new min
 const MIN_BLOCK_COUNT: u64 = 9;
 
 #[derive(Error, Debug)]
@@ -167,8 +167,13 @@ pub struct HeaderData {
     pub uuid: Uuid,
 
     pub next_file_id: FileId,
+    pub dirty: bool,
+
+    status: FsStatus,
+    mount_count: u8,
 
     root_ptr: DevicePointer<TreeNode>,
+    free_blocks: Option<DevicePointer<FreeBlockGroups>>,
 }
 
 pub enum OverrideCheck {
@@ -229,9 +234,10 @@ where
         }
 
         // NOTE: should be done last as flushing other data will most likely update the allocator
-        if self.block_allocator.is_dirty() {
+        if self.block_allocator.is_dirty() || self.header_data.free_blocks.is_none() {
             assert_matches!(self.access_mode, AccessMode::ReadWrite);
-            self.block_allocator.write(&mut self.device)?;
+            let free_block_ptr = self.block_allocator.write(&mut self.device)?;
+            self.header_data.free_blocks = Some(free_block_ptr);
         } else {
             // TODO disable check outside of debug builds
             if self
@@ -287,7 +293,7 @@ where
             .compare_exchange_block(
                 MAIN_HEADER_BLOCK,
                 open_header.block_data(),
-                dbg!(closed_header).block_data(),
+                closed_header.block_data(),
             )
             .map_err(map_device_error)
         {
@@ -330,6 +336,10 @@ where
                 uuid: Uuid::nil(),
                 next_file_id: FileId::ROOT,
                 root_ptr: DevicePointer::new(TREE_ROOT_BLOCK),
+                status: FsStatus::Uninitialized,
+                dirty: true,
+                mount_count: 1,
+                free_blocks: None,
             },
 
             mem_tree,
@@ -370,13 +380,17 @@ where
 
         // create basic header and backup header
         let root_block = TREE_ROOT_BLOCK;
-        let free_blocks = FREE_BLOCKS_BLOCK;
+        // we need to specify something before we write the free block data structure
+        // and learn the right LBA. `MAX` might be used for the backup header.
+        // That said the value should not matter unless creation crashes and the
+        // fs is left in an uninitialized state.
+        let free_blocks_uninit_lba = LBA::MAX - 1;
         let mut header = Block::new(MainHeader {
             magic: MainHeader::MAGIC,
             version: FS_VERSION,
             uuid,
             root: DevicePointer::new(root_block),
-            free_blocks: DevicePointer::new(free_blocks),
+            free_blocks: DevicePointer::new(LBA::MAX - 1),
             backup_header: DevicePointer::new(fs.backup_header_lba),
             name: None,
             transient: Some(MainTransientHeader {
@@ -387,11 +401,20 @@ where
             }),
             next_file_id: FileId::ROOT.next(),
         });
+
         // Write inital header to device to mark fs blocks
         // TODO: should this be a compare_swap? Otherwise there is a possible race
         // between multiple create_internal calls
         fs.write_main_header(&header)?;
         fs.copy_header_to_backup(&header)?;
+
+        let name_block: Option<LBA> = name
+            .as_ref()
+            .map(|name| fs.write_string(name))
+            .transpose()?;
+        if let Some(name_block) = name_block {
+            header.name = Some(DevicePointer::new(name_block));
+        }
 
         let root_dir = mem_structs::Directory::default();
         let root_dir_block = root_dir.store(&mut fs)?.lba;
@@ -414,14 +437,6 @@ where
 
         // Flush writes block allocator and initial mem_tree to device
         fs.flush()?;
-
-        let name_block: Option<LBA> = name
-            .as_ref()
-            .map(|name| fs.write_string(name))
-            .transpose()?;
-        if let Some(name_block) = name_block {
-            header.name = Some(DevicePointer::new(name_block));
-        }
 
         // update transient data in header
         let Some(transient) = header.transient.as_mut() else {
@@ -450,6 +465,10 @@ where
             uuid,
             next_file_id: header.next_file_id,
             root_ptr: DevicePointer::new(TREE_ROOT_BLOCK),
+            status: FsStatus::Ready,
+            dirty: false,
+            mount_count: 1,
+            free_blocks: None,
         };
 
         unsafe {
@@ -508,6 +527,11 @@ where
             uuid: header.uuid,
             root_ptr: header.root,
             next_file_id: header.next_file_id,
+            dirty: false,
+            // later read from transient header
+            status: FsStatus::Uninitialized,
+            mount_count: 0,
+            free_blocks: None,
         };
 
         let new_header = if force_open {
@@ -515,6 +539,9 @@ where
 
             let mut new_header = header.clone();
             let new_transient = new_header.transient.as_mut().unwrap();
+
+            fs.header_data.status = new_transient.status;
+            fs.header_data.mount_count = new_transient.mount_count;
 
             match access {
                 AccessMode::ReadOnly => {
@@ -532,6 +559,9 @@ where
 
             let mut new_header = header.clone();
             let new_transient = new_header.transient.as_mut().unwrap();
+
+            fs.header_data.status = new_transient.status;
+            fs.header_data.mount_count = new_transient.mount_count;
 
             match access {
                 AccessMode::ReadOnly => {
@@ -551,13 +581,10 @@ where
             new_header
         };
 
+        let block = new_header;
         match fs
             .device
-            .compare_exchange_block(
-                MAIN_HEADER_BLOCK,
-                header.block_data(),
-                dbg!(new_header).block_data(),
-            )
+            .compare_exchange_block(MAIN_HEADER_BLOCK, header.block_data(), block.block_data())
             .map_err(map_device_error)?
         {
             Ok(()) => {}
@@ -567,6 +594,9 @@ where
         fs.block_allocator =
             BlockAllocator::load(&fs.device, header.free_blocks).map_err(map_device_error)?;
         fs.mem_tree.set_root_device_ptr(header.root);
+
+        debug!("header: {header:#?}");
+        debug!("free: {:#?}", fs.block_allocator);
 
         unsafe {
             // Safety: we checked that the fs is valid, and ensured that read/write access is ok
@@ -599,14 +629,17 @@ where
             version: FS_VERSION,
             uuid: self.header_data.uuid,
             root: DevicePointer::new(TREE_ROOT_BLOCK),
-            free_blocks: DevicePointer::new(FREE_BLOCKS_BLOCK),
+            free_blocks: self
+                .header_data
+                .free_blocks
+                .expect("Free blocks should only be unset during fs creation"),
             backup_header: DevicePointer::new(self.backup_header_lba),
             name: self.header_data.name_head,
             transient: Some(MainTransientHeader {
                 magic: MainTransientHeader::MAGIC,
                 mount_count: 1,
                 open_in_write_mode: self.access_mode == AccessMode::ReadWrite,
-                status: FsStatus::Ready,
+                status: self.header_data.status,
             }),
             next_file_id: FileId::ROOT.next(),
         });

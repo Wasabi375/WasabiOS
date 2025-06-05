@@ -1,7 +1,7 @@
 use core::{cmp::max, num::NonZeroU64};
 
 use alloc::{boxed::Box, vec::Vec};
-use log::debug;
+use log::{debug, error, info};
 use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
 use thiserror::Error;
@@ -13,7 +13,7 @@ use crate::{
     interface::BlockDevice,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockAllocator {
     /// Ranges of blocks that are currently unused
     free: Vec<BlockGroup>,
@@ -26,8 +26,18 @@ pub struct BlockAllocator {
     dirty: bool,
 }
 
+/// The size needed to store the [BlockAllocator] data on disc, depends
+/// on the the size of [BlockAllocator::free]. However allocating the
+/// blocks required to store the [BlockAllocator] on the disc has a small
+/// chance of changing `free` in a way that does not fit in the initial allocation.
+///
+/// The block allocator will try multiple times to find an allocation that will
+/// fit `free` as well as the overhead of the blocks for itself, each time refining
+/// the size.
+const CALC_ALLOC_SIZE_TRY_COUNT: usize = 10;
+
 // FIXME: there seems to be a bug. Somehow there is not enough space to create an empty dir
-// in an empty fs that is 1MB in size. There should be enough space
+// in an empty fs that is 1GB in size. There should be enough space
 impl BlockAllocator {
     /// Creates a new [BlockAllocator] that is free, except for `initial_usage`.
     pub fn empty(inital_usage: &[LBA], max_lba: LBA) -> Self {
@@ -56,7 +66,10 @@ impl BlockAllocator {
         self.dirty
     }
 
-    pub fn write<D: BlockDevice>(&mut self, device: &mut D) -> Result<LBA, FsError> {
+    pub fn write<D: BlockDevice>(
+        &mut self,
+        device: &mut D,
+    ) -> Result<DevicePointer<FreeBlockGroups>, FsError> {
         debug_assert!(self.check_consistent().is_ok());
 
         let mut new = self.clone();
@@ -85,22 +98,26 @@ impl BlockAllocator {
                 >= counts_required_for!(BLOCK_RANGES_COUNT_PER_BLOCK, new.free.len()) as u64
             {
                 break;
-            } else {
-                assert!(
-                    free_group_count < new.free.len(),
-                    "the count should be larger, otherwise we should already have enough blocks allcoated"
-                );
-
-                // on the next try, try to allocate enough space for the current attempt.
-                // This should converge to a successfull attempt
-                free_group_count = new.free.len();
-                new.free(on_disk_blocks);
             }
+            assert!(
+                free_group_count < new.free.len(),
+                "the count should be larger, otherwise we should already have enough blocks allcoated"
+            );
 
-            if loop_count >= 10 {
+            // on the next try, try to allocate enough space for the current attempt.
+            // This should converge to a successfull attempt
+            free_group_count = new.free.len();
+            new.free(on_disk_blocks);
+
+            if loop_count >= CALC_ALLOC_SIZE_TRY_COUNT {
                 // only try 10 times. If this fails something is wrong with my algorithm
+
+                error!(
+                    "Failed to allocate enough blocks to save the BlockAllocator. Stopped after {CALC_ALLOC_SIZE_TRY_COUNT} attempts"
+                );
                 return Err(FsError::WriteAllocatorFreeList);
             }
+            info!("Failed to allocate enough blocks to save the BlockAllocator. Trying again");
             loop_count += 1;
         }
 
@@ -140,23 +157,22 @@ impl BlockAllocator {
 
         new.dirty = false;
         *self = new;
-        Ok(first_block)
+        Ok(DevicePointer::new(first_block))
     }
 
     pub fn load<D: BlockDevice>(
         device: &D,
         free_blocks: DevicePointer<FreeBlockGroups>,
     ) -> Result<Self, D::BlockDeviceError> {
-        let mut free = Vec::new();
         let on_disk = Some(free_blocks);
-        let self_on_disk = Vec::new();
+        let mut free = Vec::new();
+        let mut self_on_disk = Vec::new();
 
         let mut next_block = on_disk;
         while let Some(block) = next_block {
-            let data: FreeBlockGroups = unsafe {
-                // Safety: block points to FreeBlockGroups and FreeBlockGroups can be copy constructed
-                device.read_pointer(block)
-            }?;
+            self_on_disk.push(block.lba);
+
+            let data: FreeBlockGroups = device.read_pointer(block)?;
 
             for group in data.free {
                 free.push(group);
