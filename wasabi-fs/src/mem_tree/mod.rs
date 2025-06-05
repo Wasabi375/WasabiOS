@@ -210,7 +210,7 @@ impl<I: InterruptState> MemTree<I> {
 
         let mut current_node = unsafe {
             // Safety: we hold the root lock
-            self.get_root_mut().resolve(device)?.as_mut()
+            self.get_root_mut().resolve(device, None)?.as_mut()
         }
         .expect("we just resolved the node");
 
@@ -224,6 +224,12 @@ impl<I: InterruptState> MemTree<I> {
         }
 
         'outer: loop {
+            // Safety:
+            // The current_node_ptr is created from a shared reference.
+            // Using a mutalbe reference would move out of current_node as &mut T is never Copy
+            // This is save as the current_node_ptr is only cast back to a reference after
+            // this reference here no longer exists.
+            let current_node_ptr = Some(NonNull::from(current_node as &_));
             match current_node {
                 MemTreeNode::Node {
                     children,
@@ -237,7 +243,7 @@ impl<I: InterruptState> MemTree<I> {
 
                     for (child, max_id) in children.iter_mut() {
                         if id <= max_id.unwrap_or(FileId::MAX) {
-                            child.resolve(device)?;
+                            child.resolve(device, current_node_ptr)?;
                             current_node = unsafe {
                                 // Safety: the link is held by current with was locked in the
                                 // previous iteration
@@ -913,6 +919,8 @@ impl<I: InterruptState> MemTree<I> {
         unbalanced_ptr: NonNull<MemTreeNode<I>>,
         device: &D,
     ) -> Result<ChildrenForRebalance<'l, I>, FsError> {
+        let current_node_ptr = node.as_ptr();
+
         let MemTreeNode::Node {
             children, parent, ..
         } = node.borrow_mut()
@@ -989,8 +997,8 @@ impl<I: InterruptState> MemTree<I> {
                         children.get_disjoint_mut([*left, *right]).unwrap();
 
                     if *resolve {
-                        left_link.resolve(device)?;
-                        right_link.resolve(device)?;
+                        left_link.resolve(device, Some(current_node_ptr))?;
+                        right_link.resolve(device, Some(current_node_ptr))?;
                     }
                     let Some(left) = (unsafe {
                         // Safety: we have the guard for the parent
@@ -1034,7 +1042,7 @@ impl<I: InterruptState> MemTree<I> {
                         .unwrap();
 
                     if *resolve {
-                        right_link.resolve(device)?;
+                        right_link.resolve(device, Some(current_node_ptr))?;
                     }
 
                     let left = unsafe {
@@ -1079,7 +1087,7 @@ impl<I: InterruptState> MemTree<I> {
                         .unwrap();
 
                     if *resolve {
-                        left_link.resolve(device)?;
+                        left_link.resolve(device, Some(current_node_ptr))?;
                     }
 
                     let Some(left) = (unsafe {
@@ -1460,7 +1468,11 @@ impl<I> !Clone for MemTreeLink<I> {}
 impl<I: InterruptState> MemTreeLink<I> {
     /// Ensures that the link data is loaded into memory.
     #[inline]
-    fn resolve<D: BlockDevice>(&mut self, device: &D) -> Result<&mut Self, FsError> {
+    fn resolve<D: BlockDevice>(
+        &mut self,
+        device: &D,
+        parent_node: Option<NonNull<MemTreeNode<I>>>,
+    ) -> Result<&mut Self, FsError> {
         if self.node.is_some() {
             return Ok(self);
         }
@@ -1474,8 +1486,10 @@ impl<I: InterruptState> MemTreeLink<I> {
             device.read_pointer(device_ptr).map_err(map_device_error)?
         };
 
-        let parent = None; // FIXME
-        self.node = Some(Box::try_new(MemTreeNode::new_from(device_node, parent)?)?);
+        self.node = Some(Box::try_new(MemTreeNode::new_from(
+            device_node,
+            parent_node,
+        )?)?);
 
         Ok(self)
     }
