@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use fuser::{FileAttr, FileType, Request};
 use host_shared::sync::StdInterruptState;
-#[allow(unused_imports)]
-use libc::{EINVAL, EIO, ENOENT, ENOSYS};
 use log::{debug, error, trace, warn};
 use std::{
     path::Path,
@@ -11,14 +9,17 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 use uuid::Uuid;
+use wfs::fs_structs::{self, FileId, FileNode};
 use wfs::{
     BLOCK_SIZE, blocks_required_for,
-    fs::{FileSystem, FsError, FsRead, FsReadOnly, FsReadWrite, FsWrite, OverrideCheck},
-    fs_structs::{self, FileId, FileNode, Perm, Timestamp},
+    fs::{FileSystem, FsError, FsReadOnly, FsReadWrite, FsWrite, OverrideCheck},
     mem_structs,
 };
 
 use crate::{block_device::FileDevice, fuse::errno::fs_error_no};
+
+#[allow(unused_imports)]
+use libc::{EINVAL, EIO, ENOENT, ENOSYS};
 
 pub mod errno;
 pub mod fake;
@@ -124,7 +125,7 @@ impl WasabiFuse<FsReadWrite> {
     }
 }
 
-impl<S: FsRead> WasabiFuse<S> {
+impl<S> WasabiFuse<S> {
     fn get_file_attr(&self, id: FileId) -> Result<Option<FileAttr>, FsError> {
         let file_node = self.fs().read_file_attr(id);
 
@@ -163,7 +164,7 @@ impl<S: FsRead> WasabiFuse<S> {
     }
 }
 
-impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
+impl<S: FsWrite> fuser::Filesystem for WasabiFuse<S> {
     fn init(
         &mut self,
         req: &Request<'_>,
@@ -188,32 +189,34 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
         _req: &Request<'_>,
         ino: u64,
         _fh: u64,
-        _offset: i64,
+        offset: i64,
         mut reply: fuser::ReplyDirectory,
     ) {
-        trace!("fuser::readdir(ino: {ino})");
+        trace!("fuser::readdir(ino: {ino}, offset: {offset})");
         let dir_id = match FileId::try_new(ino) {
             Some(id) => id,
-            None => return reply.error(EINVAL),
+            None => {
+                error!("ino is 0");
+                return reply.error(EINVAL);
+            }
         };
 
         let dir = handle_fs_err!(self.fs().read_directory(dir_id), reply);
 
-        let mut last_full = false;
-        for entry in dir.entries {
-            assert!(!last_full);
-
+        for (offset, entry) in dir.entries.into_iter().enumerate().skip(offset as usize) {
             let Some(entry_meta) = handle_fs_err!(self.fs().read_file_attr(entry.id), reply) else {
-                reply.error(EIO);
-                return;
+                error!("file not found {:?}", entry.id);
+                return reply.error(EIO);
             };
 
-            last_full = reply.add(
+            if reply.add(
                 entry.id.get(),
-                0,
+                (offset + 1) as i64, // index of the next entry
                 map_file_type(entry_meta.typ),
                 std::ffi::OsString::from_str(&entry.name).unwrap(),
-            );
+            ) {
+                break;
+            }
         }
         reply.ok();
     }
@@ -281,42 +284,28 @@ impl<S: FsRead + FsWrite> fuser::Filesystem for WasabiFuse<S> {
     ) {
         trace!("fuser::mkdir(parent: {parent}, name: {name:?}, mode: {mode:o})");
 
+        let Some(name) = name.to_str() else {
+            error!("name must be utf-8: {name:?}");
+            reply.error(EINVAL);
+            return;
+        };
+
         let parent_id = match FileId::try_new(parent) {
             Some(id) => id,
             None => return reply.error(EINVAL),
         };
 
-        let uid = self.uid;
-        let gid = self.gid;
         let fs = self.fs_mut();
 
-        let _parent = handle_fs_err!(fs.read_directory(parent_id), reply);
+        let new_dir = mem_structs::Directory::empty(parent_id);
 
-        let new_dir = mem_structs::Directory::default();
-        let new_dir_block = handle_fs_err!(new_dir.store(fs), reply).lba;
+        let dir_id = handle_fs_err!(fs.create_directory(new_dir, name.into()), reply);
 
-        let new_node = Arc::new(FileNode {
-            id: fs.get_and_inc_file_id(),
-            parent: Some(parent_id),
-            typ: fs_structs::FileType::Directory,
-            permissions: [Perm::empty(); 4],
-            _unused: [0; 3],
-            uid,
-            gid,
-            size: 0,
-            created_at: Timestamp::zero(),
-            modified_at: Timestamp::zero(),
-            block_data: new_dir_block.into(),
-        });
+        handle_fs_err!(fs.flush(), reply);
 
-        handle_fs_err!(
-            fs.mem_tree
-                .insert(&mut fs.device, new_node.clone(), true)
-                .map_err(FsError::from),
-            reply
-        );
+        let file_attr = handle_fs_err!(self.get_file_attr(dir_id), reply).expect("Just created");
 
-        reply.entry(&self.ttl, &self.map_node_to_attr(new_node), 0);
+        reply.entry(&self.ttl, &file_attr, 0);
     }
 }
 
