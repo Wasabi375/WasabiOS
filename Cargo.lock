@@ -1619,6 +1619,7 @@ dependencies = [
 name = "shared"
 version = "0.1.0"
 dependencies = [
+ "derive-where",
  "log",
  "paste",
  "simple_endian",
@@ -2184,6 +2185,8 @@ dependencies = [
  "bit_field",
  "bitflags 2.9.1",
  "crossbeam-epoch",
+ "derive-where",
+ "hashbrown",
  "host-shared",
  "linkme",
  "log",

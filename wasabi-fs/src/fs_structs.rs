@@ -200,7 +200,7 @@ impl BlockLinkedList for BlockStringPart {
 ///
 /// Unique means unique within this filesystem.
 /// It is possible for [FileId] to be the same on different file systems
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct FileId(LittleEndian<NonZeroU64>);
 

@@ -11,29 +11,35 @@ use crate::{
     interface::BlockDevice,
 };
 use alloc::{boxed::Box, vec::Vec};
-use shared::counts_required_for;
 use shared::math::IntoU64;
 use shared::sync::InterruptState;
+use shared::{counts_required_for, todo_error};
 use staticvec::StaticVec;
 
 use super::fs::FileSystem;
 
+#[derive(Debug)]
 pub struct Directory {
+    pub parent_id: Option<FileId>,
     pub entries: Vec<DirectoryEntry>,
 }
 
-impl Default for Directory {
-    fn default() -> Self {
-        Directory {
+impl Directory {
+    pub(super) const ROOT: Self = Self {
+        parent_id: None,
+        entries: Vec::new(),
+    };
+
+    pub fn empty(parent_id: FileId) -> Self {
+        Self {
+            parent_id: Some(parent_id),
             entries: Vec::new(),
         }
     }
-}
 
-impl Directory {
     /// Loads a directory from a [BlockDevice]
-    pub fn load<D: BlockDevice>(
-        device: &D,
+    pub fn load<D: BlockDevice, S, I: InterruptState>(
+        fs: &FileSystem<D, S, I>,
         device_ptr: DevicePointer<FsDirectory>,
     ) -> Result<Self, FsError> {
         let mut next = Some(device_ptr);
@@ -42,7 +48,10 @@ impl Directory {
         let mut expected_rest = 0;
 
         while let Some(device_ptr) = next {
-            let fs_dir = device.read_pointer(device_ptr).map_err(map_device_error)?;
+            let fs_dir = fs
+                .device
+                .read_pointer(device_ptr)
+                .map_err(map_device_error)?;
 
             if fs_dir.is_head {
                 assert_eq!(expected_rest, 0);
@@ -56,7 +65,7 @@ impl Directory {
             for fs_entry in fs_dir
                 .entries
                 .iter()
-                .map(|entry| DirectoryEntry::load(device, entry))
+                .map(|entry| DirectoryEntry::load(fs, entry))
             {
                 let fs_entry = fs_entry?;
                 entries.push(fs_entry);
@@ -66,7 +75,10 @@ impl Directory {
         }
         assert_eq!(expected_rest, 0);
 
-        Ok(Directory { entries })
+        todo_error!("directory parent_id is falsely set to `None` during load from device");
+        let parent_id = None;
+
+        Ok(Directory { entries, parent_id })
     }
 
     /// Stores the directory to a [BlockDevice]
@@ -140,6 +152,7 @@ impl Directory {
     }
 }
 
+#[derive(Debug)]
 pub struct DirectoryEntry {
     pub name: Box<str>,
     pub id: FileId,
@@ -147,7 +160,28 @@ pub struct DirectoryEntry {
 }
 
 impl DirectoryEntry {
-    pub fn load<D: BlockDevice>(device: &D, fs_entry: &FsDirectoryEntry) -> Result<Self, FsError> {
-        todo!()
+    pub fn load<D: BlockDevice, S, I: InterruptState>(
+        fs: &FileSystem<D, S, I>,
+        fs_entry: &FsDirectoryEntry,
+    ) -> Result<Self, FsError> {
+        let name = fs.read_string_head(&fs_entry.name)?;
+
+        Ok(DirectoryEntry {
+            name,
+            id: fs_entry.file_id,
+        })
     }
+}
+
+pub enum DirectoryChange {
+    Created {
+        dir_id: FileId,
+        dir: Directory,
+    },
+    // TODO do I want a full overwrite?
+    // Updated { dir_id: FileId, new_dir: Directory },
+    InsertFile {
+        dir_id: FileId,
+        entry: DirectoryEntry,
+    },
 }

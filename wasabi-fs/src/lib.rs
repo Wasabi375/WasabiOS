@@ -7,7 +7,8 @@
     box_as_ptr,
     debug_closure_helpers,
     negative_impls,
-    try_reserve_kind
+    try_reserve_kind,
+    vec_push_within_capacity
 )]
 #![allow(unused, dead_code)] // TODO temp
 #![warn(unused_must_use, unused_mut, unused_labels)]

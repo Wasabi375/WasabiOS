@@ -4,19 +4,19 @@ use core::{
     cmp::min,
     error::{self, Error},
     marker::PhantomData,
-    mem::{size_of, transmute},
+    mem::{self, size_of, transmute},
     ptr::NonNull,
 };
 
 use alloc::{
     alloc::AllocError,
     boxed::Box,
-    collections::{TryReserveError, TryReserveErrorKind},
     string::{FromUtf8Error, String},
     sync::Arc,
     vec::Vec,
 };
-use log::{debug, error, warn};
+use hashbrown::HashMap;
+use log::{debug, error, info, trace, warn};
 use shared::{counts_required_for, rangeset::RangeSet, sync::InterruptState, todo_warn};
 use static_assertions::const_assert;
 use staticvec::StaticVec;
@@ -30,10 +30,10 @@ use crate::{
     fs_structs::{
         self, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockListHead, BlockString,
         BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode, FileType,
-        FreeBlockGroups, FsStatus, MainHeader, MainTransientHeader, Timestamp, TreeNode,
+        FreeBlockGroups, FsStatus, MainHeader, MainTransientHeader, Perm, Timestamp, TreeNode,
     },
     interface::BlockDevice,
-    mem_structs::{self, Directory},
+    mem_structs::{self, Directory, DirectoryChange, DirectoryEntry},
     mem_tree::{self, MemTree, MemTreeError},
 };
 
@@ -112,8 +112,9 @@ impl From<AllocError> for FsError {
     }
 }
 
-impl From<TryReserveError> for FsError {
-    fn from(value: TryReserveError) -> Self {
+impl From<alloc::collections::TryReserveError> for FsError {
+    fn from(value: alloc::collections::TryReserveError) -> Self {
+        use alloc::collections::TryReserveErrorKind;
         match value.kind() {
             TryReserveErrorKind::CapacityOverflow => panic!(
                 "Capacity overflow should never happen, as that would mean that we have an insane size on the device"
@@ -123,22 +124,30 @@ impl From<TryReserveError> for FsError {
     }
 }
 
+impl From<hashbrown::TryReserveError> for FsError {
+    fn from(value: hashbrown::TryReserveError) -> Self {
+        use hashbrown::TryReserveError;
+        match value {
+            TryReserveError::CapacityOverflow => panic!(
+                "Capacity overflow should never happen, as that would mean that we have an insane size on the device"
+            ),
+            TryReserveError::AllocError { .. } => FsError::Oom,
+        }
+    }
+}
+
 pub fn map_device_error<E: Error + Send + Sync + 'static>(e: E) -> FsError {
     FsError::BlockDevice(Box::new(e))
 }
 
-pub trait FsRead {}
 pub trait FsWrite {}
 
 enum FsDuringCreation {}
-impl FsRead for FsDuringCreation {}
 impl FsWrite for FsDuringCreation {}
 
 pub enum FsReadOnly {}
-impl FsRead for FsReadOnly {}
 
 pub enum FsReadWrite {}
-impl FsRead for FsReadWrite {}
 impl FsWrite for FsReadWrite {}
 
 pub struct FileSystem<D, S, I> {
@@ -152,6 +161,8 @@ pub struct FileSystem<D, S, I> {
     header_data: HeaderData,
 
     pub mem_tree: MemTree<I>,
+
+    directory_changes: Vec<DirectoryChange>,
 
     access_mode: AccessMode,
 
@@ -206,6 +217,7 @@ impl<D, I> FileSystem<D, FsDuringCreation, I> {
             header_data: self.header_data,
 
             mem_tree: self.mem_tree,
+            directory_changes: Vec::new(),
 
             access_mode: self.access_mode,
 
@@ -223,19 +235,33 @@ where
     ///
     /// In readonly filesystem this only checks for data consistency
     pub fn flush(&mut self) -> Result<(), FsError> {
+        trace!("flush start");
         match self.access_mode {
             AccessMode::ReadOnly => {
+                assert!(self.directory_changes.is_empty())
                 // TODO I want to call assert_valid here but I don't want this to panic
                 // self.mem_tree.assert_valid()
             }
-            AccessMode::ReadWrite => self
-                .mem_tree
-                .flush_to_device(&mut self.device, &mut self.block_allocator)?,
+            AccessMode::ReadWrite => {
+                let write_fs = self.assume_writable();
+                let changes = mem::replace(&mut write_fs.directory_changes, Vec::new());
+                write_fs.apply_directory_changes(changes)?;
+
+                self.mem_tree
+                    .flush_to_device(&mut self.device, &mut self.block_allocator)?
+            }
         }
 
         // NOTE: should be done last as flushing other data will most likely update the allocator
         if self.block_allocator.is_dirty() || self.header_data.free_blocks.is_none() {
-            assert_matches!(self.access_mode, AccessMode::ReadWrite);
+            // TODO This assert fails on "fuse-bin info" on a newly created fs image
+            assert_matches!(
+                self.access_mode,
+                AccessMode::ReadWrite,
+                "Block allocator is dirt({}) or newly crated({}) but fs is readonly",
+                self.block_allocator.is_dirty(),
+                self.header_data().free_blocks.is_none()
+            );
             let free_block_ptr = self.block_allocator.write(&mut self.device)?;
             self.header_data.free_blocks = Some(free_block_ptr);
         } else {
@@ -253,7 +279,24 @@ where
 
         self.write_header()?;
 
+        info!("fs flush done!");
         Ok(())
+    }
+
+    /// Fakes write access
+    ///
+    /// TODO: How do I create a FS that is readonly from a RW fs?
+    /// Functions like close and flush should not be allowed for those fs? How would that interact
+    /// with Drop
+    ///
+    /// # Panics
+    ///
+    /// panics if [Self::access_mode] is not write
+    fn assume_writable(&mut self) -> &mut FileSystem<D, FsReadWrite, I> {
+        assert_matches!(self.access_mode, AccessMode::ReadWrite);
+        // Safety: Access mode allows for write, therefor we can fake a different access mode
+        // generic parameter
+        unsafe { transmute(self) }
     }
 
     #[allow(clippy::result_large_err)] // TODO can I fix this somehow? Should I use Box/Arc/etc?
@@ -343,6 +386,7 @@ where
             },
 
             mem_tree,
+            directory_changes: Vec::new(),
 
             access_mode: access,
 
@@ -416,7 +460,7 @@ where
             header.name = Some(DevicePointer::new(name_block));
         }
 
-        let root_dir = mem_structs::Directory::default();
+        let root_dir = mem_structs::Directory::ROOT;
         let root_dir_block = root_dir.store(&mut fs)?.lba;
         let root_dir_node = Box::try_new(FileNode {
             id: FileId::ROOT,
@@ -432,8 +476,7 @@ where
             block_data: root_dir_block.into(),
         })?;
 
-        fs.mem_tree
-            .insert(&mut fs.device, root_dir_node.into(), true)?;
+        fs.mem_tree.create(&mut fs.device, root_dir_node.into())?;
 
         // Flush writes block allocator and initial mem_tree to device
         fs.flush()?;
@@ -623,6 +666,7 @@ where
     }
 
     fn write_header(&mut self) -> Result<(), FsError> {
+        trace!("write header");
         // TODO I need a better way to reproduce the header for updates
         let header = Block::new(MainHeader {
             magic: MainHeader::MAGIC,
@@ -666,7 +710,7 @@ where
     }
 }
 
-impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
+impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
     pub fn read_file_attr(&self, id: FileId) -> Result<Option<Arc<FileNode>>, FsError> {
         self.mem_tree
             .find(&self.device, id)
@@ -733,11 +777,84 @@ impl<D: BlockDevice, S: FsRead, I: InterruptState> FileSystem<D, S, I> {
 
         let block_group = metadata.block_data.single();
         assert_eq!(block_group.count_minus_one, 0);
-        Directory::load(&self.device, DevicePointer::new(block_group.start))
+        Directory::load(self, DevicePointer::new(block_group.start))
     }
 }
 
-impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
+impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
+    fn apply_directory_changes(
+        &mut self,
+        dir_changes: Vec<DirectoryChange>,
+    ) -> Result<(), FsError> {
+        let mut changed_dirs = HashMap::<FileId, Directory>::new();
+
+        for dir_change in dir_changes {
+            match dir_change {
+                DirectoryChange::Created { dir_id, dir } => {
+                    trace!("apply new dir created {dir_id:?}: {dir:?}");
+                    let dir_lba = dir.store(self)?.lba;
+
+                    let dir_node = Arc::try_new(FileNode {
+                        id: dir_id,
+                        parent: dir.parent_id,
+                        typ: FileType::Directory,
+                        permissions: [Perm::empty(); 4],
+                        _unused: [0; 3],
+                        uid: 0,
+                        gid: 0,
+                        size: 0, // TODO what should be the size for a directory
+                        created_at: Timestamp::zero(),
+                        modified_at: Timestamp::zero(),
+                        block_data: dir_lba.into(),
+                    })?;
+                    self.mem_tree.create(&self.device, dir_node)?;
+                }
+                DirectoryChange::InsertFile { dir_id, entry } => {
+                    let changed_dir = if let Some(changed_dir) = changed_dirs.get_mut(&dir_id) {
+                        changed_dir
+                    } else {
+                        let dir = self.read_directory(dir_id)?;
+
+                        changed_dirs.try_reserve(1)?;
+
+                        changed_dirs.insert(dir_id, dir);
+
+                        changed_dirs.get_mut(&dir_id).expect("Just inserted")
+                    };
+                    debug_assert!(changed_dir.entries.iter().all(|e| e.id != entry.id));
+                    changed_dir.entries.push(entry);
+                }
+            }
+        }
+
+        for (dir_id, changed_dir) in changed_dirs {
+            let Some(file_node) = (self.mem_tree.find(&self.device, dir_id)?) else {
+                error!("Trying to apply directory update to non-existent file {dir_id:?}");
+                return Err(FsError::FileDoesNotExist(dir_id));
+            };
+            if !matches!(file_node.typ, FileType::Directory) {
+                error!(
+                    "Trying to apply directory update to {:?} file {:?}",
+                    file_node.typ, dir_id
+                );
+                return Err(FsError::NotADirectory(dir_id, file_node.typ));
+            }
+
+            trace!("update dir {dir_id:?}: {changed_dir:?}");
+
+            let new_lba = changed_dir.store(self)?.lba;
+
+            let mut new_node = FileNode::clone(&file_node);
+            new_node.block_data = new_lba.into();
+
+            let new_node = Arc::try_new(new_node)?;
+
+            self.mem_tree.update(&self.device, new_node)?;
+        }
+
+        Ok(())
+    }
+
     pub fn get_and_inc_file_id(&mut self) -> FileId {
         let next = self.header_data.next_file_id;
         self.header_data.next_file_id = self.header_data.next_file_id.next();
@@ -869,6 +986,29 @@ impl<D: BlockDevice, S: FsWrite, I> FileSystem<D, S, I> {
         // TODO on error in string_parts I need to free the blocks
 
         Ok(head_lba)
+    }
+
+    pub fn create_directory(&mut self, dir: Directory, name: Box<str>) -> Result<FileId, FsError> {
+        trace!("create dir {name}: {dir:?}");
+        self.directory_changes.try_reserve(2)?;
+
+        let dir_id = self.get_and_inc_file_id();
+
+        if let Some(parent_id) = dir.parent_id {
+            self.directory_changes
+                .push_within_capacity(DirectoryChange::InsertFile {
+                    dir_id: parent_id,
+                    entry: DirectoryEntry { name, id: dir_id },
+                })
+                .map_err(|_| ())
+                .expect("Just allocated additional capacity");
+        }
+
+        self.directory_changes
+            .push_within_capacity(DirectoryChange::Created { dir_id, dir })
+            .map_err(|_| ())
+            .expect("Just allocated additional capacity");
+        Ok(dir_id)
     }
 }
 

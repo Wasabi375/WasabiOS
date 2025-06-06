@@ -18,6 +18,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
+use log::trace;
 use shared::{
     sync::{InterruptState, lockcell::UnsafeTicketLock},
     todo_error, todo_warn,
@@ -304,11 +305,27 @@ impl<I: InterruptState> MemTree<I> {
         Ok(result)
     }
 
-    pub fn insert<D: BlockDevice>(
+    pub fn create<D: BlockDevice>(
         &self,
         device: &D,
         file: Arc<FileNode>,
-        create_only: bool, // TODO do I want to create to functions here? Insert/update
+    ) -> Result<(), MemTreeError> {
+        self.insert(device, file, true)
+    }
+
+    pub fn update<D: BlockDevice>(
+        &self,
+        device: &D,
+        file: Arc<FileNode>,
+    ) -> Result<(), MemTreeError> {
+        self.insert(device, file, false)
+    }
+
+    fn insert<D: BlockDevice>(
+        &self,
+        device: &D,
+        file: Arc<FileNode>,
+        create_only: bool,
     ) -> Result<(), MemTreeError> {
         let mut leave = self
             .find_leave::<_, node_guard::Mut>(device, file.id)
@@ -1151,6 +1168,7 @@ impl<I: InterruptState> MemTree<I> {
         device: &mut D,
         block_allocator: &mut BlockAllocator,
     ) -> Result<(), FsError> {
+        trace!("flush");
         self.root_lock.lock();
 
         let root_link = unsafe {
@@ -1215,6 +1233,7 @@ impl<I: InterruptState> MemTree<I> {
 ///
 /// When possible data in this enum should be accessed via [NodeGuard] instead of normal references.
 /// Especially parent and child nodes should be accessed via [NodeGuard].
+#[derive_where::derive_where(Debug)]
 pub(crate) enum MemTreeNode<I> {
     Node {
         /// A pointer to the parent node or none if this is the root.
@@ -1465,6 +1484,19 @@ pub(crate) struct MemTreeLink<I> {
 /// pointers around that should no longer be accessed.
 impl<I> !Clone for MemTreeLink<I> {}
 
+impl<I> core::fmt::Debug for MemTreeLink<I> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let node = match self.node {
+            Some(_) => "Some",
+            None => "None",
+        };
+        f.debug_struct("MemTreeLink")
+            .field("node", &node)
+            .field("device_ptr", &self.device_ptr)
+            .finish()
+    }
+}
+
 impl<I: InterruptState> MemTreeLink<I> {
     /// Ensures that the link data is loaded into memory.
     #[inline]
@@ -1600,6 +1632,10 @@ impl<I: InterruptState> MemTreeLink<I> {
             MemTreeNode::Leave { dirty, .. } => *dirty,
         };
         if dirty {
+            trace!(
+                "flush mem tree link to device:\n{:#?}\n{:#?}",
+                device_ptr, node
+            );
             let tree_node = Block::new(node.to_tree_node(parent_ptr));
 
             device

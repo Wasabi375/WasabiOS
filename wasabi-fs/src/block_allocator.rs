@@ -1,7 +1,7 @@
 use core::{cmp::max, num::NonZeroU64};
 
 use alloc::{boxed::Box, vec::Vec};
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
 use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
 use thiserror::Error;
@@ -70,6 +70,7 @@ impl BlockAllocator {
         &mut self,
         device: &mut D,
     ) -> Result<DevicePointer<FreeBlockGroups>, FsError> {
+        trace!("write block alloctor");
         debug_assert!(self.check_consistent().is_ok());
 
         let mut new = self.clone();
