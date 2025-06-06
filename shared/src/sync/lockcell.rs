@@ -309,7 +309,7 @@ impl<T, M: ?Sized + RWCellInternal<T>> Drop for ReadCellGuard<'_, T, M> {
 ///
 /// It is the job of the user of this struct to properly lock and unlock
 /// and to manage data associated with the lock
-#[derive(Debug)]
+#[derive_where::derive_where(Debug)]
 pub struct UnsafeTicketLock<I> {
     /// the current ticket that can access the lock
     current_ticket: AtomicU64,

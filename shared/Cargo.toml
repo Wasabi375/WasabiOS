@@ -8,6 +8,7 @@ default= []
 no-unicode-log = []
 
 [dependencies]
+derive-where.workspace = true
 log.workspace = true
 paste.workspace = true
 simple_endian.workspace = true
