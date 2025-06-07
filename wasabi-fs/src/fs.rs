@@ -462,19 +462,14 @@ where
 
         let root_dir = mem_structs::Directory::ROOT;
         let root_dir_block = root_dir.store(&mut fs)?.lba;
-        let root_dir_node = Box::try_new(FileNode {
-            id: FileId::ROOT,
-            parent: None,
-            typ: FileType::Directory,
-            permissions: Default::default(),
-            _unused: Default::default(),
-            uid: 0,
-            gid: 0,
-            size: 0,
-            created_at: Timestamp::zero(),
-            modified_at: Timestamp::zero(),
-            block_data: root_dir_block.into(),
-        })?;
+
+        let root_dir_node = Box::try_new(FileNode::new(
+            FileId::ROOT,
+            None,
+            FileType::Directory,
+            0,
+            root_dir_block.into(),
+        ))?;
 
         fs.mem_tree.create(&mut fs.device, root_dir_node.into())?;
 
@@ -794,19 +789,13 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
                     trace!("apply new dir created {dir_id:?}: {dir:?}");
                     let dir_lba = dir.store(self)?.lba;
 
-                    let dir_node = Arc::try_new(FileNode {
-                        id: dir_id,
-                        parent: dir.parent_id,
-                        typ: FileType::Directory,
-                        permissions: [Perm::empty(); 4],
-                        _unused: [0; 3],
-                        uid: 0,
-                        gid: 0,
-                        size: 0, // TODO what should be the size for a directory
-                        created_at: Timestamp::zero(),
-                        modified_at: Timestamp::zero(),
-                        block_data: dir_lba.into(),
-                    })?;
+                    let dir_node = Arc::try_new(FileNode::new(
+                        dir_id,
+                        dir.parent_id,
+                        FileType::Directory,
+                        0,
+                        dir_lba.into(),
+                    ))?;
                     self.mem_tree.create(&self.device, dir_node)?;
                 }
                 DirectoryChange::InsertFile { dir_id, entry } => {
@@ -1009,6 +998,39 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             .map_err(|_| ())
             .expect("Just allocated additional capacity");
         Ok(dir_id)
+    }
+
+    pub fn create_file(&mut self, name: Box<str>, parent: FileId) -> Result<FileId, FsError> {
+        trace!("create file: name \"{name}\", parent: {parent:?}");
+
+        let Some(parent_dir) = self.mem_tree.find(&self.device, parent)? else {
+            return Err(FsError::FileDoesNotExist(parent));
+        };
+
+        if !matches!(parent_dir.typ, FileType::Directory) {
+            return Err(FsError::NotADirectory(parent, parent_dir.typ));
+        }
+
+        let file_id = self.get_and_inc_file_id();
+
+        let device_block = self.block_allocator.allocate_block()?;
+
+        // TODO set file permissions
+        let file_node = Arc::try_new(FileNode::new(
+            file_id,
+            Some(parent),
+            FileType::File,
+            0,
+            device_block.into(),
+        ))?;
+
+        self.mem_tree.create(&self.device, file_node)?;
+        self.directory_changes.push(DirectoryChange::InsertFile {
+            dir_id: parent,
+            entry: DirectoryEntry { name, id: file_id },
+        });
+
+        Ok(file_id)
     }
 }
 

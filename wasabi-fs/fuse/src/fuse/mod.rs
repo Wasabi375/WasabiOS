@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use core::cmp::max;
 use fuser::{FileAttr, FileType, Request};
 use host_shared::sync::StdInterruptState;
 use log::{debug, error, trace, warn};
@@ -147,7 +148,7 @@ impl<S> WasabiFuse<S> {
         FileAttr {
             ino: node.id.get().try_into().unwrap(),
             size: node.size,
-            blocks: blocks_required_for!(node.size),
+            blocks: max(blocks_required_for!(node.size), 1),
             atime: mtime,
             mtime,
             ctime: mtime,
@@ -306,6 +307,51 @@ impl<S: FsWrite> fuser::Filesystem for WasabiFuse<S> {
         let file_attr = handle_fs_err!(self.get_file_attr(dir_id), reply).expect("Just created");
 
         reply.entry(&self.ttl, &file_attr, 0);
+    }
+
+    fn mknod(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &std::ffi::OsStr,
+        _mode: u32,
+        _umask: u32,
+        _rdev: u32,
+        reply: fuser::ReplyEntry,
+    ) {
+        let parent_id = match FileId::try_new(parent) {
+            Some(id) => id,
+            None => return reply.error(EINVAL),
+        };
+
+        let Some(name) = name.to_str() else {
+            error!("name must be utf-8: {name:?}");
+            reply.error(EINVAL);
+            return;
+        };
+
+        let fs = self.fs_mut();
+
+        // TODO set file permissions
+        let file_id = handle_fs_err!(fs.create_file(name.into(), parent_id), reply);
+
+        handle_fs_err!(fs.flush(), reply);
+
+        let file_attr = handle_fs_err!(self.get_file_attr(file_id), reply).expect("Just created");
+
+        reply.entry(&self.ttl, &file_attr, 0);
+    }
+
+    fn flush(
+        &mut self,
+        _req: &Request<'_>,
+        _ino: u64,
+        _fh: u64,
+        _lock_owner: u64,
+        reply: fuser::ReplyEmpty,
+    ) {
+        // I currently just flush on all writes
+        reply.ok()
     }
 }
 

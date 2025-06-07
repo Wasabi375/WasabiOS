@@ -200,9 +200,15 @@ impl BlockLinkedList for BlockStringPart {
 ///
 /// Unique means unique within this filesystem.
 /// It is possible for [FileId] to be the same on different file systems
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct FileId(LittleEndian<NonZeroU64>);
+
+impl core::fmt::Debug for FileId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("FileId").field(&self.get()).finish()
+    }
+}
 
 impl FileId {
     pub fn new(id: NonZeroU64) -> Self {
@@ -312,6 +318,30 @@ pub struct FileNode {
     // TODO do I want last accessed?
     pub block_data: BlockListHead,
     // TODO do I want some kind of generation counter?
+}
+
+impl FileNode {
+    pub fn new(
+        id: FileId,
+        parent: Option<FileId>,
+        typ: FileType,
+        size: u64,
+        block_data: BlockListHead,
+    ) -> Self {
+        Self {
+            id,
+            parent,
+            typ,
+            permissions: [Perm::empty(); 4],
+            _unused: [0; 3],
+            uid: 0,
+            gid: 0,
+            size,
+            created_at: Timestamp::zero(),
+            modified_at: Timestamp::zero(),
+            block_data,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
