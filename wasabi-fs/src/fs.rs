@@ -574,7 +574,7 @@ where
             // later read from transient header
             status: FsStatus::Uninitialized,
             mount_count: 0,
-            free_blocks: None,
+            free_blocks: Some(header.free_blocks),
         };
 
         let new_header = if force_open {
