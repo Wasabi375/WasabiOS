@@ -356,6 +356,45 @@ impl<S: FsWrite> fuser::Filesystem for WasabiFuse<S> {
         // I currently just flush on all writes
         reply.ok()
     }
+
+    fn access(&mut self, _req: &Request<'_>, _ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
+        trace!("fuser::access");
+        // just ignore permission check in fuse driver
+        reply.ok()
+    }
+
+    fn setattr(
+        &mut self,
+        _req: &Request<'_>,
+        ino: u64,
+        _mode: Option<u32>,
+        _uid: Option<u32>,
+        _gid: Option<u32>,
+        _size: Option<u64>,
+        _atime: Option<fuser::TimeOrNow>,
+        _mtime: Option<fuser::TimeOrNow>,
+        _ctime: Option<std::time::SystemTime>,
+        _fh: Option<u64>,
+        _crtime: Option<std::time::SystemTime>,
+        _chgtime: Option<std::time::SystemTime>,
+        _bkuptime: Option<std::time::SystemTime>,
+        _flags: Option<u32>,
+        reply: fuser::ReplyAttr,
+    ) {
+        trace!("fuser::setattr(ino: {ino})");
+
+        let id = match FileId::try_new(ino) {
+            Some(id) => id,
+            None => return reply.error(EINVAL),
+        };
+
+        let Some(file_attr) = handle_fs_err!(self.get_file_attr(id), reply) else {
+            error!("file {id} not found");
+            return reply.error(ENOENT);
+        };
+
+        reply.attr(&self.ttl, &file_attr);
+    }
 }
 
 impl<S> Drop for WasabiFuse<S> {
