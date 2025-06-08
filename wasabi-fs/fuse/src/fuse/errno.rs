@@ -1,7 +1,7 @@
 use libc::{EBUSY, EINVAL, EIO, ENOENT, ENOMEM, ENOSPC, ENOTSUP, c_int};
 use wfs::{fs::FsError, mem_tree::MemTreeError};
 
-/// a best effort uess on what stupid errno value each error corresponds to
+/// a best effort guess on what stupid errno value each error corresponds to
 // NOTE ENOSPC: no space on device
 //  ENOMEM: no memory left on RAM
 pub fn fs_error_no(err: FsError) -> c_int {

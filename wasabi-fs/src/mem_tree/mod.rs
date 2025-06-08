@@ -1632,10 +1632,6 @@ impl<I: InterruptState> MemTreeLink<I> {
             MemTreeNode::Leave { dirty, .. } => *dirty,
         };
         if dirty {
-            trace!(
-                "flush mem tree link to device:\n{:#?}\n{:#?}",
-                device_ptr, node
-            );
             let tree_node = Block::new(node.to_tree_node(parent_ptr));
 
             device

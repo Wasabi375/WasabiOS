@@ -8,7 +8,7 @@ wfs = { path  = ".." }
 shared = { path = "../../shared" }
 host-shared.workspace = true
 
-fuser = "0.15.0"
+fuser = { version = "0.15.0", git = "https://github.com/Wasabi375/fuser.git" }
 libc = "0.2.161"
 
 clap = { version = "4.5", features = ["derive"] }

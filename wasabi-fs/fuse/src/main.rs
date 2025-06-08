@@ -91,19 +91,18 @@ struct MountOptions {
 
 fn main() {
     let args = Arguments::parse();
-    let (log_level, fuser_level) = if args.verbose {
+    let log_level = if args.verbose {
         if cfg!(debug_assertions) {
-            // TODO see https://github.com/cberner/fuser/pull/344
-            (LevelFilter::Trace, LevelFilter::Debug)
+            LevelFilter::Trace
         } else {
-            (LevelFilter::Debug, LevelFilter::Info)
+            LevelFilter::Debug
         }
     } else {
-        (LevelFilter::Info, LevelFilter::Info)
+        LevelFilter::Info
     };
     SimpleLogger::new()
         .with_level(log_level)
-        .with_module_level("fuser", fuser_level)
+        .with_module_level("fuser", LevelFilter::Info)
         .env()
         .init()
         .unwrap();

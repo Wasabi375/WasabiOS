@@ -319,6 +319,8 @@ impl<S: FsWrite> fuser::Filesystem for WasabiFuse<S> {
         _rdev: u32,
         reply: fuser::ReplyEntry,
     ) {
+        trace!("fuser::mknod(parent: {parent}, name: {name:?})");
+
         let parent_id = match FileId::try_new(parent) {
             Some(id) => id,
             None => return reply.error(EINVAL),
@@ -350,6 +352,7 @@ impl<S: FsWrite> fuser::Filesystem for WasabiFuse<S> {
         _lock_owner: u64,
         reply: fuser::ReplyEmpty,
     ) {
+        trace!("fuser::flush");
         // I currently just flush on all writes
         reply.ok()
     }

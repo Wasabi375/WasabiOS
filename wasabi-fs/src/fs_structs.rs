@@ -372,6 +372,7 @@ pub struct MainHeader {
     ///
     /// In theory this data should not be required on disk, but might be useful for recovery
     /// and error detection.
+    // TODO move to the end of header
     pub transient: Option<MainTransientHeader>,
 
     /// The next free file id.

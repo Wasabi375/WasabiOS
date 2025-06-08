@@ -88,7 +88,7 @@ pub enum FsError {
     StringToLong,
     #[error("Out of Memory")]
     Oom,
-    #[error("MemTree operation failed")]
+    #[error("MemTree operation failed: {0}")]
     MemTreeError(MemTreeError),
     #[error("The requested file({0:?}) does not exist")]
     FileDoesNotExist(FileId),
