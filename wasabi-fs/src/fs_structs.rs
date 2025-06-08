@@ -90,10 +90,7 @@ pub enum BlockListHead {
 
 impl From<LBA> for BlockListHead {
     fn from(value: LBA) -> Self {
-        Self::Single(BlockGroup {
-            start: value,
-            count_minus_one: 0,
-        })
+        Self::Single(BlockGroup::with_count(value, NonZeroU64::new(1).unwrap()))
     }
 }
 

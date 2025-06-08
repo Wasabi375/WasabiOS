@@ -143,28 +143,33 @@ impl Ord for LBA {
 pub struct BlockGroup {
     /// The fist block in the group
     pub start: LBA,
-    /// The number of blocks in the group minus 1
-    ///
-    /// A group will always have at least 1 block. Therefor we can store
-    /// this as `0`. 2 blocks will be represented as `1`, etc.
-    // TODO why am I doing this. This is a u64
-    pub count_minus_one: u64, // TODO LE
+    /// The number of blocks in the group
+    pub count: LittleEndian<NonZeroU64>,
 }
 
 impl BlockGroup {
     pub fn new(start: LBA, end: LBA) -> Self {
         Self {
             start,
-            count_minus_one: end - start,
+            count: NonZeroU64::new(end + 1 - start)
+                .expect("end should be greater than start")
+                .into(),
+        }
+    }
+
+    pub fn with_count(start: LBA, count: NonZeroU64) -> Self {
+        Self {
+            start,
+            count: count.into(),
         }
     }
 
     pub fn end(&self) -> LBA {
-        self.start + self.count_minus_one
+        self.start + self.count() - 1
     }
 
     pub fn count(&self) -> u64 {
-        self.count_minus_one + 1
+        self.count.to_native().get()
     }
 
     pub fn contains(&self, lba: LBA) -> bool {
@@ -298,7 +303,7 @@ mod test {
     use crate::{BlockGroup, LBA};
 
     #[test]
-    /// ensure no off by 1 error when calculating `count_minus_one` field
+    /// ensure no off by 1 error when calculating `count` field
     fn test_block_from_start_and_end() {
         let start = LBA::new(1).unwrap();
         let end = LBA::new(10).unwrap();
@@ -306,5 +311,6 @@ mod test {
         let group = BlockGroup::new(start, end);
         assert_eq!(start, group.start);
         assert_eq!(end, group.end());
+        assert_eq!(10, group.count());
     }
 }

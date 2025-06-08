@@ -24,8 +24,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    BLOCK_SIZE, Block, FS_VERSION, LBA,
+    BLOCK_SIZE, Block, BlockGroup, FS_VERSION, LBA,
     block_allocator::{self, BlockAllocator, BlockGroupList},
+    blocks_required_for,
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
         self, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockListHead, BlockString,
@@ -92,8 +93,12 @@ pub enum FsError {
     MemTreeError(MemTreeError),
     #[error("The requested file({0:?}) does not exist")]
     FileDoesNotExist(FileId),
-    #[error("Expected FileId {0} to be a directory. It is a {1:?}")]
-    NotADirectory(FileId, fs_structs::FileType),
+    #[error("Expected FileId {id} to be a {expected:?}. It is a {file_type:?}")]
+    FileTypeMismatch {
+        id: FileId,
+        file_type: fs_structs::FileType,
+        expected: fs_structs::FileType,
+    },
 }
 
 impl From<MemTreeError> for FsError {
@@ -767,11 +772,15 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
             .ok_or(FsError::FileDoesNotExist(id))?;
 
         if metadata.typ != fs_structs::FileType::Directory {
-            return Err(FsError::NotADirectory(id, metadata.typ));
+            return Err(FsError::FileTypeMismatch {
+                id,
+                file_type: metadata.typ,
+                expected: FileType::Directory,
+            });
         }
 
         let block_group = metadata.block_data.single();
-        assert_eq!(block_group.count_minus_one, 0);
+        assert_eq!(block_group.count(), 1);
         Directory::load(self, DevicePointer::new(block_group.start))
     }
 }
@@ -826,7 +835,11 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
                     "Trying to apply directory update to {:?} file {:?}",
                     file_node.typ, dir_id
                 );
-                return Err(FsError::NotADirectory(dir_id, file_node.typ));
+                return Err(FsError::FileTypeMismatch {
+                    id: dir_id,
+                    file_type: file_node.typ,
+                    expected: FileType::Directory,
+                });
             }
 
             trace!("update dir {dir_id:?}: {changed_dir:?}");
@@ -1008,7 +1021,11 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         };
 
         if !matches!(parent_dir.typ, FileType::Directory) {
-            return Err(FsError::NotADirectory(parent, parent_dir.typ));
+            return Err(FsError::FileTypeMismatch {
+                id: parent,
+                file_type: parent_dir.typ,
+                expected: FileType::Directory,
+            });
         }
 
         let file_id = self.get_and_inc_file_id();

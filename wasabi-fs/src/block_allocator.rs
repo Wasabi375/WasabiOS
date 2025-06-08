@@ -36,8 +36,6 @@ pub struct BlockAllocator {
 /// the size.
 const CALC_ALLOC_SIZE_TRY_COUNT: usize = 10;
 
-// FIXME: there seems to be a bug. Somehow there is not enough space to create an empty dir
-// in an empty fs that is 1GB in size. There should be enough space
 impl BlockAllocator {
     /// Creates a new [BlockAllocator] that is free, except for `initial_usage`.
     pub fn empty(inital_usage: &[LBA], max_lba: LBA) -> Self {
@@ -48,10 +46,10 @@ impl BlockAllocator {
             dirty: true,
         };
 
-        this.free.push(BlockGroup {
-            start: LBA::new(0).unwrap(),
-            count_minus_one: max_lba.get() - 1,
-        });
+        this.free.push(BlockGroup::with_count(
+            LBA::new(0).unwrap(),
+            NonZeroU64::new(max_lba.get()).unwrap(),
+        ));
 
         for block in inital_usage {
             this.mark_used(*block)
@@ -203,19 +201,35 @@ impl BlockAllocator {
 
         let group = &mut self.free[block_index];
         if lba == group.start {
+            if group.count() == 1 {
+                // can't swap_remove, because we care about the order here
+                self.free.remove(block_index);
+                debug_assert!(self.check_consistent().is_ok());
+
+                return Ok(());
+            }
             group.start += 1;
-            group.count_minus_one -= 1;
+            group.count = NonZeroU64::new(group.count() - 1)
+                .expect("Group was larget than 1 block")
+                .into();
+            debug_assert!(self.check_consistent().is_ok());
             return Ok(());
         }
         if lba == group.end() {
-            group.count_minus_one -= 1;
+            group.count = NonZeroU64::new(group.count() - 1)
+                .expect("Group was larget than 1 block or lba == start")
+                .into();
+            debug_assert!(self.check_consistent().is_ok());
             return Ok(());
         }
 
         let end = group.end();
-        group.count_minus_one = (lba - group.start) - 1;
+        group.count = NonZeroU64::new(lba - group.start)
+            .expect("Group was larget than 1 block or lba == start")
+            .into();
 
         let new_group = BlockGroup::new(lba + 1, end);
+        self.free.insert(block_index + 1, new_group);
 
         debug_assert!(self.check_consistent().is_ok());
 
@@ -255,10 +269,12 @@ impl BlockAllocator {
         let best = &mut self.free[best];
         let result = BlockGroup {
             start: best.start,
-            count_minus_one: size - 1,
+            count: NonZeroU64::new(size).expect("size is never 0").into(),
         };
         best.start += size;
-        best.count_minus_one = best_rem - 1;
+        best.count = NonZeroU64::new(best_rem)
+            .expect("already check above")
+            .into();
 
         debug_assert!(self.check_consistent().is_ok());
         Ok(result)
@@ -318,7 +334,9 @@ impl BlockAllocator {
             }
 
             if current.end() + 1 == free.start {
-                current.count_minus_one += free.count();
+                current.count = NonZeroU64::new(current.count() + free.count())
+                    .expect("Adding never results in 0")
+                    .into();
                 break;
             }
 
@@ -335,7 +353,7 @@ impl BlockAllocator {
     pub fn free_block(&mut self, block: LBA) {
         self.free_group(BlockGroup {
             start: block,
-            count_minus_one: 0,
+            count: NonZeroU64::new(1).unwrap().into(),
         });
     }
 
@@ -426,7 +444,7 @@ impl Iterator for BlockGroupListBlockIter<'_> {
         assert!(self.current_index < group.count());
         let result = group.start + self.current_index;
 
-        if self.current_index == group.count_minus_one {
+        if self.current_index == group.count() - 1 {
             self.current_group = None;
             self.current_index = 0;
         } else {
