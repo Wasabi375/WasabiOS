@@ -680,7 +680,7 @@ where
                 open_in_write_mode: self.access_mode == AccessMode::ReadWrite,
                 status: self.header_data.status,
             }),
-            next_file_id: FileId::ROOT.next(),
+            next_file_id: self.header_data.next_file_id,
         });
 
         self.copy_header_to_backup(&header)?;
