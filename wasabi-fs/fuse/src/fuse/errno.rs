@@ -30,9 +30,6 @@ pub fn fs_error_no(err: FsError) -> c_int {
             MemTreeError::FileDoesNotExist(_) => EINVAL,
         },
         FsError::FileDoesNotExist(_) => ENOENT,
-        FsError::FileTypeMismatch {
-            id: _,
-            file_type: _,
-        } => EINVAL,
+        FsError::FileTypeMismatch { .. } => EINVAL,
     }
 }

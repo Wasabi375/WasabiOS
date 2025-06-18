@@ -5,7 +5,7 @@ use crate::fs::{FsError, FsWrite, map_device_error};
 use crate::fs_structs::{
     DIRECTORY_BLOCK_ENTRY_COUNT, Directory as FsDirectory, DirectoryEntry as FsDirectoryEntry,
 };
-use crate::{Block, block_allocator, blocks_required_for};
+use crate::{Block, BlockGroup, block_allocator, blocks_required_for};
 use crate::{
     fs_structs::{DevicePointer, FileId},
     interface::BlockDevice,

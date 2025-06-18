@@ -395,6 +395,43 @@ impl<S: FsWrite> fuser::Filesystem for WasabiFuse<S> {
 
         reply.attr(&self.ttl, &file_attr);
     }
+
+    fn write(
+        &mut self,
+        _req: &Request<'_>,
+        ino: u64,
+        _fh: u64,
+        offset: i64,
+        data: &[u8],
+        _write_flags: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        reply: fuser::ReplyWrite,
+    ) {
+        trace!(
+            "fuser::write(ino: {:#x?}, offset: {}, data.len(): {})",
+            ino,
+            offset,
+            data.len(),
+        );
+
+        let file_id = match FileId::try_new(ino) {
+            Some(id) => id,
+            None => return reply.error(EINVAL),
+        };
+
+        let offset = match offset.try_into() {
+            Ok(offset) => offset,
+            Err(e) => {
+                error!("negative offset {offset}: {e:?}");
+                return reply.error(EINVAL);
+            }
+        };
+
+        handle_fs_err!(self.fs_mut().write_file(file_id, offset, data), reply);
+
+        reply.written(data.len() as u32);
+    }
 }
 
 impl<S> Drop for WasabiFuse<S> {

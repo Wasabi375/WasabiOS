@@ -5,11 +5,14 @@ use core::{
     error::{self, Error},
     marker::PhantomData,
     mem::{self, size_of, transmute},
+    num::NonZeroU64,
     ptr::NonNull,
+    usize,
 };
 
 use alloc::{
     alloc::AllocError,
+    borrow::Cow,
     boxed::Box,
     string::{FromUtf8Error, String},
     sync::Arc,
@@ -24,7 +27,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    BLOCK_SIZE, Block, BlockGroup, FS_VERSION, LBA,
+    BLOCK_SIZE, Block, BlockGroup, BlockSlice, FS_VERSION, LBA,
     block_allocator::{self, BlockAllocator, BlockGroupList},
     blocks_required_for,
     existing_fs_check::{FsFound, check_for_filesystem},
@@ -33,7 +36,7 @@ use crate::{
         BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode, FileType,
         FreeBlockGroups, FsStatus, MainHeader, MainTransientHeader, Perm, Timestamp, TreeNode,
     },
-    interface::BlockDevice,
+    interface::{BlockDevice, BlockDeviceOrMemError, WriteData},
     mem_structs::{self, Directory, DirectoryChange, DirectoryEntry},
     mem_tree::{self, MemTree, MemTreeError},
 };
@@ -137,6 +140,15 @@ impl From<hashbrown::TryReserveError> for FsError {
                 "Capacity overflow should never happen, as that would mean that we have an insane size on the device"
             ),
             TryReserveError::AllocError { .. } => FsError::Oom,
+        }
+    }
+}
+
+impl<E: Error + Send + Sync + 'static> From<BlockDeviceOrMemError<E>> for FsError {
+    fn from(value: BlockDeviceOrMemError<E>) -> Self {
+        match value {
+            BlockDeviceOrMemError::BlockDevice(err) => map_device_error(err),
+            BlockDeviceOrMemError::Allocation => FsError::Oom,
         }
     }
 }
@@ -408,6 +420,7 @@ where
         override_check: OverrideCheck,
         access: AccessMode,
     ) -> Result<Self, FsError> {
+        // TODO this function is flushing the fs twice? Is that necessary
         let fs_found = check_for_filesystem(&device).map_err(map_device_error)?;
         if fs_found != FsFound::None {
             match override_check {
@@ -474,6 +487,7 @@ where
             FileType::Directory,
             0,
             root_dir_block.into(),
+            0,
         ))?;
 
         fs.mem_tree.create(&mut fs.device, root_dir_node.into())?;
@@ -804,6 +818,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
                         FileType::Directory,
                         0,
                         dir_lba.into(),
+                        0,
                     ))?;
                     self.mem_tree.create(&self.device, dir_node)?;
                 }
@@ -892,7 +907,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             let part_data = bytes
                 .split_off(..min(BLOCK_STRING_PART_DATA_LENGTH, bytes.len()))
                 .expect("we take at max the remaining length");
-            string_part.data[..part_data.len()].copy_from_slice(part_data);
+            string_part.data.data[..part_data.len()].copy_from_slice(part_data);
             self.device
                 .write_block(part_lba, string_part.block_data())
                 .map_err(map_device_error)?;
@@ -1039,6 +1054,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             FileType::File,
             0,
             device_block.into(),
+            1,
         ))?;
 
         self.mem_tree.create(&self.device, file_node)?;
@@ -1048,6 +1064,181 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         });
 
         Ok(file_id)
+    }
+
+    pub fn write_file(&mut self, id: FileId, offset: u64, data: &[u8]) -> Result<(), FsError> {
+        let Some(file_node) = self.mem_tree.find(&self.device, id)? else {
+            return Err(FsError::FileDoesNotExist(id));
+        };
+
+        if !matches!(file_node.typ, FileType::File) {
+            return Err(FsError::FileTypeMismatch {
+                id,
+                file_type: file_node.typ,
+                expected: FileType::File,
+            });
+        }
+
+        let mut file_node = Cow::Borrowed(file_node.as_ref());
+
+        if data.is_empty() {
+            warn!("Writing 0 bytes to file {id:?}");
+            return Ok(());
+        }
+
+        let write_len = offset + data.len() as u64;
+
+        if blocks_required_for!(write_len) > file_node.block_count {
+            let file_node = file_node.to_mut();
+
+            let blocks_to_alloc = blocks_required_for!(write_len) - file_node.block_count;
+            let new_blocks = self.block_allocator.allocate(blocks_to_alloc)?;
+
+            todo!("alloc more blocks and update block_count in file_node")
+        }
+
+        let keep_last_block_data = if write_len > file_node.size {
+            let file_node = file_node.to_mut();
+            file_node.size = write_len;
+            false
+        } else if write_len == file_node.size {
+            false
+        } else {
+            true
+        };
+
+        self.write_blocks_partial(&file_node.block_data, offset, data, keep_last_block_data)?;
+
+        if let Cow::Owned(file_node) = file_node {
+            let file_node = Arc::try_new(file_node)?;
+
+            self.mem_tree.update(&self.device, file_node)?;
+        }
+
+        Ok(())
+    }
+
+    fn write_blocks_partial(
+        &mut self,
+        block_head: &BlockListHead,
+        offset: u64,
+        data: &[u8],
+        keep_last_block_data: bool,
+    ) -> Result<(), FsError> {
+        // this should round down, because the offset might start inside of the first block
+        let offset_block_skip = offset / BLOCK_SIZE as u64;
+        let offset_in_first_block = offset - (offset_block_skip * BLOCK_SIZE as u64);
+        let required_block_count = blocks_required_for!(offset_in_first_block + data.len() as u64);
+
+        let mut groups_vec: Vec<BlockGroup>;
+        let groups_single: [BlockGroup; 1];
+        let groups = match block_head {
+            BlockListHead::Single(group) => {
+                assert!(group.count() > offset_block_skip);
+                groups_single = [BlockGroup::with_count(
+                    group.start + offset_block_skip,
+                    NonZeroU64::new(required_block_count)
+                        .expect("required blocks should always be at least 1"),
+                )];
+                groups_single.as_slice()
+            }
+            BlockListHead::List(list_ptr) => {
+                groups_vec = list_ptr.read(&self.device)?;
+
+                let mut bytes_skipped = 0;
+
+                let first_group_index = groups_vec
+                    .iter()
+                    .position(|group| {
+                        if bytes_skipped + group.bytes() > offset {
+                            true
+                        } else {
+                            bytes_skipped += group.bytes();
+                            false
+                        }
+                    })
+                    .expect("We just allocated enough blocks");
+
+                let groups = &mut groups_vec[first_group_index..];
+
+                let offset_in_first_group = offset - bytes_skipped;
+                assert_eq!(
+                    offset_in_first_group - offset_in_first_block % BLOCK_SIZE as u64,
+                    0
+                );
+                let block_offset_in_first_group =
+                    blocks_required_for!(offset_in_first_group - offset_in_first_block);
+
+                groups[0] = groups[0].subgroup(block_offset_in_first_group);
+
+                let total_bytes = offset_in_first_group + data.len() as u64;
+                let mut bytes_in_groups = 0;
+                let last_group_index = groups
+                    .iter()
+                    .position(|group| {
+                        bytes_in_groups += group.bytes();
+                        bytes_in_groups >= total_bytes
+                    })
+                    .expect("We just allocated enough blocks");
+
+                let bytes_for_last_group =
+                    total_bytes - (bytes_in_groups - groups[last_group_index].bytes());
+                let block_count_last_group = blocks_required_for!(bytes_for_last_group);
+
+                groups[last_group_index] = BlockGroup::with_count(
+                    groups[last_group_index].start,
+                    NonZeroU64::new(block_count_last_group)
+                        .expect("If this is zero this 0, the last group is past the end"),
+                );
+
+                &groups[0..last_group_index]
+            }
+        };
+
+        let old_start_block: Option<Box<BlockSlice>>;
+        let old_end_block: Option<Box<BlockSlice>>;
+        let mut old_block_start: &[u8] = &[];
+        let mut old_block_end: &[u8] = &[];
+
+        assert!(offset_in_first_block < BLOCK_SIZE as u64);
+
+        if offset_in_first_block > 0 {
+            old_start_block = Some(
+                self.device
+                    .read_block(groups[0].start)
+                    .map_err(map_device_error)?,
+            );
+            old_block_start = &old_start_block.as_ref().unwrap()[0..offset_in_first_block as usize];
+        }
+        if keep_last_block_data
+            && offset_in_first_block + data.len() as u64 % BLOCK_SIZE as u64 != 0
+        {
+            let last_block = groups
+                .last()
+                .expect("There should be at least 1 group")
+                .end();
+            old_end_block = Some(
+                self.device
+                    .read_block(last_block)
+                    .map_err(map_device_error)?,
+            );
+
+            let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
+            old_block_end = &old_end_block.as_ref().unwrap()[last_block_end as usize..];
+        } else {
+            let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
+            old_block_end = &Block::ZERO.as_slice()[last_block_end as usize..];
+        }
+
+        let write_data = WriteData {
+            data,
+            old_block_start,
+            old_block_end,
+        };
+
+        self.device
+            .write_blocks(groups, write_data)
+            .map_err(map_device_error)
     }
 }
 

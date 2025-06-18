@@ -1,4 +1,4 @@
-#![feature(new_zeroed_alloc)]
+#![feature(new_zeroed_alloc, allocator_api)]
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};

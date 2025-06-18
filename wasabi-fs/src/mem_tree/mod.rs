@@ -1708,6 +1708,7 @@ mod test_mem_only {
                 LBA::new(0).unwrap(),
                 LBA::new(0).unwrap(),
             )),
+            block_count: 1,
         })
     }
 

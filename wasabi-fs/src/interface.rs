@@ -5,12 +5,68 @@ use core::{
 };
 
 use alloc::boxed::Box;
+use log::error;
 
 use crate::{
     BLOCK_SIZE, BlockGroup, BlockSlice, LBA, blocks_required_for,
     fs_structs::{BlockConstructable, DevicePointer},
 };
 
+#[derive(thiserror::Error, Debug)]
+#[allow(missing_docs)]
+pub enum BlockDeviceOrMemError<BDError: Error + Send + Sync + 'static> {
+    #[error("Block device error: {0}")]
+    BlockDevice(#[from] BDError),
+    #[error("Failed to allocate memory(RAM)")]
+    Allocation,
+}
+
+pub struct WriteData<'a> {
+    pub data: &'a [u8],
+
+    pub old_block_start: &'a [u8],
+    pub old_block_end: &'a [u8],
+}
+
+impl WriteData<'_> {
+    pub fn total_len(&self) -> usize {
+        self.data.len() + self.old_block_start.len() + self.old_block_end.len()
+    }
+
+    pub fn is_valid(&self) -> bool {
+        if self.old_block_start.len() >= BLOCK_SIZE {
+            error!(
+                "WriteData.old_block_start({}) must be less than BLOCK_SIZE({}). Otherwise WriteData should start at a later block",
+                self.old_block_start.len(),
+                BLOCK_SIZE
+            );
+            return false;
+        }
+
+        if self.old_block_end.len() >= BLOCK_SIZE {
+            error!(
+                "WriteData.old_block_end({}) must be less than BLOCK_SIZE({}). Otherwise WriteData should end at a earlier block",
+                self.old_block_end.len(),
+                BLOCK_SIZE
+            );
+            return false;
+        }
+
+        if self.total_len() % BLOCK_SIZE != 0 {
+            error!(
+                "WriteData.total_len() ({}) should be a mutliple of BLOCK_SIZE({})",
+                self.total_len(),
+                BLOCK_SIZE
+            );
+
+            return false;
+        }
+
+        true
+    }
+}
+
+// TODO why is data a NonNull and not just a ref?
 pub trait BlockDevice {
     type BlockDeviceError: Error + Send + Sync + 'static;
 
@@ -37,12 +93,19 @@ pub trait BlockDevice {
     ) -> Result<(), Self::BlockDeviceError>;
 
     /// Write multiple blocks to the device
-    fn write_blocks(
+    fn write_blocks_contig(
         &mut self,
         start: LBA,
         // TODO can I use NonNull<[BlockSlice]> instead?
         data: NonNull<[u8]>,
     ) -> Result<(), Self::BlockDeviceError>;
+
+    /// Write multiple blocks to the device
+    fn write_blocks(
+        &mut self,
+        blocks: &[BlockGroup],
+        data: WriteData,
+    ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>;
 
     /// Atomically read a block from the device
     ///
@@ -80,7 +143,7 @@ pub trait BlockDevice {
         data: NonNull<[u8]>,
     ) -> Result<(), Self::BlockDeviceError> {
         assert!(data.len() as u64 <= group.count() * BLOCK_SIZE as u64);
-        self.write_blocks(group.start, data)
+        self.write_blocks_contig(group.start, data)
     }
 
     /// Read `T` from [BlockDevice]
@@ -151,7 +214,7 @@ pub mod test {
             Err(TestBlockDeviceError)
         }
 
-        fn write_blocks(
+        fn write_blocks_contig(
             &mut self,
             start: crate::LBA,
             // TODO can I use NonNull<[BlockSlice]> instead?
@@ -181,6 +244,14 @@ pub mod test {
             current: core::ptr::NonNull<crate::BlockSlice>,
             new: core::ptr::NonNull<crate::BlockSlice>,
         ) -> Result<Result<(), Box<crate::BlockSlice>>, Self::BlockDeviceError> {
+            Err(TestBlockDeviceError)
+        }
+
+        fn write_blocks(
+            &mut self,
+            blocks: &[crate::BlockGroup],
+            data: super::WriteData,
+        ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
     }

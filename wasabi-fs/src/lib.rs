@@ -23,6 +23,7 @@ use core::{
 use nonmax::NonMaxU64;
 use shared::{KiB, math::IntoU64};
 use simple_endian::{LittleEndian, SpecificEndian};
+use static_assertions::const_assert_eq;
 
 extern crate alloc;
 
@@ -115,6 +116,7 @@ impl Sub<u64> for LBA {
     type Output = LBA;
 
     fn sub(self, rhs: u64) -> Self::Output {
+        // Saftey: subtraction can never result in max
         unsafe { LBA::new_unchecked(self.get() - rhs) }
     }
 }
@@ -172,8 +174,22 @@ impl BlockGroup {
         self.count.to_native().get()
     }
 
+    pub fn bytes(&self) -> u64 {
+        self.count() * BLOCK_SIZE as u64
+    }
+
     pub fn contains(&self, lba: LBA) -> bool {
         self.start <= lba && lba <= self.end()
+    }
+
+    pub fn subgroup(&self, block_offset: u64) -> Self {
+        assert!(self.count() > block_offset);
+        BlockGroup::new(self.start + block_offset, self.end())
+    }
+
+    pub fn remove_end(&self, blocks_to_remove: u64) -> Self {
+        assert!(self.count() > blocks_to_remove);
+        BlockGroup::new(self.start, self.end() - blocks_to_remove)
     }
 }
 
@@ -238,20 +254,21 @@ struct Zst {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C, align(4096))]
 pub struct Block<T> {
-    _data: BlockAligned<T>,
+    pub data: BlockAligned<T>,
     _pad: BlockAligned<Zst>,
 }
+const_assert_eq!(size_of::<Block<[u8; BLOCK_SIZE]>>(), BLOCK_SIZE);
 
 impl<T> Block<T> {
-    pub fn new(data: T) -> Self {
+    pub const fn new(data: T) -> Self {
         Self {
-            _data: BlockAligned(data),
+            data: BlockAligned(data),
             _pad: BlockAligned(Zst {}),
         }
     }
 
     pub fn into_inner(self) -> T {
-        self._data.0
+        self.data.0
     }
 
     pub fn block_data(&self) -> NonNull<BlockSlice> {
@@ -267,17 +284,22 @@ impl<T> Block<T> {
     }
 }
 
+impl Block<BlockSlice> {
+    /// A zero filled block
+    pub const ZERO: Block<BlockSlice> = Block::new(BlockAligned([0; BLOCK_SIZE]));
+}
+
 impl<T> Deref for Block<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self._data.deref()
+        self.data.deref()
     }
 }
 
 impl<T> DerefMut for Block<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self._data.deref_mut()
+        self.data.deref_mut()
     }
 }
 

@@ -9,7 +9,10 @@ use std::{
 };
 
 use thiserror::Error;
-use wfs::{BLOCK_SIZE, BlockAligned, BlockSlice, LBA, interface::BlockDevice};
+use wfs::{
+    BLOCK_SIZE, Block, BlockAligned, BlockGroup, BlockSlice, LBA, blocks_required_for,
+    interface::{BlockDevice, BlockDeviceOrMemError, WriteData},
+};
 
 pub struct FileDevice {
     max_block_count: u64,
@@ -121,11 +124,12 @@ impl BlockDevice for FileDevice {
         Ok(())
     }
 
-    fn write_blocks(
+    fn write_blocks_contig(
         &mut self,
         start: LBA,
         data: NonNull<[u8]>,
     ) -> Result<(), Self::BlockDeviceError> {
+        assert_eq!(data.len() % BLOCK_SIZE, 0);
         let mut file = self.file.lock().unwrap();
 
         file.seek(SeekFrom::Start(start.get() * BLOCK_SIZE as u64))?;
@@ -135,6 +139,107 @@ impl BlockDevice for FileDevice {
                 FileDevicError::IncompleteWrite,
             ));
         }
+
+        Ok(())
+    }
+
+    fn write_blocks(
+        &mut self,
+        blocks: &[BlockGroup],
+        data: WriteData,
+    ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>> {
+        assert!(data.is_valid());
+
+        assert_eq!(
+            blocks_required_for!(data.total_len()),
+            blocks.iter().map(|b| b.count()).sum(),
+            "data.total_len() should fit into exactly the number of blocks specified"
+        );
+
+        let mut unwritten = data.data;
+
+        for (i, mut block_group) in blocks.iter().cloned().enumerate() {
+            let first = i == 0;
+            let last = i == blocks.len() - 1;
+
+            if first
+                && last
+                && block_group.count() == 1
+                && data.old_block_start.len() > 0
+                && data.old_block_end.len() > 0
+            {
+                // There is old data at the start and end. If there is just old data at start or
+                // end, the normal first and last checks handle that case
+                let mut block_buffer = Box::try_new(Block::new([0; BLOCK_SIZE]))
+                    .map_err(|_| BlockDeviceOrMemError::Allocation)?;
+
+                let data_start = data.old_block_start.len();
+                let data_past_end = data_start + data.data.len();
+
+                block_buffer.data[..data_start].copy_from_slice(data.old_block_start);
+                block_buffer.data[data_start..data_past_end].copy_from_slice(data.data);
+                block_buffer.data[data_past_end..].copy_from_slice(data.old_block_end);
+
+                self.write_block(block_group.start, block_buffer.block_data())?;
+                break;
+            }
+
+            if first && data.old_block_start.len() > 0 {
+                let mut first_block_buffer = Box::try_new(Block::new([0; BLOCK_SIZE]))
+                    .map_err(|_| BlockDeviceOrMemError::Allocation)?;
+
+                first_block_buffer.data[..data.old_block_start.len()]
+                    .copy_from_slice(data.old_block_start);
+
+                let first_block_data_len = BLOCK_SIZE - data.old_block_start.len();
+                let to_write = unwritten
+                    .split_off(..first_block_data_len)
+                    .expect("total_length should be enough for first block");
+                first_block_buffer.data[data.old_block_start.len()..].copy_from_slice(to_write);
+
+                self.write_block(block_group.start, first_block_buffer.block_data())?;
+
+                block_group = block_group.subgroup(1);
+            }
+
+            if last && data.old_block_end.len() > 0 {
+                let mut last_block_buffer = Box::try_new(Block::new([0; BLOCK_SIZE]))
+                    .map_err(|_| BlockDeviceOrMemError::Allocation)?;
+
+                let single_block = block_group.count() == 1;
+
+                let last_block_lba = block_group.end();
+                let last_block_data_offset = if !single_block {
+                    block_group = block_group.remove_end(1);
+                    block_group.bytes() as usize
+                } else {
+                    0
+                };
+
+                let last_block_to_write_slice = &unwritten
+                    .split_off(last_block_data_offset..)
+                    .expect("There should be enough data for the last block");
+
+                last_block_buffer.data[..last_block_to_write_slice.len()]
+                    .copy_from_slice(last_block_to_write_slice);
+
+                self.write_block(last_block_lba, last_block_buffer.block_data())?;
+
+                if single_block {
+                    break;
+                }
+            }
+
+            let to_write: &[u8] = unwritten
+                .split_off(..block_group.bytes() as usize)
+                .expect("There should be enough data left, because we checked at function start and special handle first and last blocks");
+
+            assert_eq!(to_write.len() % BLOCK_SIZE, 0);
+
+            self.write_blocks_contig(block_group.start, to_write.into())?;
+        }
+
+        assert!(unwritten.is_empty());
 
         Ok(())
     }

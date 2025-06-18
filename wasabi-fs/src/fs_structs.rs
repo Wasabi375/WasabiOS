@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use core::{
     default, fmt,
     marker::PhantomData,
@@ -122,6 +123,33 @@ pub struct BlockList {
 }
 const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<BlockList>() <= 100);
+
+impl BlockList {
+    pub fn read<D: BlockDevice>(
+        self: DevicePointer<BlockList>,
+        device: &D,
+    ) -> Result<Vec<BlockGroup>, FsError> {
+        todo!()
+    }
+
+    pub fn write<D: BlockDevice>(
+        block_list: &[BlockGroup],
+        device: &mut D,
+        block_allocator: BlockAllocator,
+    ) -> Result<DevicePointer<Self>, FsError> {
+        todo!()
+    }
+}
+
+impl BlockConstructable for BlockList {}
+
+impl BlockLinkedList for BlockList {
+    type Next = BlockList;
+
+    fn next(&self) -> Option<DevicePointer<Self::Next>> {
+        self.next
+    }
+}
 
 /// The maximum size of the string data that can be stored in the initial [BlockString].
 ///
@@ -314,6 +342,11 @@ pub struct FileNode {
     pub modified_at: Timestamp, // TODO do I want to differentiate modify and change?
     // TODO do I want last accessed?
     pub block_data: BlockListHead,
+    /// The number of blocks used by the FileNode
+    ///
+    /// Currently this is only set properly for files, and is just 0 for directories
+    /// TODO report proper block_count for directories
+    pub block_count: u64,
     // TODO do I want some kind of generation counter?
 }
 
@@ -324,6 +357,7 @@ impl FileNode {
         typ: FileType,
         size: u64,
         block_data: BlockListHead,
+        block_count: u64,
     ) -> Self {
         Self {
             id,
@@ -337,6 +371,7 @@ impl FileNode {
             created_at: Timestamp::zero(),
             modified_at: Timestamp::zero(),
             block_data,
+            block_count,
         }
     }
 }
