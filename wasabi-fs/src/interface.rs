@@ -186,7 +186,7 @@ pub mod test {
 
     use thiserror::Error;
 
-    use super::BlockDevice;
+    use super::{BlockDevice, BlockDeviceOrMemError};
 
     #[derive(Debug, Clone, Copy)]
     pub struct TestBlockDevice;
@@ -258,12 +258,25 @@ pub mod test {
             Err(TestBlockDeviceError)
         }
 
-        fn write_blocks(
+        fn read_blocks<I>(
+            &self,
+            blocks: I,
+        ) -> Result<Box<[u8]>, BlockDeviceOrMemError<Self::BlockDeviceError>>
+        where
+            I: Iterator<Item = crate::BlockGroup> + Clone,
+        {
+            Err(TestBlockDeviceError.into())
+        }
+
+        fn write_blocks<I>(
             &mut self,
-            blocks: &[crate::BlockGroup],
+            blocks: I,
             data: super::WriteData,
-        ) -> Result<(), Self::BlockDeviceError> {
-            Err(TestBlockDeviceError)
+        ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
+        where
+            I: Iterator<Item = crate::BlockGroup> + Clone,
+        {
+            Err(TestBlockDeviceError.into())
         }
     }
 }
