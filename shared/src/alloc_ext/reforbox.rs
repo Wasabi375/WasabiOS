@@ -8,6 +8,7 @@ use alloc::boxed::Box;
 ///
 /// # Example
 /// `RefOrOwn<str, Box<str>>`
+// TODO can't I just use Cow here?
 pub enum RefOrBox<'a, T: ?Sized + 'a> {
     /// value is accessed via reference
     Ref(&'a T),

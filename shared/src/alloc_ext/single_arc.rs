@@ -1,3 +1,5 @@
+#![allow(missing_docs)] // TODO temp
+
 use core::{
     fmt::{Display, Pointer},
     hash::Hash,

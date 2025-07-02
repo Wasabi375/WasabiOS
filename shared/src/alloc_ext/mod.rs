@@ -1,7 +1,6 @@
 //! Additional traits and structs that depend on alloc
 
-#![allow(missing_docs)]
-
+pub mod owned_slice;
 pub mod reforbox;
 mod single_arc;
 
