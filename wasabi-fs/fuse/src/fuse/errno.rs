@@ -31,5 +31,6 @@ pub fn fs_error_no(err: FsError) -> c_int {
         },
         FsError::FileDoesNotExist(_) => ENOENT,
         FsError::FileTypeMismatch { .. } => EINVAL,
+        FsError::ReadZeroBytes => EINVAL,
     }
 }

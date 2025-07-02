@@ -20,6 +20,7 @@ use crate::{
     block_allocator::{self, BlockAllocator},
     fs::{FsError, MAIN_HEADER_BLOCK},
     interface::BlockDevice,
+    mem_structs,
 };
 
 trait BlockLinkedList: Sized + BlockConstructable {
@@ -102,6 +103,13 @@ impl BlockListHead {
             BlockListHead::List(_) => panic!("BlockListHead is a list, requested Single"),
         }
     }
+
+    pub fn read<D: BlockDevice>(&self, device: &D) -> Result<mem_structs::BlockList, FsError> {
+        match *self {
+            BlockListHead::Single(group) => Ok(group.into()),
+            BlockListHead::List(head) => Ok(head.read(device)?.into()),
+        }
+    }
 }
 
 const BLOCK_LIST_GROUP_COUNT: usize = (BLOCK_SIZE
@@ -129,7 +137,7 @@ impl BlockList {
         self: DevicePointer<BlockList>,
         device: &D,
     ) -> Result<Vec<BlockGroup>, FsError> {
-        todo!()
+        todo!("read BlockList from device")
     }
 
     pub fn write<D: BlockDevice>(
@@ -137,7 +145,7 @@ impl BlockList {
         device: &mut D,
         block_allocator: BlockAllocator,
     ) -> Result<DevicePointer<Self>, FsError> {
-        todo!()
+        todo!("write BlockList to device")
     }
 }
 

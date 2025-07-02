@@ -5,7 +5,7 @@ use crate::fs::{FsError, FsWrite, map_device_error};
 use crate::fs_structs::{
     DIRECTORY_BLOCK_ENTRY_COUNT, Directory as FsDirectory, DirectoryEntry as FsDirectoryEntry,
 };
-use crate::{Block, BlockGroup, block_allocator, blocks_required_for};
+use crate::{BLOCK_SIZE, Block, BlockGroup, block_allocator, blocks_required_for};
 use crate::{
     fs_structs::{DevicePointer, FileId},
     interface::BlockDevice,
@@ -184,4 +184,121 @@ pub enum DirectoryChange {
         dir_id: FileId,
         entry: DirectoryEntry,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockList(BlockListInternal);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BlockListInternal {
+    Single([BlockGroup; 1]),
+    Vec(Vec<BlockGroup>),
+}
+
+impl BlockList {
+    pub fn as_slice(&self) -> &[BlockGroup] {
+        match &self.0 {
+            BlockListInternal::Single(group) => group.as_slice(),
+            BlockListInternal::Vec(groups) => groups.as_slice(),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = BlockGroup> + Clone {
+        self.as_slice().iter().cloned()
+    }
+
+    pub fn iter_partial(
+        &self,
+        byte_offset: u64,
+        bytes: u64,
+    ) -> BlockListPartialIter<impl Iterator<Item = BlockGroup> + Clone> {
+        BlockListPartialIter {
+            group_iter: self.iter(),
+            skip_bytes: byte_offset,
+            remaining_bytes: bytes,
+        }
+    }
+}
+
+impl From<BlockGroup> for BlockList {
+    fn from(value: BlockGroup) -> Self {
+        Self(BlockListInternal::Single([value]))
+    }
+}
+
+impl From<Vec<BlockGroup>> for BlockList {
+    fn from(value: Vec<BlockGroup>) -> Self {
+        Self(BlockListInternal::Vec(value))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockListPartialIter<I> {
+    /// The underlying group iterator
+    group_iter: I,
+    /// the number of bytes to skip in the underlying iterator
+    skip_bytes: u64,
+    /// the total remaining number of bytes that should be included in the groups
+    remaining_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PartialBlockGroup {
+    /// BlockGroup
+    pub group: BlockGroup,
+    /// byte offset into the group
+    pub offset: u64,
+    /// number of bytes to use within the group
+    pub len: u64,
+}
+
+impl<I> Iterator for BlockListPartialIter<I>
+where
+    I: Iterator<Item = BlockGroup>,
+{
+    type Item = PartialBlockGroup;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(mut current_group) = self.group_iter.next() {
+            if self.skip_bytes >= current_group.bytes() {
+                self.skip_bytes -= current_group.bytes();
+                continue;
+            }
+
+            let offset = if self.skip_bytes > 0 {
+                let blocks_to_skip = self.skip_bytes / BLOCK_SIZE as u64;
+                let offset = self.skip_bytes % BLOCK_SIZE as u64;
+
+                current_group = current_group.subgroup(blocks_to_skip);
+
+                self.skip_bytes = 0;
+                offset
+            } else {
+                0
+            };
+
+            let len = if self.remaining_bytes < current_group.bytes() {
+                current_group = current_group.shorten(blocks_required_for!(self.remaining_bytes));
+                self.remaining_bytes
+            } else {
+                current_group.bytes()
+            };
+            assert!(self.remaining_bytes >= len);
+
+            self.remaining_bytes -= len;
+
+            assert!(offset + len <= current_group.bytes());
+            return Some(PartialBlockGroup {
+                group: current_group,
+                offset,
+                len,
+            });
+        }
+
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, self.group_iter.size_hint().1)
+    }
 }

@@ -33,6 +33,7 @@ impl WriteData<'_> {
         self.data.len() + self.old_block_start.len() + self.old_block_end.len()
     }
 
+    // TODO is_valid check should really be done in a "constructor"
     pub fn is_valid(&self) -> bool {
         if self.old_block_start.len() >= BLOCK_SIZE {
             error!(
@@ -78,12 +79,20 @@ pub trait BlockDevice {
     /// The resulting slice will always be algined on block boundaries.
     fn read_block(&self, lba: LBA) -> Result<Box<BlockSlice>, Self::BlockDeviceError>;
 
-    /// Read multiple blocks from the device
-    fn read_blocks(
+    /// Read multiple contigious blocks from the device
+    fn read_blocks_contig(
         &self,
         start: LBA,
         block_count: u64,
     ) -> Result<Box<[u8]>, Self::BlockDeviceError>;
+
+    /// Read multiple blocks from the device
+    fn read_blocks<I>(
+        &self,
+        blocks: I,
+    ) -> Result<Box<[u8]>, BlockDeviceOrMemError<Self::BlockDeviceError>>
+    where
+        I: Iterator<Item = BlockGroup> + Clone;
 
     /// Write a block to the device
     fn write_block(
@@ -101,11 +110,13 @@ pub trait BlockDevice {
     ) -> Result<(), Self::BlockDeviceError>;
 
     /// Write multiple blocks to the device
-    fn write_blocks(
+    fn write_blocks<I>(
         &mut self,
-        blocks: &[BlockGroup],
+        blocks: I,
         data: WriteData,
-    ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>;
+    ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
+    where
+        I: Iterator<Item = BlockGroup> + Clone;
 
     /// Atomically read a block from the device
     ///
@@ -133,7 +144,7 @@ pub trait BlockDevice {
 
     /// Read a [BlockGroup] from the device
     fn read_block_group(&self, group: BlockGroup) -> Result<Box<[u8]>, Self::BlockDeviceError> {
-        self.read_blocks(group.start, group.count())
+        self.read_blocks_contig(group.start, group.count())
     }
 
     /// Write data to a [BlockGroup]
@@ -163,7 +174,7 @@ pub trait BlockDevice {
             unsafe { Ok((data.as_ptr() as *const T).read()) }
         } else {
             let count = blocks_required_for!(type: T);
-            let data = self.read_blocks(ptr.lba, count)?;
+            let data = self.read_blocks_contig(ptr.lba, count)?;
             unsafe { Ok((data.as_ptr() as *const T).read()) }
         }
     }
@@ -198,7 +209,7 @@ pub mod test {
             Err(TestBlockDeviceError)
         }
 
-        fn read_blocks(
+        fn read_blocks_contig(
             &self,
             start: crate::LBA,
             block_count: u64,

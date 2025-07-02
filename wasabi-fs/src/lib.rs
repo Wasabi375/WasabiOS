@@ -191,6 +191,11 @@ impl BlockGroup {
         assert!(self.count() > blocks_to_remove);
         BlockGroup::new(self.start, self.end() - blocks_to_remove)
     }
+
+    pub fn shorten(&self, new_length: u64) -> Self {
+        assert!(new_length <= self.count());
+        self.remove_end(self.count() - new_length)
+    }
 }
 
 /// Type alias for `BlockAligned<[u8; BLOCK_SIZE]>`

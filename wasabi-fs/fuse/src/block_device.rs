@@ -5,9 +5,11 @@ use std::{
     ops::Deref,
     path::Path,
     ptr::NonNull,
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
+    usize,
 };
 
+use shared::iter::{IterExt, PositionInfo};
 use thiserror::Error;
 use wfs::{
     BLOCK_SIZE, Block, BlockAligned, BlockGroup, BlockSlice, LBA, blocks_required_for,
@@ -56,6 +58,20 @@ impl FileDevice {
     pub fn close(self) -> Result<(), std::io::Error> {
         self.file.lock().expect("We never shatter the lock").flush()
     }
+
+    fn read_contig_internal(
+        file: &mut MutexGuard<'_, File>,
+        start: LBA,
+        buffer: &mut [u8],
+    ) -> Result<(), std::io::Error> {
+        file.seek(SeekFrom::Start(start.get() * BLOCK_SIZE as u64))?;
+
+        if file.read(buffer)? != buffer.len() {
+            return Err(std::io::Error::other(FileDevicError::UnexpectedEOF));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Error, Debug)]
@@ -74,32 +90,59 @@ impl BlockDevice for FileDevice {
     }
 
     fn read_block(&self, lba: LBA) -> Result<Box<BlockSlice>, Self::BlockDeviceError> {
+        let mut block = Box::new(BlockAligned([0; BLOCK_SIZE]));
+
         let mut file = self.file.lock().unwrap();
 
-        file.seek(SeekFrom::Start(lba.get() * BLOCK_SIZE as u64))?;
-
-        let mut block = Box::new(BlockAligned([0; BLOCK_SIZE]));
-        if file.read(&mut block.as_mut().0)? != BLOCK_SIZE {
-            return Err(Self::BlockDeviceError::other(FileDevicError::UnexpectedEOF));
-        }
+        Self::read_contig_internal(&mut file, lba, &mut block.0)?;
 
         Ok(block)
     }
 
-    fn read_blocks(
+    fn read_blocks_contig(
         &self,
         start: LBA,
         block_count: u64,
     ) -> Result<Box<[u8]>, Self::BlockDeviceError> {
         let mut file = self.file.lock().unwrap();
-
-        file.seek(SeekFrom::Start(start.get() * BLOCK_SIZE as u64))?;
-
         let mut buffer =
             unsafe { Box::new_zeroed_slice(block_count as usize * BLOCK_SIZE).assume_init() };
-        if file.read(buffer.as_mut())? != buffer.len() {
-            return Err(Self::BlockDeviceError::other(FileDevicError::UnexpectedEOF));
+
+        Self::read_contig_internal(&mut file, start, &mut buffer)?;
+
+        Ok(buffer)
+    }
+
+    fn read_blocks<I>(
+        &self,
+        blocks: I,
+    ) -> Result<Box<[u8]>, BlockDeviceOrMemError<Self::BlockDeviceError>>
+    where
+        I: Iterator<Item = BlockGroup> + Clone,
+    {
+        let total_bytes: u64 = blocks.clone().map(|group| group.bytes()).sum();
+        let total_bytes = total_bytes as usize;
+
+        let buffer = Box::<[u8]>::try_new_zeroed_slice(total_bytes)
+            .map_err(|_| BlockDeviceOrMemError::Allocation)?;
+
+        let mut buffer = unsafe {
+            // Safety: u8 has no invalid states
+            buffer.assume_init()
+        };
+
+        let mut file = self.file.lock().unwrap();
+
+        let mut cursor = 0;
+        for group in blocks {
+            // cursor 1 past end for rust range and easy copy as the next start
+            let end_cursor = cursor + group.bytes() as usize;
+            Self::read_contig_internal(&mut file, group.start, &mut buffer[cursor..end_cursor])?;
+
+            cursor = end_cursor;
         }
+
+        assert_eq!(cursor, total_bytes);
 
         Ok(buffer)
     }
@@ -143,25 +186,31 @@ impl BlockDevice for FileDevice {
         Ok(())
     }
 
-    fn write_blocks(
+    fn write_blocks<I>(
         &mut self,
-        blocks: &[BlockGroup],
+        blocks: I,
         data: WriteData,
-    ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>> {
+    ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
+    where
+        I: Iterator<Item = BlockGroup> + Clone,
+    {
         assert!(data.is_valid());
 
         assert_eq!(
             blocks_required_for!(data.total_len()),
-            blocks.iter().map(|b| b.count()).sum(),
+            blocks.clone().map(|b| b.count()).sum(),
             "data.total_len() should fit into exactly the number of blocks specified"
         );
 
         let mut unwritten = data.data;
 
-        for (i, mut block_group) in blocks.iter().cloned().enumerate() {
-            let first = i == 0;
-            let last = i == blocks.len() - 1;
-
+        for PositionInfo {
+            index: _,
+            first,
+            last,
+            item: mut block_group,
+        } in blocks.with_positions()
+        {
             if first
                 && last
                 && block_group.count() == 1
