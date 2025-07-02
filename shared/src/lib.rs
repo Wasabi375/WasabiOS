@@ -4,6 +4,7 @@
     box_into_inner,
     const_ops,
     const_trait_impl,
+    debug_closure_helpers,
     downcast_unchecked,
     let_chains,
     maybe_uninit_slice,
@@ -16,6 +17,7 @@ extern crate alloc;
 
 pub mod alloc_ext;
 pub mod cpu;
+pub mod iter;
 pub mod math;
 pub mod primitive_enum;
 pub mod rangeset;
