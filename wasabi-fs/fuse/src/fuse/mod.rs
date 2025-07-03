@@ -353,7 +353,24 @@ impl<S: FsWrite> fuser::Filesystem for WasabiFuse<S> {
         reply: fuser::ReplyEmpty,
     ) {
         trace!("fuser::flush");
-        // I currently just flush on all writes
+        handle_fs_err!(self.fs_mut().flush(), reply);
+
+        reply.ok()
+    }
+
+    fn release(
+        &mut self,
+        _req: &Request<'_>,
+        _ino: u64,
+        _fh: u64,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        _flush: bool,
+        reply: fuser::ReplyEmpty,
+    ) {
+        trace!("fuser::release");
+        handle_fs_err!(self.fs_mut().flush(), reply);
+
         reply.ok()
     }
 

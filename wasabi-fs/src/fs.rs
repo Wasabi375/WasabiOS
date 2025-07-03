@@ -1187,6 +1187,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
         let old_start_block: Option<Box<BlockSlice>>;
         let old_end_block: Option<Box<BlockSlice>>;
+
         let mut old_block_start: &[u8] = &[];
         let mut old_block_end: &[u8] = &[];
 
@@ -1206,9 +1207,8 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             );
             old_block_start = &old_start_block.as_ref().unwrap()[0..offset_in_first_block as usize];
         }
-        if keep_last_block_data
-            && offset_in_first_block + data.len() as u64 % BLOCK_SIZE as u64 != 0
-        {
+        let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
+        if keep_last_block_data && last_block_end != 0 {
             let last_group = groups
                 .clone()
                 .last()
@@ -1225,9 +1225,11 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             assert_eq!(last_block.get(), last_group.len);
 
             old_block_end = &old_end_block.as_ref().unwrap()[last_block_end as usize..];
-        } else {
-            let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
+        } else if last_block_end != 0 {
             old_block_end = &Block::ZERO.as_slice()[last_block_end as usize..];
+        } else {
+            assert_eq!(last_block_end, 0);
+            old_block_end = [0u8; 0].as_slice();
         }
 
         let write_data = WriteData {
