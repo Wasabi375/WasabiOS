@@ -62,6 +62,7 @@ impl LBA {
     /// # Safety
     ///
     /// `addr` must not be `u64::MAX`
+    #[track_caller]
     pub const unsafe fn new_unchecked(addr: u64) -> Self {
         assert!(addr != u64::MAX);
         Self(LittleEndian::from_bits(unsafe {
@@ -91,7 +92,9 @@ impl LBA {
 impl Add<u64> for LBA {
     type Output = LBA;
 
+    #[track_caller]
     fn add(self, rhs: u64) -> Self::Output {
+        assert_ne!(self.get() + rhs, u64::MAX);
         unsafe { LBA::new_unchecked(self.get() + rhs) }
     }
 }
@@ -153,7 +156,7 @@ impl BlockGroup {
     pub fn new(start: LBA, end: LBA) -> Self {
         Self {
             start,
-            count: NonZeroU64::new(end + 1 - start)
+            count: NonZeroU64::new(end.get() + 1 - start.get())
                 .expect("end should be greater than start")
                 .into(),
         }
