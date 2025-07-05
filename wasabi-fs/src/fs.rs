@@ -1243,7 +1243,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
             let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
 
-            assert_eq!(last_block.get(), last_group.len);
+            assert_eq!(last_block_end, last_group.len);
 
             old_block_end = &old_end_block.as_ref().unwrap()[last_block_end as usize..];
         } else if last_block_end != 0 {
