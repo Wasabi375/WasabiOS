@@ -9,7 +9,8 @@
     let_chains,
     maybe_uninit_slice,
     negative_impls,
-    step_trait
+    step_trait,
+    trusted_len
 )]
 #![warn(missing_docs)]
 

@@ -1,6 +1,6 @@
 //! Iterator Utilities
 
-use core::iter::Peekable;
+use core::iter::{FusedIterator, Peekable, TrustedLen};
 
 /// Extension functions for iterators
 pub trait IterExt: Sized + Iterator {
@@ -26,6 +26,29 @@ pub trait IterExt: Sized + Iterator {
             is_first: true,
             index: 0,
         }
+    }
+
+    /// Creates an iterator that provieds the item of the underlying iterator as well as a clone of
+    /// the next item.
+    ///
+    /// # Example
+    /// ```
+    /// # use shared::iter::{IterExt};
+    ///
+    /// let a = [1, 2, 3];
+    /// let mut iter = a.iter().cloned().peeked();
+    ///
+    /// assert_eq!(Some((1, Some(2))), iter.next());
+    /// assert_eq!(Some((2, Some(3))), iter.next());
+    /// assert_eq!(Some((3, None)), iter.next());
+    ///
+    /// assert_eq!(None, iter.next())
+    /// ```
+    fn peeked(self) -> Peeked<Self>
+    where
+        <Self as Iterator>::Item: Clone,
+    {
+        Peeked(self.peekable())
     }
 }
 
@@ -68,11 +91,11 @@ pub struct PositionInfo<I> {
     pub item: I,
 }
 
-impl<Iter, Item> Iterator for WithPositionIter<Iter>
+impl<I> Iterator for WithPositionIter<I>
 where
-    Iter: Iterator<Item = Item>,
+    I: Iterator,
 {
-    type Item = PositionInfo<Item>;
+    type Item = PositionInfo<<I as Iterator>::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let item = self.iter.next()?;
@@ -96,4 +119,63 @@ where
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
     }
+}
+
+/// An iterator that returns the item of the underlying iterator and a clone of the peeked item.
+///
+/// The result of the iterator is similar to `(iter.next(), iter.peek().clone())`.
+///
+/// see [IterExt::peeked], [Peekable]
+pub struct Peeked<I: Iterator>(Peekable<I>);
+
+impl<I> Iterator for Peeked<I>
+where
+    I: Iterator,
+    <I as Iterator>::Item: Clone + Copy,
+{
+    type Item = (<I as Iterator>::Item, Option<<I as Iterator>::Item>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let current = self.0.next();
+        let next = self.0.peek();
+        current.map(|current| (current, next.cloned()))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl<I> Clone for Peeked<I>
+where
+    I: Clone + Iterator,
+    <I as Iterator>::Item: Clone,
+{
+    fn clone(&self) -> Self {
+        Peeked(self.0.clone())
+    }
+}
+
+impl<I> ExactSizeIterator for Peeked<I>
+where
+    I: ExactSizeIterator,
+    <I as Iterator>::Item: Copy + Clone,
+{
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<I> FusedIterator for Peeked<I>
+where
+    I: FusedIterator + ExactSizeIterator,
+    <I as Iterator>::Item: Copy + Clone,
+{
+}
+
+unsafe impl<I> TrustedLen for Peeked<I>
+where
+    I: TrustedLen + ExactSizeIterator,
+    <I as Iterator>::Item: Copy + Clone,
+{
 }
