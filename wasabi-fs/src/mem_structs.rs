@@ -270,7 +270,7 @@ impl BlockList {
             }
         };
 
-        let data_block_count = counts_required_for!(block_groups.len(), BLOCK_LIST_GROUP_COUNT);
+        let data_block_count = counts_required_for!(BLOCK_LIST_GROUP_COUNT, block_groups.len());
         assert!(data_block_count >= 1);
 
         let data_blocks = block_allocator.allocate(data_block_count as u64)?;
