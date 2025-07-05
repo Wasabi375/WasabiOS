@@ -261,6 +261,8 @@ impl BlockAllocator {
             return Err(FsError::NoConsecutiveFreeBlocks(size));
         }
 
+        self.dirty = true;
+
         if best_rem == 0 {
             // we can't use swap_remove, because we need to preserve the order
             return Ok(self.free.remove(best));
@@ -315,6 +317,8 @@ impl BlockAllocator {
 
         assert_eq!(list.block_count(), count);
 
+        self.dirty = true;
+
         Ok(list)
     }
 
@@ -325,6 +329,7 @@ impl BlockAllocator {
     }
 
     pub fn free_group(&mut self, free: BlockGroup) {
+        self.dirty = true;
         for i in 0..self.free.len() {
             let current = &mut self.free[i];
 
