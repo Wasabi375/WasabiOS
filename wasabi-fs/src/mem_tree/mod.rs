@@ -1177,13 +1177,12 @@ impl<I: InterruptState> MemTree<I> {
             self.get_root_mut()
         };
 
-        root_link.flush_to_device(None, device, block_allocator)?;
-
+        let result = root_link.flush_to_device(None, device, block_allocator);
         unsafe {
             // Safety: we locked this ourself
             self.root_lock.unlock();
         }
-        Ok(())
+        result
     }
 }
 
