@@ -1,18 +1,24 @@
 use core::cmp::{max, min};
+use core::sync::atomic::AtomicU64;
 
-use crate::block_allocator::BlockAllocator;
+use crate::block_allocator::{BlockAllocator, BlockGroupList};
 use crate::fs::{FsError, FsWrite, map_device_error};
 use crate::fs_structs::{
-    DIRECTORY_BLOCK_ENTRY_COUNT, Directory as FsDirectory, DirectoryEntry as FsDirectoryEntry,
+    BLOCK_LIST_GROUP_COUNT, BlockListHead, DIRECTORY_BLOCK_ENTRY_COUNT, Directory as FsDirectory,
+    DirectoryEntry as FsDirectoryEntry, FileNode as FsFileNode, FileType, Perm, Timestamp,
 };
-use crate::{BLOCK_SIZE, Block, BlockGroup, block_allocator, blocks_required_for};
+use crate::{BLOCK_SIZE, Block, BlockGroup, LBA, block_allocator, blocks_required_for};
 use crate::{
-    fs_structs::{DevicePointer, FileId},
+    fs_structs::{BlockList as FsBlockList, DevicePointer, FileId},
     interface::BlockDevice,
 };
+use alloc::sync::Arc;
 use alloc::{boxed::Box, vec::Vec};
+use log::{error, trace};
+use shared::iter::IterExt;
 use shared::math::IntoU64;
 use shared::sync::InterruptState;
+use shared::sync::lockcell::{RWLockCell, ReadWriteCell};
 use shared::{counts_required_for, todo_error};
 use staticvec::StaticVec;
 
@@ -82,7 +88,7 @@ impl Directory {
     }
 
     /// Stores the directory to a [BlockDevice]
-    pub fn store<D: BlockDevice, S: FsWrite, I: InterruptState>(
+    pub fn write<D: BlockDevice, S: FsWrite, I: InterruptState>(
         &self,
         fs: &mut FileSystem<D, S, I>,
     ) -> Result<DevicePointer<FsDirectory>, FsError> {
@@ -105,6 +111,7 @@ impl Directory {
             return Ok(DevicePointer::new(block));
         }
 
+        // TODO how do I dealocate this on error?
         let blocks = fs.block_allocator.allocate(block_count)?;
 
         let mut fs_dir = Block::new(FsDirectory::default());
@@ -218,6 +225,75 @@ impl BlockList {
             remaining_bytes: bytes,
         }
     }
+
+    pub fn block_count(&self) -> u64 {
+        // TODO memorize?
+        self.iter().map(|g| g.count()).sum()
+    }
+
+    pub fn single(&self) -> BlockGroup {
+        assert_eq!(self.as_slice().len(), 1);
+        self.as_slice()[0]
+    }
+
+    pub fn push(&mut self, group: BlockGroupList) {
+        match &mut self.0 {
+            BlockListInternal::Single([first]) => {
+                let mut vec = Vec::with_capacity(group.groups.len() + 1);
+                vec.push(*first);
+                vec.extend(group.groups.into_iter());
+
+                *self = vec.into()
+            }
+            BlockListInternal::Vec(vec) => vec.extend(group.groups.into_iter()),
+        }
+    }
+
+    pub fn read<D: BlockDevice>(head: BlockListHead, device: &D) -> Result<Self, FsError> {
+        let first_block_ptr = match head {
+            BlockListHead::Single(group) => return Ok(Self(BlockListInternal::Single([group]))),
+            BlockListHead::List(ptr) => ptr,
+        };
+
+        todo!()
+    }
+
+    pub fn write<D: BlockDevice>(
+        &self,
+        device: &mut D,
+        block_allocator: &mut BlockAllocator,
+    ) -> Result<BlockListHead, FsError> {
+        let block_groups = match &self.0 {
+            BlockListInternal::Vec(block_groups) => block_groups,
+            BlockListInternal::Single([group]) => {
+                return Ok(BlockListHead::Single(*group));
+            }
+        };
+
+        let data_block_count = counts_required_for!(block_groups.len(), BLOCK_LIST_GROUP_COUNT);
+        assert!(data_block_count >= 1);
+
+        let data_blocks = block_allocator.allocate(data_block_count as u64)?;
+
+        let first_block_addr = data_blocks.groups[0].start;
+
+        for ((block_addr, next_block_addr), groups) in data_blocks
+            .block_iter()
+            .peeked()
+            .zip(block_groups.chunks(BLOCK_LIST_GROUP_COUNT))
+        {
+            let block = Block::new(FsBlockList {
+                blocks: StaticVec::from(groups),
+                next: next_block_addr.map(|lba| DevicePointer::new(lba)),
+            });
+
+            device
+                .write_block(block_addr, block.block_data())
+                .map_err(map_device_error)?;
+        }
+
+        Ok(BlockListHead::List(DevicePointer::new(first_block_addr)))
+    }
 }
 
 impl From<BlockGroup> for BlockList {
@@ -226,9 +302,62 @@ impl From<BlockGroup> for BlockList {
     }
 }
 
+impl From<BlockGroupList> for BlockList {
+    fn from(value: BlockGroupList) -> Self {
+        Self(BlockListInternal::Vec(value.groups))
+    }
+}
+
 impl From<Vec<BlockGroup>> for BlockList {
     fn from(value: Vec<BlockGroup>) -> Self {
         Self(BlockListInternal::Vec(value))
+    }
+}
+
+impl From<LBA> for BlockList {
+    fn from(value: LBA) -> Self {
+        BlockGroup::new(value, value).into()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum BlockListAccess {
+    OnDevice(BlockListHead),
+    InMem(BlockList),
+    Both(BlockList, BlockListHead),
+}
+
+impl BlockListAccess {
+    pub fn get_list(&self) -> &BlockList {
+        match self {
+            BlockListAccess::OnDevice(_) => panic!("BlockListAccess not resolved to InMem"),
+            BlockListAccess::InMem(list) | BlockListAccess::Both(list, _) => list,
+        }
+    }
+
+    pub fn get_list_mut(&mut self) -> &mut BlockList {
+        match self {
+            BlockListAccess::OnDevice(_) => panic!("BlockListAccess not resolved to InMem"),
+            BlockListAccess::InMem(list) | BlockListAccess::Both(list, _) => list,
+        }
+    }
+}
+
+impl From<BlockListHead> for BlockListAccess {
+    fn from(value: BlockListHead) -> Self {
+        Self::OnDevice(value)
+    }
+}
+
+impl From<BlockList> for BlockListAccess {
+    fn from(value: BlockList) -> Self {
+        Self::InMem(value)
+    }
+}
+
+impl From<LBA> for BlockListAccess {
+    fn from(value: LBA) -> Self {
+        BlockListHead::from(value).into()
     }
 }
 
@@ -300,5 +429,144 @@ where
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         (0, self.group_iter.size_hint().1)
+    }
+}
+
+#[derive_where::derive_where(Debug)]
+pub struct FileNode<I> {
+    pub id: FileId,
+    pub parent: Option<FileId>,
+    pub typ: FileType,
+    pub permissions: [Perm; 4],
+    pub uid: u32,
+    pub gid: u32,
+    /// The size of the file
+    ///
+    /// See [crate::fs_structs::FileNode::size]
+    pub size: u64,
+    pub created_at: Timestamp,
+    pub modified_at: Timestamp,
+
+    #[derive_where(skip)]
+    pub block_data: ReadWriteCell<BlockListAccess, I>,
+    /// The number of blocks used by the FileNode
+    ///
+    /// See [crate::fs_structs::FileNode::block_cont]
+    pub block_count: u64,
+}
+
+impl<I: InterruptState> Clone for FileNode<I> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            parent: self.parent.clone(),
+            typ: self.typ.clone(),
+            permissions: self.permissions.clone(),
+            uid: self.uid.clone(),
+            gid: self.gid.clone(),
+            size: self.size.clone(),
+            created_at: self.created_at.clone(),
+            modified_at: self.modified_at.clone(),
+            block_data: ReadWriteCell::new(self.block_data.read().clone()),
+            block_count: self.block_count.clone(),
+        }
+    }
+}
+
+impl<I: InterruptState> FileNode<I> {
+    pub fn new(
+        id: FileId,
+        parent: Option<FileId>,
+        typ: FileType,
+        size: u64,
+        block_data: BlockListAccess,
+        block_count: u64,
+    ) -> Self {
+        Self {
+            id,
+            parent,
+            typ,
+            permissions: [Perm::empty(); 4],
+            uid: 0,
+            gid: 0,
+            size,
+            created_at: Timestamp::zero(),
+            modified_at: Timestamp::zero(),
+            block_data: ReadWriteCell::new(block_data),
+            block_count,
+        }
+    }
+
+    pub fn write<D: BlockDevice>(
+        &self,
+        device: &mut D,
+        block_allocator: &mut BlockAllocator,
+    ) -> Result<FsFileNode, FsError> {
+        let mut block_data_guard = self.block_data.write();
+
+        let block_data = match &mut *block_data_guard {
+            BlockListAccess::OnDevice(data) => *data,
+            BlockListAccess::InMem(list) | BlockListAccess::Both(list, _) => {
+                let head = list.write(device, block_allocator)?;
+
+                // temp write a bogus value to the block_data so that I can update the entire
+                // access. This is ok, because I have the write gaurd already so no one will be
+                // able to read the fake value
+                let list = core::mem::replace(list, LBA::MAX.into());
+                *block_data_guard = BlockListAccess::Both(list, head);
+
+                head
+            }
+        };
+
+        Ok(FsFileNode {
+            id: self.id,
+            parent: self.parent,
+            typ: self.typ,
+            permissions: self.permissions,
+            _unused: [0; 3],
+            uid: self.uid,
+            gid: self.gid,
+            size: self.size,
+            created_at: self.created_at,
+            modified_at: self.modified_at,
+            block_data,
+            block_count: self.block_count,
+        })
+    }
+
+    pub fn resolve_block_data<D: BlockDevice>(&self, device: &D) -> Result<(), FsError> {
+        let read_guard = self.block_data.read();
+        match &*read_guard {
+            BlockListAccess::OnDevice(_) => {
+                drop(read_guard);
+                let mut block_data = self.block_data.write();
+                if let BlockListAccess::OnDevice(head) = &*block_data {
+                    let list = head.read(device)?;
+                    *block_data = BlockListAccess::InMem(list);
+                }
+            }
+            BlockListAccess::InMem(_) | BlockListAccess::Both(_, _) => {}
+        }
+
+        Ok(())
+    }
+}
+
+impl<I> From<FsFileNode> for FileNode<I> {
+    fn from(device_node: FsFileNode) -> Self {
+        Self {
+            id: device_node.id,
+            parent: device_node.parent,
+            typ: device_node.typ,
+            permissions: device_node.permissions,
+            uid: device_node.uid,
+            gid: device_node.gid,
+            size: device_node.size,
+            created_at: device_node.created_at,
+            modified_at: device_node.modified_at,
+            block_data: ReadWriteCell::new(BlockListAccess::OnDevice(device_node.block_data)),
+            block_count: device_node.block_count,
+        }
     }
 }

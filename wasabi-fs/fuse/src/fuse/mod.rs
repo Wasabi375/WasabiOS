@@ -10,7 +10,7 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 use uuid::Uuid;
-use wfs::fs_structs::{self, FileId, FileNode};
+use wfs::fs_structs::{self, FileId};
 use wfs::{
     BLOCK_SIZE, blocks_required_for,
     fs::{FileSystem, FsError, FsReadOnly, FsReadWrite, FsWrite, OverrideCheck},
@@ -18,6 +18,8 @@ use wfs::{
 };
 
 use crate::{block_device::FileDevice, fuse::errno::fs_error_no};
+
+type FileNode = wfs::mem_structs::FileNode<StdInterruptState>;
 
 #[allow(unused_imports)]
 use libc::{EINVAL, EIO, ENOENT, ENOSYS};

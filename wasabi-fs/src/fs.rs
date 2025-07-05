@@ -21,8 +21,14 @@ use alloc::{
 use hashbrown::HashMap;
 use log::{debug, error, info, trace, warn};
 use shared::{
-    alloc_ext::owned_slice::OwnedSlice, counts_required_for, rangeset::RangeSet,
-    sync::InterruptState, todo_warn,
+    alloc_ext::owned_slice::OwnedSlice,
+    counts_required_for,
+    rangeset::RangeSet,
+    sync::{
+        InterruptState,
+        lockcell::{RWLockCell, ReadWriteCell},
+    },
+    todo_warn,
 };
 use static_assertions::const_assert;
 use staticvec::StaticVec;
@@ -36,11 +42,11 @@ use crate::{
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
         self, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockListHead, BlockString,
-        BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode, FileType,
+        BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode as FsFileNode, FileType,
         FreeBlockGroups, FsStatus, MainHeader, MainTransientHeader, Perm, Timestamp, TreeNode,
     },
     interface::{BlockDevice, BlockDeviceOrMemError, WriteData},
-    mem_structs::{self, Directory, DirectoryChange, DirectoryEntry},
+    mem_structs::{self, BlockList, Directory, DirectoryChange, DirectoryEntry, FileNode},
     mem_tree::{self, MemTree, MemTreeError},
 };
 
@@ -484,7 +490,7 @@ where
         }
 
         let root_dir = mem_structs::Directory::ROOT;
-        let root_dir_block = root_dir.store(&mut fs)?.lba;
+        let root_dir_block = root_dir.write(&mut fs)?.lba;
 
         let root_dir_node = Box::try_new(FileNode::new(
             FileId::ROOT,
@@ -730,7 +736,7 @@ where
 }
 
 impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
-    pub fn read_file_attr(&self, id: FileId) -> Result<Option<Arc<FileNode>>, FsError> {
+    pub fn read_file_attr(&self, id: FileId) -> Result<Option<Arc<FileNode<I>>>, FsError> {
         self.mem_tree
             .find(&self.device, id)
             .map_err(map_device_error)
@@ -798,8 +804,12 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
             });
         }
 
-        let block_group = metadata.block_data.single();
-        assert_eq!(block_group.count(), 1);
+        metadata.resolve_block_data(&self.device)?;
+        let block_data = metadata.block_data.read();
+        let block_data = block_data.get_list();
+
+        assert_eq!(block_data.block_count(), 1);
+        let block_group = block_data.single();
         Directory::load(self, DevicePointer::new(block_group.start))
     }
 
@@ -826,16 +836,18 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
             });
         }
 
-        let groups = metadata.block_data.read(&self.device)?;
-        let groups = groups.iter_partial(offset, size);
+        metadata.resolve_block_data(&self.device)?;
 
-        let offset_in_first_block = groups
+        let block_data = metadata.block_data.read();
+        let block_list = block_data.get_list().iter_partial(offset, size);
+
+        let offset_in_first_block = block_list
             .clone()
             .next()
             .expect("There should be a block for this file")
             .offset;
 
-        let data = self.device.read_blocks(groups.map(|g| g.group))?;
+        let data = self.device.read_blocks(block_list.map(|g| g.group))?;
 
         let start = offset_in_first_block as usize;
         let end = (offset_in_first_block + size) as usize;
@@ -857,7 +869,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             match dir_change {
                 DirectoryChange::Created { dir_id, dir } => {
                     trace!("apply new dir created {dir_id:?}: {dir:?}");
-                    let dir_lba = dir.store(self)?.lba;
+                    let dir_lba = dir.write(self)?.lba;
 
                     let dir_node = Arc::try_new(FileNode::new(
                         dir_id,
@@ -906,10 +918,10 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
             trace!("update dir {dir_id:?}: {changed_dir:?}");
 
-            let new_lba = changed_dir.store(self)?.lba;
+            let new_lba = changed_dir.write(self)?.lba;
 
             let mut new_node = FileNode::clone(&file_node);
-            new_node.block_data = new_lba.into();
+            new_node.block_data = ReadWriteCell::new(new_lba.into());
 
             let new_node = Arc::try_new(new_node)?;
 
@@ -1132,6 +1144,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             warn!("Writing 0 bytes to file {id:?}");
             return Ok(());
         }
+        file_node.resolve_block_data(&self.device)?;
 
         let mut file_node = Cow::Borrowed(file_node.as_ref());
 
@@ -1143,7 +1156,12 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             let blocks_to_alloc = blocks_required_for!(write_len) - file_node.block_count;
             let new_blocks = self.block_allocator.allocate(blocks_to_alloc)?;
 
-            todo!("alloc more blocks and update block_count in file_node")
+            let mut block_list = file_node.block_data.read().get_list().clone();
+
+            block_list.push(new_blocks);
+
+            file_node.block_count = block_list.block_count();
+            file_node.block_data = ReadWriteCell::new(block_list.into());
         }
 
         let keep_last_block_data = if write_len > file_node.size {
@@ -1156,7 +1174,12 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             true
         };
 
-        self.write_blocks_partial(&file_node.block_data, offset, data, keep_last_block_data)?;
+        self.write_blocks_partial(
+            &file_node.block_data.read().get_list(),
+            offset,
+            data,
+            keep_last_block_data,
+        )?;
 
         if let Cow::Owned(file_node) = file_node {
             let file_node = Arc::try_new(file_node)?;
@@ -1169,7 +1192,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
     fn write_blocks_partial(
         &mut self,
-        block_head: &BlockListHead,
+        block_list: &BlockList,
         offset: u64,
         data: &[u8],
         keep_last_block_data: bool,
@@ -1179,11 +1202,9 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         let offset_in_first_block = offset - (offset_block_skip * BLOCK_SIZE as u64);
         let required_block_count = blocks_required_for!(offset_in_first_block + data.len() as u64);
 
-        let groups = block_head.read(&self.device)?;
+        assert!(block_list.iter().map(|g| g.count()).sum::<u64>() >= required_block_count);
 
-        assert!(groups.iter().map(|g| g.count()).sum::<u64>() >= required_block_count);
-
-        let groups = groups.iter_partial(offset, data.len() as u64);
+        let groups = block_list.iter_partial(offset, data.len() as u64);
 
         let old_start_block: Option<Box<BlockSlice>>;
         let old_end_block: Option<Box<BlockSlice>>;

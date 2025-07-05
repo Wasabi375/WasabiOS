@@ -402,6 +402,7 @@ impl BlockAllocator {
     }
 }
 
+// TODO merge with mem_structs::BlockList?
 #[derive(Clone, Default)]
 pub struct BlockGroupList {
     pub groups: Vec<BlockGroup>,

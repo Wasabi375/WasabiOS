@@ -31,12 +31,13 @@ use thiserror::Error;
 use crate::{
     Block,
     block_allocator::BlockAllocator,
-    fs::{FsError, map_device_error},
+    fs::{FileSystem, FsError, FsWrite, map_device_error},
     fs_structs::{
-        DevicePointer, FileId, FileNode, LEAVE_MAX_FILE_COUNT, MainHeader, NODE_MAX_CHILD_COUNT,
-        TreeNode,
+        DevicePointer, FileId, FileNode as FsFileNode, LEAVE_MAX_FILE_COUNT, MainHeader,
+        NODE_MAX_CHILD_COUNT, TreeNode,
     },
     interface::BlockDevice,
+    mem_structs::FileNode,
 };
 
 use self::iter::MemTreeNodeIter;
@@ -294,7 +295,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         device: &D,
         id: FileId,
-    ) -> Result<Option<Arc<FileNode>>, FsError> {
+    ) -> Result<Option<Arc<FileNode<I>>>, FsError> {
         let leave = self.find_leave::<_, node_guard::Immut>(device, id)?;
         let MemTreeNode::Leave { files, lock, .. } = leave.borrow() else {
             panic!("Find leave should always return a leave node");
@@ -308,7 +309,7 @@ impl<I: InterruptState> MemTree<I> {
     pub fn create<D: BlockDevice>(
         &self,
         device: &D,
-        file: Arc<FileNode>,
+        file: Arc<FileNode<I>>,
     ) -> Result<(), MemTreeError> {
         self.insert(device, file, true)
     }
@@ -316,7 +317,7 @@ impl<I: InterruptState> MemTree<I> {
     pub fn update<D: BlockDevice>(
         &self,
         device: &D,
-        file: Arc<FileNode>,
+        file: Arc<FileNode<I>>,
     ) -> Result<(), MemTreeError> {
         self.insert(device, file, false)
     }
@@ -324,7 +325,7 @@ impl<I: InterruptState> MemTree<I> {
     fn insert<D: BlockDevice>(
         &self,
         device: &D,
-        file: Arc<FileNode>,
+        file: Arc<FileNode<I>>,
         create_only: bool,
     ) -> Result<(), MemTreeError> {
         let mut leave = self
@@ -586,7 +587,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         device: &D,
         file_id: FileId,
-    ) -> Result<Arc<FileNode>, MemTreeError> {
+    ) -> Result<Arc<FileNode<I>>, MemTreeError> {
         // NOTE: this will have to resolve on-device only nodes because we want to delete from the
         // device and not just the in memory FileNode. Therefor in order to keep the tree balanced
         // we have to find the file even if it is not in memory. Therefor it is ok to use
@@ -1258,7 +1259,7 @@ pub(crate) enum MemTreeNode<I> {
         parent: Option<NonNull<MemTreeNode<I>>>,
 
         /// files sorted based on their id
-        files: StaticVec<Arc<FileNode>, LEAVE_MAX_FILE_COUNT>,
+        files: StaticVec<Arc<FileNode<I>>, LEAVE_MAX_FILE_COUNT>,
         /// set if any file is modfied.
         dirty: bool,
         /// lock for updating this node
@@ -1271,59 +1272,43 @@ impl<I: InterruptState> MemTreeNode<I> {
         device_node: TreeNode,
         parent: Option<NonNull<MemTreeNode<I>>>,
     ) -> Result<Self, AllocError> {
-        let result = match device_node {
-            TreeNode::Leave { files, .. } => Self::Leave {
-                parent,
-                files: files
-                    .iter()
-                    .map(|f| Arc::try_new(f.clone()))
-                    .collect::<Result<StaticVec<Arc<FileNode>, LEAVE_MAX_FILE_COUNT>, AllocError>>(
-                    )?,
-                dirty: false,
-                lock: UnsafeTicketLock::new(),
-            },
-            TreeNode::Node { children, .. } => Self::Node {
-                parent,
-                children: children
-                    .iter()
-                    .map(|(device_link, max)| {
-                        (
-                            MemTreeLink {
-                                node: None,
-                                device_ptr: Some(*device_link),
-                            },
-                            *max,
-                        )
-                    })
-                    .collect(),
-                dirty: false,
-                dirty_children: false,
-                lock: UnsafeTicketLock::new(),
-            },
-        };
+        let result =
+            match device_node {
+                TreeNode::Leave { files, .. } => {
+                    Self::Leave {
+                        parent,
+                        files:
+                            files
+                                .iter()
+                                .map(|f| Arc::try_new(f.clone().into()))
+                                .collect::<Result<
+                                    StaticVec<Arc<FileNode<I>>, LEAVE_MAX_FILE_COUNT>,
+                                    AllocError,
+                                >>()?,
+                        dirty: false,
+                        lock: UnsafeTicketLock::new(),
+                    }
+                }
+                TreeNode::Node { children, .. } => Self::Node {
+                    parent,
+                    children: children
+                        .iter()
+                        .map(|(device_link, max)| {
+                            (
+                                MemTreeLink {
+                                    node: None,
+                                    device_ptr: Some(*device_link),
+                                },
+                                *max,
+                            )
+                        })
+                        .collect(),
+                    dirty: false,
+                    dirty_children: false,
+                    lock: UnsafeTicketLock::new(),
+                },
+            };
         Ok(result)
-    }
-
-    fn to_tree_node(&self, parent: Option<DevicePointer<TreeNode>>) -> TreeNode {
-        match self {
-            MemTreeNode::Node { children, .. } => TreeNode::Node {
-                parent,
-                children: children
-                    .iter()
-                    .map(|(link, max_id)| {
-                        (
-                            link.device_ptr
-                                .expect("device_ptr should be set at this point"),
-                            *max_id,
-                        )
-                    })
-                    .collect(),
-            },
-            MemTreeNode::Leave { files, .. } => TreeNode::Leave {
-                parent,
-                files: files.iter().map(|f| (**f).clone()).collect(),
-            },
-        }
     }
 
     fn has_dirty_leaves(&self) -> bool {
@@ -1591,8 +1576,7 @@ impl<I: InterruptState> MemTreeLink<I> {
         &mut self,
         parent_ptr: Option<DevicePointer<TreeNode>>,
         device: &mut D,
-        block_allocator: &mut BlockAllocator,
-        // TODO add ignore dirty flag for error recovery
+        block_allocator: &mut BlockAllocator, // TODO add ignore dirty flag for error recovery
     ) -> Result<(), FsError> {
         let Some(node) = self.node.as_mut() else {
             assert!(
@@ -1632,7 +1616,34 @@ impl<I: InterruptState> MemTreeLink<I> {
             MemTreeNode::Leave { dirty, .. } => *dirty,
         };
         if dirty {
-            let tree_node = Block::new(node.to_tree_node(parent_ptr));
+            let tree_node = match &node {
+                MemTreeNode::Node { children, .. } => TreeNode::Node {
+                    parent: parent_ptr,
+                    children: children
+                        .iter()
+                        .map(|(link, max_id)| {
+                            (
+                                link.device_ptr
+                                    .expect("device_ptr should be set at this point"),
+                                *max_id,
+                            )
+                        })
+                        .collect(),
+                },
+                MemTreeNode::Leave { files, .. } => {
+                    let mut fs_files = StaticVec::new();
+
+                    for file in files {
+                        fs_files.push(file.write(device, block_allocator)?);
+                    }
+
+                    TreeNode::Leave {
+                        parent: parent_ptr,
+                        files: fs_files,
+                    }
+                }
+            };
+            let tree_node = Block::new(tree_node);
 
             device
                 .write_block(device_ptr.lba, tree_node.block_data())
@@ -1669,7 +1680,7 @@ mod test_mem_only {
         sync::atomic::{AtomicBool, AtomicPtr},
     };
 
-    use shared::sync::lockcell::UnsafeTicketLock;
+    use shared::sync::lockcell::{ReadWriteCell, UnsafeTicketLock};
     use staticvec::StaticVec;
     use testing::{
         KernelTestError, TestUnwrapExt, kernel_test, multiprocessor::TestInterruptState, t_assert,
@@ -1679,14 +1690,15 @@ mod test_mem_only {
     use crate::{
         BlockGroup, LBA,
         fs_structs::{
-            BlockListHead, DevicePointer, DeviceStringHead, FileId, FileNode, FileType, Perm,
-            Timestamp,
+            BlockListHead, DevicePointer, DeviceStringHead, FileId, FileType, Perm, Timestamp,
         },
         interface::test::TestBlockDevice,
         mem_tree::MemTreeError,
     };
 
     use super::{MemTree, MemTreeLink, MemTreeNode};
+
+    type FileNode = crate::mem_structs::FileNode<TestInterruptState>;
 
     fn create_empty_tree() -> MemTree<TestInterruptState> {
         MemTree::empty(None)
@@ -1698,16 +1710,12 @@ mod test_mem_only {
             parent: None,
             typ: FileType::File,
             permissions: [Perm::all(); 4],
-            _unused: [0; 3],
             uid: 0,
             gid: 0,
             size: 0,
             created_at: Timestamp::zero(),
             modified_at: Timestamp::zero(),
-            block_data: BlockListHead::Single(BlockGroup::new(
-                LBA::new(0).unwrap(),
-                LBA::new(0).unwrap(),
-            )),
+            block_data: ReadWriteCell::new(LBA::new(0).unwrap().into()),
             block_count: 1,
         })
     }

@@ -83,7 +83,7 @@ impl<T> core::ops::Receiver for DevicePointer<T> {
 }
 
 /// Either a single [BlockGroup] or a [DevicePointer] to a [BlockList]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub enum BlockListHead {
     Single(BlockGroup),
@@ -97,22 +97,12 @@ impl From<LBA> for BlockListHead {
 }
 
 impl BlockListHead {
-    pub fn single(&self) -> &BlockGroup {
-        match self {
-            BlockListHead::Single(g) => g,
-            BlockListHead::List(_) => panic!("BlockListHead is a list, requested Single"),
-        }
-    }
-
-    pub fn read<D: BlockDevice>(&self, device: &D) -> Result<mem_structs::BlockList, FsError> {
-        match *self {
-            BlockListHead::Single(group) => Ok(group.into()),
-            BlockListHead::List(head) => Ok(head.read(device)?.into()),
-        }
+    pub fn read<D: BlockDevice>(self, device: &D) -> Result<mem_structs::BlockList, FsError> {
+        mem_structs::BlockList::read(self, device)
     }
 }
 
-const BLOCK_LIST_GROUP_COUNT: usize = (BLOCK_SIZE
+pub const BLOCK_LIST_GROUP_COUNT: usize = (BLOCK_SIZE
     - (size_of::<u8>() + size_of::<DevicePointer<BlockList>>()))
     / size_of::<BlockGroup>();
 
@@ -131,23 +121,6 @@ pub struct BlockList {
 }
 const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<BlockList>() <= 100);
-
-impl BlockList {
-    pub fn read<D: BlockDevice>(
-        self: DevicePointer<BlockList>,
-        device: &D,
-    ) -> Result<Vec<BlockGroup>, FsError> {
-        todo!("read BlockList from device")
-    }
-
-    pub fn write<D: BlockDevice>(
-        block_list: &[BlockGroup],
-        device: &mut D,
-        block_allocator: BlockAllocator,
-    ) -> Result<DevicePointer<Self>, FsError> {
-        todo!("write BlockList to device")
-    }
-}
 
 impl BlockConstructable for BlockList {}
 
