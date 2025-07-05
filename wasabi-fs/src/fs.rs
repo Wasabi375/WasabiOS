@@ -282,7 +282,6 @@ where
 
         // NOTE: should be done last as flushing other data will most likely update the allocator
         if self.block_allocator.is_dirty() || self.header_data.free_blocks.is_none() {
-            // TODO This assert fails on "fuse-bin info" on a newly created fs image
             assert_matches!(
                 self.access_mode,
                 AccessMode::ReadWrite,

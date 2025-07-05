@@ -17,17 +17,17 @@ use shared::sync::lockcell::RWLockCell;
 use super::{ptr::UntypedPtr, structs::Pages};
 use crate::{
     mem::{
-        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
-        MemError, Result,
+        MemError, Result, frame_allocator::FrameAllocator, page_allocator::PageAllocator,
+        page_table::PageTable,
     },
     prelude::{LockCell, TicketLock, UnwrapTicketLock},
 };
 
 use core::{
     alloc::{GlobalAlloc, Layout},
-    mem::{align_of, size_of, MaybeUninit},
+    mem::{MaybeUninit, align_of, size_of},
     ops::DerefMut,
-    ptr::{null_mut, NonNull},
+    ptr::{NonNull, null_mut},
     sync::atomic::{AtomicBool, Ordering},
 };
 use linked_list_allocator::Heap as LinkedHeap;
@@ -559,6 +559,8 @@ impl MutAllocator for KernelHeap {
                 return slab.alloc(layout);
             }
         }
+
+        // TODO do I want a fast path for allocating exact pages?
 
         #[cfg(feature = "mem-stats")]
         if let Some(stats) = self.stats.as_mut() {

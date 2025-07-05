@@ -464,10 +464,7 @@ const_assert!(LEAVE_MAX_FILE_COUNT % 2 == 0);
 
 pub(crate) const NODE_MAX_CHILD_COUNT: usize = {
     if cfg!(not(any(test, feature = "test-tree-branching"))) {
-        // TODO This could be increased to roughly 250.
-        // Right now I want this to be small in order to
-        // test the tree
-        30
+        250
     } else {
         30
     }
