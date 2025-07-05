@@ -1614,42 +1614,43 @@ impl<I: InterruptState> MemTreeLink<I> {
             }
             MemTreeNode::Leave { dirty, .. } => *dirty,
         };
-        if dirty {
-            let tree_node = match &node {
-                MemTreeNode::Node { children, .. } => TreeNode::Node {
-                    parent: parent_ptr,
-                    children: children
-                        .iter()
-                        .map(|(link, max_id)| {
-                            (
-                                link.device_ptr
-                                    .expect("device_ptr should be set at this point"),
-                                *max_id,
-                            )
-                        })
-                        .collect(),
-                },
-                MemTreeNode::Leave { files, .. } => {
-                    let mut fs_files = StaticVec::new();
-
-                    for file in files {
-                        fs_files.push(file.write(device, block_allocator)?);
-                    }
-
-                    TreeNode::Leave {
-                        parent: parent_ptr,
-                        files: fs_files,
-                    }
-                }
-            };
-            let tree_node = Block::new(tree_node);
-
-            device
-                .write_block(device_ptr.lba, tree_node.block_data())
-                .map_err(map_device_error)?;
-
-            *node.dirty_mut() = false;
+        if !dirty {
+            return Ok(());
         }
+        let tree_node = match &node {
+            MemTreeNode::Node { children, .. } => TreeNode::Node {
+                parent: parent_ptr,
+                children: children
+                    .iter()
+                    .map(|(link, max_id)| {
+                        (
+                            link.device_ptr
+                                .expect("device_ptr should be set at this point"),
+                            *max_id,
+                        )
+                    })
+                    .collect(),
+            },
+            MemTreeNode::Leave { files, .. } => {
+                let mut fs_files = StaticVec::new();
+
+                for file in files {
+                    fs_files.push(file.write(device, block_allocator)?);
+                }
+
+                TreeNode::Leave {
+                    parent: parent_ptr,
+                    files: fs_files,
+                }
+            }
+        };
+        let tree_node = Block::new(tree_node);
+
+        device
+            .write_block(device_ptr.lba, tree_node.block_data())
+            .map_err(map_device_error)?;
+
+        *node.dirty_mut() = false;
 
         Ok(())
     }
