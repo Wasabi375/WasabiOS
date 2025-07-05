@@ -523,40 +523,58 @@ pub struct DirectoryEntry {
     pub file_id: FileId,
 }
 
-/// The maximum number of entries within a [Directory] block.
+pub(crate) const DIRECTORY_HEAD_ENTRY_COUNT: usize = 33;
+
+/// On Device information for a directory.
 ///
-/// If a Directory has more entries a new [Directory] block is linked in [Directory::next]
-pub(crate) const DIRECTORY_BLOCK_ENTRY_COUNT: usize = 33;
+/// [FileNode::block_data] links to this if [FileType] is [FileType::Directory]
+///
+/// If a Directory has more entries than fit within [DirectoryHead] a new [DirectoryPart] block is
+/// linked in [DirectoryHead::next]/[DirectoryPart::next]
 #[repr(C)]
-pub struct Directory {
-    /// total number of entries within the [Directory]
+pub struct DirectoryHead {
+    /// [FileId] for the parent directory
+    pub parent: Option<FileId>,
+    /// total number of entries within the directory
     pub entry_count: LittleEndian<u64>,
-    /// [FileId]s of each [FileNode] within this [Directory]
-    pub entries: StaticVec<DirectoryEntry, DIRECTORY_BLOCK_ENTRY_COUNT, u8>,
-    /// if [Self::entry_count] is greater than [DIRECTORY_BLOCK_ENTRY_COUNT] this
-    /// points to the next [Directory] block
-    pub next: Option<DevicePointer<Directory>>,
-    /// Set to `true` if this is the first block in the linked list describing the Directory
-    pub is_head: bool,
+    /// [FileId]s of each [FileNode] within this directory
+    pub entries: StaticVec<DirectoryEntry, DIRECTORY_HEAD_ENTRY_COUNT, u8>,
+    /// if [Self::entry_count] is greater than [DIRECTORY_HEAD_ENTRY_COUNT] this
+    /// points to the next [DirectoryPart] block
+    pub next: Option<DevicePointer<DirectoryPart>>,
 }
-const_assert!(size_of::<Directory>() <= BLOCK_SIZE);
-const_assert!(BLOCK_SIZE - size_of::<Directory>() <= size_of::<DirectoryEntry>());
+const_assert!(size_of::<DirectoryHead>() <= BLOCK_SIZE);
+const_assert!(BLOCK_SIZE - size_of::<DirectoryHead>() <= size_of::<DirectoryEntry>());
 
-impl BlockConstructable for Directory {}
+impl BlockConstructable for DirectoryHead {}
 
-impl Default for Directory {
-    fn default() -> Self {
-        Self {
-            entry_count: 0.into(),
-            entries: StaticVec::new(),
-            next: None,
-            is_head: true,
-        }
+impl BlockLinkedList for DirectoryHead {
+    type Next = DirectoryPart;
+
+    fn next(&self) -> Option<DevicePointer<Self::Next>> {
+        self.next
     }
 }
 
-impl BlockLinkedList for Directory {
-    type Next = Directory;
+pub(crate) const DIRECTORY_PART_ENTRY_COUNT: usize = (BLOCK_SIZE
+    - (size_of::<u8>() + size_of::<Option<DevicePointer<DirectoryPart>>>()))
+    / size_of::<DirectoryEntry>();
+
+/// On device extension for [DirectoryHead] if there are too many
+/// [DirectoryEntries](DirectoryEntry)
+#[repr(C)]
+pub struct DirectoryPart {
+    pub entries: StaticVec<DirectoryEntry, DIRECTORY_PART_ENTRY_COUNT, u8>,
+
+    pub next: Option<DevicePointer<DirectoryPart>>,
+}
+const_assert!(size_of::<DirectoryPart>() <= BLOCK_SIZE);
+const_assert!(BLOCK_SIZE - size_of::<DirectoryPart>() <= size_of::<DirectoryEntry>());
+
+impl BlockConstructable for DirectoryPart {}
+
+impl BlockLinkedList for DirectoryPart {
+    type Next = Self;
 
     fn next(&self) -> Option<DevicePointer<Self::Next>> {
         self.next

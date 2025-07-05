@@ -79,24 +79,14 @@ pub enum FsError {
     OverrideCheck,
     #[error("Write allocator failed to allocate blocks for free list")]
     WriteAllocatorFreeList,
-    #[error("Main header and backup header did not match")]
-    HeaderMismatch,
     #[error("Header version is {0:?} but fs is at version {FS_VERSION:?}")]
     HeaderVersionMismatch([u8; 4]),
-    #[error("Header did not start with the magic string \"WasabiFs\"")]
-    HeaderMagicInvalid,
-    #[error("The main header does not include the transient block")]
-    HeaderWithoutTransient,
     #[error("The file sytem is not fully initialized")]
     NotInitialized,
     #[error("Failed to compare exchange block to often. Giving up")]
     CompareExchangeFailedToOften,
     #[error("Fs is already mounted by someone else")]
     AlreadyMounted,
-    #[error("Malformed string encountered. String did not match specified length")]
-    MalformedStringLength,
-    #[error("Malformed string encountered. String must be utf-8 encoded: {0:?}")]
-    MalformedStringUtf8(#[from] FromUtf8Error),
     #[error("String length must fit within a u32")]
     StringToLong,
     #[error("Out of Memory")]
@@ -113,6 +103,8 @@ pub enum FsError {
     },
     #[error("Read size of 0 bytes is not allowed")]
     ReadZeroBytes,
+    #[error("Malformed FileSystem on device: {0}")]
+    MalformedFs(#[from] FsMalformedError),
 }
 
 impl From<MemTreeError> for FsError {
@@ -166,6 +158,23 @@ impl<E: Error + Send + Sync + 'static> From<BlockDeviceOrMemError<E>> for FsErro
 
 pub fn map_device_error<E: Error + Send + Sync + 'static>(e: E) -> FsError {
     FsError::BlockDevice(Box::new(e))
+}
+
+#[derive(Error, Debug)]
+#[allow(missing_docs)]
+pub enum FsMalformedError {
+    #[error("Header did not start with the magic string \"WasabiFs\"")]
+    HeaderMagicInvalid,
+    #[error("The main header does not include the transient block")]
+    HeaderWithoutTransient,
+    #[error("Main header and backup header did not match")]
+    HeaderMismatch,
+    #[error("Expected directory to have {0} entries but found at least {1}")]
+    DirectoryEntryCountMismatch(usize, usize),
+    #[error("Malformed string encountered. String did not match specified length")]
+    MalformedStringLength,
+    #[error("Malformed string encountered. String must be utf-8 encoded: {0:?}")]
+    MalformedStringUtf8(#[from] FromUtf8Error),
 }
 
 pub trait FsWrite {}
@@ -550,13 +559,13 @@ where
         let header = fs.header()?;
 
         if header.magic != MainHeader::MAGIC {
-            return Err(FsError::HeaderMagicInvalid);
+            return Err(FsMalformedError::HeaderMagicInvalid.into());
         }
         if header.version != FS_VERSION {
             return Err(FsError::HeaderVersionMismatch(header.version));
         }
         if header.transient.is_none() {
-            return Err(FsError::HeaderWithoutTransient);
+            return Err(FsMalformedError::HeaderWithoutTransient.into());
         }
         if header.transient.unwrap().status != FsStatus::Ready {
             return Err(FsError::NotInitialized);
@@ -582,7 +591,7 @@ where
         };
 
         if !header.matches_backup(&backup_header) {
-            return Err(FsError::HeaderMismatch);
+            return Err(FsMalformedError::HeaderMismatch.into());
         }
 
         let name = header.name.map(|name| fs.read_string(name)).transpose()?;
@@ -766,7 +775,7 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
             let block = unsafe {
                 // We are reading a string
                 self.device
-                    .read_pointer(next_ptr.ok_or(FsError::MalformedStringLength)?)
+                    .read_pointer(next_ptr.ok_or(FsMalformedError::MalformedStringLength)?)
             }
             .map_err(map_device_error)?;
             next_ptr = block.next;
@@ -777,7 +786,9 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
             length_remaining -= length_in_block;
         }
 
-        Ok(String::from_utf8(string)?.into_boxed_str())
+        Ok(String::from_utf8(string)
+            .map_err(FsMalformedError::from)?
+            .into_boxed_str())
     }
 
     pub fn read_string(&self, string_ptr: DevicePointer<BlockString>) -> Result<Box<str>, FsError> {
@@ -809,7 +820,7 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
 
         assert_eq!(block_data.block_count(), 1);
         let block_group = block_data.single();
-        Directory::load(self, DevicePointer::new(block_group.start))
+        Directory::read(self, DevicePointer::new(block_group.start))
     }
 
     pub fn read_file(
@@ -977,9 +988,10 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
     pub fn write_string_head<const N: usize>(
         &mut self,
-        head: &mut DeviceStringHead<N>,
         string: &str,
-    ) -> Result<(), FsError> {
+    ) -> Result<DeviceStringHead<N>, FsError> {
+        let mut head = DeviceStringHead::default();
+
         let string = string.as_bytes();
         let (length_in_parts, length_in_head) = if string.len() > BLOCK_STRING_DATA_LENGTH {
             (
@@ -999,7 +1011,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
         if length_in_parts == 0 {
             head.next = None;
-            return Ok(());
+            return Ok(head);
         }
 
         let part_substr = &string[N..];
@@ -1012,7 +1024,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         // TODO on error in string_parts I need to free the blocks
         head.next = Some(next);
 
-        Ok(())
+        Ok(head)
     }
 
     /// Writes a string to the device

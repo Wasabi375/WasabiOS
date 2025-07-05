@@ -10,15 +10,10 @@ pub fn fs_error_no(err: FsError) -> c_int {
         FsError::BlockDeviceToSmall(_, _) => EINVAL,
         FsError::OverrideCheck => EINVAL,
         FsError::WriteAllocatorFreeList => ENOSPC,
-        FsError::HeaderMismatch => EIO,
         FsError::HeaderVersionMismatch(_) => ENOTSUP,
-        FsError::HeaderMagicInvalid => EINVAL,
-        FsError::HeaderWithoutTransient => EINVAL,
         FsError::NotInitialized => EINVAL,
         FsError::CompareExchangeFailedToOften => EBUSY,
         FsError::AlreadyMounted => EINVAL,
-        FsError::MalformedStringLength => EIO,
-        FsError::MalformedStringUtf8(_) => EIO,
         FsError::StringToLong => EINVAL,
         FsError::BlockDeviceFull(_) => ENOSPC,
         FsError::Oom => ENOMEM,
@@ -32,5 +27,6 @@ pub fn fs_error_no(err: FsError) -> c_int {
         FsError::FileDoesNotExist(_) => ENOENT,
         FsError::FileTypeMismatch { .. } => EINVAL,
         FsError::ReadZeroBytes => EINVAL,
+        FsError::MalformedFs(_) => EIO,
     }
 }

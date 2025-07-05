@@ -2,10 +2,11 @@ use core::cmp::{max, min};
 use core::sync::atomic::AtomicU64;
 
 use crate::block_allocator::{BlockAllocator, BlockGroupList};
-use crate::fs::{FsError, FsWrite, map_device_error};
+use crate::fs::{FsError, FsMalformedError, FsWrite, map_device_error};
 use crate::fs_structs::{
-    BLOCK_LIST_GROUP_COUNT, BlockListHead, DIRECTORY_BLOCK_ENTRY_COUNT, Directory as FsDirectory,
-    DirectoryEntry as FsDirectoryEntry, FileNode as FsFileNode, FileType, Perm, Timestamp,
+    BLOCK_LIST_GROUP_COUNT, BlockListHead, DIRECTORY_HEAD_ENTRY_COUNT, DIRECTORY_PART_ENTRY_COUNT,
+    DirectoryEntry as FsDirectoryEntry, DirectoryHead, DirectoryPart, FileNode as FsFileNode,
+    FileType, Perm, Timestamp,
 };
 use crate::{BLOCK_SIZE, Block, BlockGroup, LBA, block_allocator, blocks_required_for};
 use crate::{
@@ -44,118 +45,131 @@ impl Directory {
     }
 
     /// Loads a directory from a [BlockDevice]
-    pub fn load<D: BlockDevice, S, I: InterruptState>(
+    pub fn read<D: BlockDevice, S, I: InterruptState>(
         fs: &FileSystem<D, S, I>,
-        device_ptr: DevicePointer<FsDirectory>,
+        device_ptr: DevicePointer<DirectoryHead>,
     ) -> Result<Self, FsError> {
-        let mut next = Some(device_ptr);
-
-        let mut entries = Vec::new();
-        let mut expected_rest = 0;
-
-        while let Some(device_ptr) = next {
-            let fs_dir = fs
-                .device
-                .read_pointer(device_ptr)
-                .map_err(map_device_error)?;
-
-            if fs_dir.is_head {
-                assert_eq!(expected_rest, 0);
-                expected_rest = fs_dir.entry_count.to_native();
-                entries.try_reserve_exact(expected_rest as usize)?;
-            } else {
-                assert_eq!(expected_rest, fs_dir.entry_count.to_native());
+        fn extend_entries<D: BlockDevice, S, I: InterruptState>(
+            fs: &FileSystem<D, S, I>,
+            mem_entries: &mut Vec<DirectoryEntry>,
+            device_entries: &[FsDirectoryEntry],
+        ) -> Result<(), FsError> {
+            for entry in device_entries {
+                let mem_entry = DirectoryEntry::load(fs, entry)?;
+                mem_entries.push(mem_entry);
             }
-            expected_rest -= fs_dir.entries.len().into_u64();
-
-            for fs_entry in fs_dir
-                .entries
-                .iter()
-                .map(|entry| DirectoryEntry::load(fs, entry))
-            {
-                let fs_entry = fs_entry?;
-                entries.push(fs_entry);
-            }
-
-            next = fs_dir.next;
+            Ok(())
         }
-        assert_eq!(expected_rest, 0);
 
-        todo_error!("directory parent_id is falsely set to `None` during load from device");
-        let parent_id = None;
+        let head = fs
+            .device
+            .read_pointer(device_ptr)
+            .map_err(map_device_error)?;
 
-        Ok(Directory { entries, parent_id })
+        let expected_count = head.entry_count.to_native() as usize;
+
+        if expected_count < head.entries.len() as usize {
+            return Err(FsMalformedError::DirectoryEntryCountMismatch(
+                expected_count,
+                head.entries.len() as usize,
+            )
+            .into());
+        }
+
+        let mut entries = Vec::try_with_capacity(expected_count)?;
+
+        extend_entries(fs, &mut entries, &head.entries)?;
+
+        let mut next_part_ptr = head.next;
+
+        while let Some(part_ptr) = next_part_ptr {
+            let part = fs.device.read_pointer(part_ptr).map_err(map_device_error)?;
+
+            if entries.len() + part.entries.len() as usize > expected_count {
+                return Err(FsMalformedError::DirectoryEntryCountMismatch(
+                    expected_count,
+                    entries.len() + part.entries.len() as usize,
+                )
+                .into());
+            }
+
+            extend_entries(fs, &mut entries, &part.entries)?;
+
+            next_part_ptr = part.next;
+        }
+
+        if entries.len() != expected_count {
+            return Err(FsMalformedError::DirectoryEntryCountMismatch(
+                expected_count,
+                entries.len(),
+            )
+            .into());
+        }
+
+        Ok(Directory {
+            parent_id: head.parent,
+            entries,
+        })
     }
 
     /// Stores the directory to a [BlockDevice]
     pub fn write<D: BlockDevice, S: FsWrite, I: InterruptState>(
         &self,
         fs: &mut FileSystem<D, S, I>,
-    ) -> Result<DevicePointer<FsDirectory>, FsError> {
-        let block_count =
-            counts_required_for!(DIRECTORY_BLOCK_ENTRY_COUNT, self.entries.len()) as u64;
+    ) -> Result<DevicePointer<DirectoryHead>, FsError> {
+        let entries_in_parts = if self.entries.len() > DIRECTORY_HEAD_ENTRY_COUNT {
+            self.entries.len() - DIRECTORY_HEAD_ENTRY_COUNT
+        } else {
+            0
+        };
 
-        if block_count == 0 {
-            assert!(self.entries.is_empty());
+        let blocks_required = blocks_required_for!(entries_in_parts) + 1;
 
-            let block = fs.block_allocator.allocate_block()?;
-            let fs_dir = Block::new(FsDirectory {
-                entry_count: 0.into(),
-                entries: StaticVec::new(),
-                next: None,
-                is_head: true,
-            });
-            fs.device
-                .write_block(block, fs_dir.block_data())
-                .map_err(map_device_error)?;
-            return Ok(DevicePointer::new(block));
-        }
+        // TODO free blocks on error
+        let blocks = fs.block_allocator.allocate(blocks_required)?;
+        let mut blocks = blocks.block_iter().peekable();
 
-        // TODO how do I dealocate this on error?
-        let blocks = fs.block_allocator.allocate(block_count)?;
-
-        let mut fs_dir = Block::new(FsDirectory::default());
-
-        let mut is_head = true;
-        let mut entry_count = self.entries.len();
         let mut entries = self.entries.as_slice();
 
-        let mut block_iter = blocks.block_iter().peekable();
+        let head_block_lba = blocks.next().expect("Allocated at least 1 block");
 
-        let head_lba = *block_iter.peek().expect("We allocated at least 1 block");
+        let mut head_entries = StaticVec::new();
+        for mem_entry in entries
+            .split_off(..min(DIRECTORY_HEAD_ENTRY_COUNT, entries.len()))
+            .expect("Take at lest len entries")
+        {
+            head_entries.push(mem_entry.write(fs)?);
+        }
+        let head_block = Block::new(DirectoryHead {
+            parent: self.parent_id,
+            entry_count: (self.entries.len() as u64).into(),
+            entries: head_entries,
+            next: blocks.peek().map(|lba| DevicePointer::new(*lba)),
+        });
 
-        while let Some(block) = block_iter.next() {
-            fs_dir.is_head = is_head;
-            is_head = false;
+        fs.device
+            .write_block(head_block_lba, head_block.block_data())
+            .map_err(map_device_error)?;
 
-            let block_entry_count = min(DIRECTORY_BLOCK_ENTRY_COUNT, entry_count);
-            fs_dir.entry_count = entry_count.into_u64().into();
-            entry_count -= block_entry_count;
-
-            let block_entries: &[DirectoryEntry] = entries
-                .split_off(..block_entry_count)
-                .expect("There should still be block_entry_count entries left");
-
-            fs_dir.entries.clear();
-
-            for entry in block_entries {
-                let mut fs_entry = FsDirectoryEntry {
-                    name: Default::default(),
-                    file_id: entry.id,
-                };
-                fs.write_string_head(&mut fs_entry.name, &entry.name)?;
-                fs_dir.entries.push(fs_entry)
+        for ((block_lba, next_lba), entries) in blocks
+            .peeked()
+            .zip(entries.chunks(DIRECTORY_PART_ENTRY_COUNT))
+        {
+            let mut part_entries = StaticVec::new();
+            for mem_entry in entries {
+                part_entries.push(mem_entry.write(fs)?);
             }
-
-            fs_dir.next = block_iter.peek().map(|lba| DevicePointer::new(*lba));
+            let part_block = Block::new(DirectoryPart {
+                entries: part_entries,
+                next: next_lba.map(|lba| DevicePointer::new(lba)),
+            });
 
             fs.device
-                .write_block(block, fs_dir.block_data())
+                .write_block(block_lba, part_block.block_data())
                 .map_err(map_device_error)?;
         }
-        assert_eq!(entry_count, 0);
 
-        Ok(DevicePointer::new(head_lba))
+        Ok(DevicePointer::new(head_block_lba))
     }
 }
 
@@ -175,6 +189,18 @@ impl DirectoryEntry {
         Ok(DirectoryEntry {
             name,
             id: fs_entry.file_id,
+        })
+    }
+
+    pub fn write<D: BlockDevice, S: FsWrite, I: InterruptState>(
+        &self,
+        fs: &mut FileSystem<D, S, I>,
+    ) -> Result<FsDirectoryEntry, FsError> {
+        let name = fs.write_string_head(&self.name)?;
+
+        Ok(FsDirectoryEntry {
+            name,
+            file_id: self.id,
         })
     }
 }

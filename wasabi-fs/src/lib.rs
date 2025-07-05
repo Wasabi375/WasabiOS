@@ -8,6 +8,7 @@
     debug_closure_helpers,
     negative_impls,
     try_reserve_kind,
+    try_with_capacity,
     vec_push_within_capacity
 )]
 #![allow(unused, dead_code)] // TODO temp
