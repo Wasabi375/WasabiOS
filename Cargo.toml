@@ -73,7 +73,7 @@ walkdir = "2.5"
 simple_endian = { version = "0.3.2", git = "https://github.com/Wasabi375/simple-endian-rs.git", branch = "non_zero"}
 
 # TODO use upstream version once I created a PR and it was merged, waiting on simple_endian
-nonmax = { version = "0.5.5", git = "https://github.com/Wasabi375/nonmax.git", branch = "simple_endian", default-features = false , features = ["simple_endian"] }
+nonmax = { version = "0.5.5", git = "https://github.com/Wasabi375/nonmax-fork.git", branch = "simple_endian", default-features = false , features = ["simple_endian"] }
 
 #  TODO use upstream once new version is released
 derive_builder = { version = "0.20.0", git = "https://github.com/Wasabi375/rust-derive-builder", branch = "owned_custom_default", default-features = false}

@@ -1129,7 +1129,7 @@ dependencies = [
 [[package]]
 name = "nonmax"
 version = "0.5.5"
-source = "git+https://github.com/Wasabi375/nonmax.git?branch=simple_endian#7beb030279e578c1ea0a4ac04af259b309561613"
+source = "git+https://github.com/Wasabi375/nonmax-fork.git?branch=simple_endian#7beb030279e578c1ea0a4ac04af259b309561613"
 dependencies = [
  "simple_endian",
 ]
