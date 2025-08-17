@@ -5,6 +5,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Expr, ExprLit, Lit};
 
+// TODO replace paste with concat from rust. See: https://doc.rust-lang.org/stable/unstable-book/language-features/macro-metavar-expr-concat.html
+
 macro_rules! primitive_enum {
     ($type:ident) => {
         paste! {
