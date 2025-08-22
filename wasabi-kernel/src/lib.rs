@@ -237,7 +237,7 @@ pub const fn bootloader_config_common(
 
     #[cfg(feature = "fixed-kernel-vaddr")]
     {
-        config.mappings.kernel_code = Mapping::FixedAddress(KERNEL_BINARY_VADDR.as_u64())
+        config.mappings.kernel_base = Mapping::FixedAddress(KERNEL_BINARY_VADDR.as_u64())
     }
 
     config
