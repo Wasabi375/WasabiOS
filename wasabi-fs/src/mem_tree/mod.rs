@@ -18,7 +18,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use log::trace;
+use log::{debug, trace};
 use shared::{
     sync::{InterruptState, lockcell::UnsafeTicketLock},
     todo_error, todo_warn,
@@ -371,6 +371,8 @@ impl<I: InterruptState> MemTree<I> {
 
             return Ok(());
         }
+
+        log::warn!("split mem-tree node");
 
         let half_capacity = files.capacity() / 2;
         let mut right_node_files = files.drain(half_capacity..);
@@ -1502,6 +1504,14 @@ impl<I: InterruptState> MemTreeLink<I> {
             device.read_pointer(device_ptr).map_err(map_device_error)?
         };
 
+        if let TreeNode::Leave { parent: _, files } = &device_node {
+            debug!(
+                "Resolve tree node at {:?} with files: {:?}",
+                device_ptr.lba,
+                files.iter().map(|f| f.id).collect::<Vec<_>>()
+            )
+        }
+
         self.node = Some(Box::try_new(MemTreeNode::new_from(
             device_node,
             parent_node,
@@ -1618,25 +1628,34 @@ impl<I: InterruptState> MemTreeLink<I> {
             return Ok(());
         }
         let tree_node = match &node {
-            MemTreeNode::Node { children, .. } => TreeNode::Node {
-                parent: parent_ptr,
-                children: children
-                    .iter()
-                    .map(|(link, max_id)| {
-                        (
-                            link.device_ptr
-                                .expect("device_ptr should be set at this point"),
-                            *max_id,
-                        )
-                    })
-                    .collect(),
-            },
+            MemTreeNode::Node { children, .. } => {
+                debug!("Write TreeNode to {:?}", device_ptr.lba);
+                TreeNode::Node {
+                    parent: parent_ptr,
+                    children: children
+                        .iter()
+                        .map(|(link, max_id)| {
+                            (
+                                link.device_ptr
+                                    .expect("device_ptr should be set at this point"),
+                                *max_id,
+                            )
+                        })
+                        .collect(),
+                }
+            }
             MemTreeNode::Leave { files, .. } => {
                 let mut fs_files = StaticVec::new();
 
                 for file in files {
                     fs_files.push(file.write(device, block_allocator)?);
                 }
+
+                debug!(
+                    "Write TreeLeave to {:?} with files: {:?}",
+                    device_ptr.lba,
+                    fs_files.iter().map(|f| f.id).collect::<Vec<_>>()
+                );
 
                 TreeNode::Leave {
                     parent: parent_ptr,

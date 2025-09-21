@@ -799,6 +799,14 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
         self.read_string_head(&head_block.0)
     }
 
+    // TODO I don't think I want FileNode to be part of the public API
+    pub fn get_file_meta(&self, id: FileId) -> Result<Arc<FileNode<I>>, FsError> {
+        self.mem_tree
+            .find(&self.device, id)
+            .transpose()
+            .unwrap_or(Err(FsError::FileDoesNotExist(id)))
+    }
+
     pub fn read_directory(&self, id: FileId) -> Result<Directory, FsError> {
         let metadata = self
             .mem_tree
@@ -1094,6 +1102,12 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             .push_within_capacity(DirectoryChange::Created { dir_id, dir })
             .map_err(|_| ())
             .expect("Just allocated additional capacity");
+
+        // FIXME how do I find this file_id if it is not yet in the mem_tree
+        //
+        // maybe I can create the mem-tree node but somehow not yet write the Directory data block
+        self.flush()?; // TEMP fix for above error
+
         Ok(dir_id)
     }
 
@@ -1113,6 +1127,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         }
 
         let file_id = self.get_and_inc_file_id();
+        debug!("create file: name \"{name}\", id: {file_id:?}");
 
         let device_block = self.block_allocator.allocate_block()?;
 
@@ -1136,6 +1151,11 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
     }
 
     pub fn write_file(&mut self, id: FileId, offset: u64, data: &[u8]) -> Result<(), FsError> {
+        trace!(
+            "write file: id: {id}, offset: {offset}, len: {}",
+            data.len()
+        );
+
         let Some(file_node) = self.mem_tree.find(&self.device, id)? else {
             return Err(FsError::FileDoesNotExist(id));
         };

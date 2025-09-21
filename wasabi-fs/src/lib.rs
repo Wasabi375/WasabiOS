@@ -41,13 +41,13 @@ pub mod mem_tree;
 /// Each [LBA] addresses a single [Block] on a [interface::BlockDevice].
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LBA(LittleEndian<NonMaxU64>);
+pub struct LBA(NonMaxU64Le);
 
 impl TryFrom<u64> for LBA {
-    type Error = <NonMaxU64 as TryFrom<u64>>::Error;
+    type Error = <NonMaxU64Le as TryFrom<u64>>::Error;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Ok(LBA(TryInto::<NonMaxU64>::try_into(value)?.into()))
+        Ok(LBA(TryInto::<NonMaxU64Le>::try_into(value)?.into()))
     }
 }
 
@@ -66,9 +66,7 @@ impl LBA {
     #[track_caller]
     pub const unsafe fn new_unchecked(addr: u64) -> Self {
         assert!(addr != u64::MAX);
-        Self(LittleEndian::from_bits(unsafe {
-            NonMaxU64::new_unchecked(addr.to_le())
-        }))
+        Self(unsafe { NonMaxU64Le::new_unchecked(addr) })
     }
 
     pub fn from_byte_offset(offset: u64) -> Option<LBA> {
@@ -87,7 +85,7 @@ impl LBA {
         self.0.to_native().get()
     }
 
-    pub const MAX: LBA = unsafe { Self::new_unchecked(u64::MAX - 1) };
+    pub const MAX: LBA = LBA(NonMaxU64Le::MAX);
 }
 
 impl Add<u64> for LBA {

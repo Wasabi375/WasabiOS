@@ -16,6 +16,8 @@ mod fuse;
 
 mod block_device;
 
+mod internal_test;
+
 /// The FUSE driver for the Wasabi Filesystem
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,6 +40,8 @@ enum Command {
     Create(CreateOptions),
     Info(InfoOptions),
     ResetTransient(ForceResetOptions),
+    /// An internal test used for debugging
+    InternalTest,
 }
 
 #[derive(Args, Debug)]
@@ -112,6 +116,7 @@ fn main() {
         Command::Create(args) => create(args),
         Command::Info(args) => info(args),
         Command::ResetTransient(args) => reset_transient(args),
+        Command::InternalTest => internal_test::test_main().unwrap(),
     }
 }
 

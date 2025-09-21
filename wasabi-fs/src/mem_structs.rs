@@ -17,7 +17,7 @@ use alloc::sync::Arc;
 use alloc::{boxed::Box, vec::Vec};
 use log::{error, trace};
 use shared::iter::IterExt;
-use shared::math::IntoU64;
+use shared::math::{IntoU64, IntoUSize};
 use shared::sync::InterruptState;
 use shared::sync::lockcell::{RWLockCell, ReadWriteCell};
 use shared::{counts_required_for, todo_error};
@@ -275,12 +275,22 @@ impl BlockList {
     }
 
     pub fn read<D: BlockDevice>(head: BlockListHead, device: &D) -> Result<Self, FsError> {
-        let first_block_ptr = match head {
+        let mut next_block_ptr = match head {
             BlockListHead::Single(group) => return Ok(Self(BlockListInternal::Single([group]))),
-            BlockListHead::List(ptr) => ptr,
+            BlockListHead::List(ptr) => Some(ptr),
         };
 
-        todo!("read block list")
+        let mut list = Vec::new();
+
+        while let Some(block_ptr) = next_block_ptr {
+            let block = device.read_pointer(block_ptr).map_err(map_device_error)?;
+
+            list.try_reserve(block.blocks.len().into_usize())?;
+            list.extend(block.blocks.into_iter());
+
+            next_block_ptr = block.next;
+        }
+        Ok(list.into())
     }
 
     pub fn write<D: BlockDevice>(
