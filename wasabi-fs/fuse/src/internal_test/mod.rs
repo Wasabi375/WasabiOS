@@ -1,11 +1,12 @@
 use std::{
     fs::File,
     io::{Read, Seek},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+use clap::ValueEnum;
 use host_shared::sync::StdInterruptState;
 use log::info;
 use shared::sync::InterruptState;
@@ -15,43 +16,36 @@ use wfs::{
     mem_structs::{Directory, FileNode},
 };
 
-use crate::block_device::FileDevice;
+use crate::{InternalTestOptions, block_device::FileDevice};
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum TestVariant {
+    #[default]
+    SplitBreaksTree,
+    SplitBreaksTreeCopy,
+}
+
+mod split_breaks_tree;
 
 type FileSystem = wfs::fs::FileSystem<FileDevice, FsReadWrite, StdInterruptState>;
 
-pub fn test_main() -> Result<()> {
-    let path: PathBuf = "__test_image.wfs".into();
+pub fn test_main(args: InternalTestOptions) -> Result<()> {
+    let test_variant = args.variance.unwrap_or_default();
+    info!("test variant: {test_variant:?}");
+    match test_variant {
+        TestVariant::SplitBreaksTree => {
+            split_breaks_tree::simplified(args).context("split breaks tree - simplified")
+        }
+        TestVariant::SplitBreaksTreeCopy => {
+            split_breaks_tree::copy_dir(args).context("split breaks tree - copy files")
+        }
+    }
+}
 
-    info!("create test image");
-    create_test_image(&path)?;
-
-    info!("mount test image");
-    let mut fs = mount_image(&path)?;
-
-    info!("create directory: /dir1/");
-    let dir = fs.create_directory(Directory::empty(FileId::ROOT), "dir1".into())?;
-    info!("dir file id: {dir}");
-
-    let src_path: PathBuf = "../src".into();
-
-    let mut copy_count = 0;
-
-    copy_files(&mut fs, &src_path, dir, &mut copy_count).context("copy src_path to image")?;
-
-    info!("copied {copy_count} files to the test image");
-
-    let read_count = count_files(&fs)?;
-
-    assert_eq!(
-        read_count, copy_count,
-        "read count {read_count} does not match copy count {copy_count}"
-    );
-
-    info!("all tests successfull");
-
+fn reopen_fs(fs: FileSystem) -> Result<FileSystem> {
     match fs.close() {
-        Ok(_) => Ok(()),
-        Err(_) => bail!("Failed to close file system"),
+        Ok(block_device) => FileSystem::open(block_device).context("failed to reopen fs"),
+        Err((_, error)) => Err(error).context("failed to close fs"),
     }
 }
 
@@ -81,6 +75,7 @@ fn count_files(fs: &FileSystem) -> Result<usize> {
     count_files(fs, root_node)
 }
 
+#[allow(dead_code)]
 fn copy_files(
     fs: &mut FileSystem,
     src_path: &Path,

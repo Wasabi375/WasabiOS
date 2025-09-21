@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use fuser::MountOption;
+use internal_test::TestVariant;
 use log::{LevelFilter, debug, info};
 use simple_logger::SimpleLogger;
 use wfs::{
@@ -41,7 +42,18 @@ enum Command {
     Info(InfoOptions),
     ResetTransient(ForceResetOptions),
     /// An internal test used for debugging
-    InternalTest,
+    InternalTest(InternalTestOptions),
+}
+
+#[derive(Args, Debug)]
+struct InternalTestOptions {
+    variance: Option<TestVariant>,
+
+    /// If supported by test, the image is only created and not checked
+    ///
+    /// this may also be be have partial support, running some check and ignoring others
+    #[arg(long)]
+    create_only: bool,
 }
 
 #[derive(Args, Debug)]
@@ -116,7 +128,7 @@ fn main() {
         Command::Create(args) => create(args),
         Command::Info(args) => info(args),
         Command::ResetTransient(args) => reset_transient(args),
-        Command::InternalTest => internal_test::test_main().unwrap(),
+        Command::InternalTest(args) => internal_test::test_main(args).unwrap(),
     }
 }
 
