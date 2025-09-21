@@ -2,7 +2,7 @@ local dap = require("dap")
 
 dap.adapters.gdb = {
     type = "executable",
-    command = "gdb",
+    command = "rust-gdb",
     args = {
         "--interpreter=dap",
         "--eval-command", "set print pretty on",
@@ -55,5 +55,16 @@ dap.configurations.rust = {
         cwd = "${workspaceFolder}",
         stopOnEntry = true,
     },
-
+    {
+        name = "Fuse mount",
+        type = "gdb",
+        request = "launch",
+        program = "${workspaceFolder}/target/debug/fuse",
+        cwd = "${workspaceFolder}/wasabi-fs/fuse",
+        args = "mount test_mount/ test.wfs",
+        stopAtBeginningOfMainSubprogram = true,
+        env = {
+            RUST_LOG = "trace",
+        },
+    }
 }
