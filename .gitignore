@@ -1,10 +1,15 @@
+# temporary and editor files
 .DS_Store
 .idea
 *.log
 tmp/
+
+# build artifacts
 latest/
-
-wasabi-fs/fuse/test_fs.img
-
-
 /target/
+
+# file system images
+wasabi-fs/fuse/test_fs.img
+*.wfs
+
+
