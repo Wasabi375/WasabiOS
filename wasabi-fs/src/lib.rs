@@ -21,7 +21,7 @@ use core::{
     ptr::NonNull,
 };
 
-use nonmax::NonMaxU64;
+use nonmaxunsigned::{NonMaxU64, NonMaxU64Le};
 use shared::{KiB, math::IntoU64};
 use simple_endian::{LittleEndian, SpecificEndian};
 use static_assertions::const_assert_eq;

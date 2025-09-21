@@ -1127,12 +1127,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "nonmax"
-version = "0.5.5"
-source = "git+https://github.com/Wasabi375/nonmax-fork.git?branch=simple_endian#7beb030279e578c1ea0a4ac04af259b309561613"
-dependencies = [
- "simple_endian",
-]
+name = "nonmaxunsigned"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea0685052e924c8646371c49cc2fa3d3e383a6335e865c76ac4a19a592a43479"
 
 [[package]]
 name = "noto-sans-mono-bitmap"
@@ -2176,7 +2174,7 @@ dependencies = [
  "host-shared",
  "linkme",
  "log",
- "nonmax",
+ "nonmaxunsigned",
  "shared",
  "simple_endian",
  "static_assertions",

@@ -8,7 +8,6 @@ use core::{
 };
 
 use bitflags::bitflags;
-use nonmax::NonMaxU64;
 use shared::math::IntoI64;
 use simple_endian::LittleEndian;
 use static_assertions::{const_assert, const_assert_ne};

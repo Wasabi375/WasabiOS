@@ -315,7 +315,7 @@ where
 
         self.write_header()?;
 
-        info!("fs flush done!");
+        trace!("fs flush done!");
         Ok(())
     }
 
@@ -399,6 +399,8 @@ where
                 MIN_BLOCK_COUNT,
             ));
         }
+        // TODO why? also this should be a constant or function and not some magic value that is
+        // caluated inline
         let max_usable_lba = LBA::new(max_block_count - 2).expect("max_block_count > 2");
         let backup_header_lba = LBA::new(max_block_count - 1).expect("max_block_count > 2");
 
@@ -670,9 +672,6 @@ where
         fs.block_allocator =
             BlockAllocator::load(&fs.device, header.free_blocks).map_err(map_device_error)?;
         fs.mem_tree.set_root_device_ptr(header.root);
-
-        debug!("header: {header:#?}");
-        debug!("free: {:#?}", fs.block_allocator);
 
         unsafe {
             // Safety: we checked that the fs is valid, and ensured that read/write access is ok
