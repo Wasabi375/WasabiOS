@@ -1056,19 +1056,32 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
     pub fn create_directory(&mut self, dir: Directory, name: Box<str>) -> Result<FileId, FsError> {
         trace!("create dir {name}: {dir:?}");
+
+        let Some(parent_id) = dir.parent_id else {
+            panic!("FileSystem::create_directory cannot be used to create the root directory");
+        };
+        let Some(parent_dir) = self.mem_tree.find(&self.device, parent_id)? else {
+            return Err(FsError::FileDoesNotExist(parent_id));
+        };
+        if !matches!(parent_dir.typ, FileType::Directory) {
+            return Err(FsError::FileTypeMismatch {
+                id: parent_id,
+                file_type: parent_dir.typ,
+                expected: FileType::Directory,
+            });
+        }
+
         self.directory_changes.try_reserve(2)?;
 
         let dir_id = self.get_and_inc_file_id();
 
-        if let Some(parent_id) = dir.parent_id {
-            self.directory_changes
-                .push_within_capacity(DirectoryChange::InsertFile {
-                    dir_id: parent_id,
-                    entry: DirectoryEntry { name, id: dir_id },
-                })
-                .map_err(|_| ())
-                .expect("Just allocated additional capacity");
-        }
+        self.directory_changes
+            .push_within_capacity(DirectoryChange::InsertFile {
+                dir_id: parent_id,
+                entry: DirectoryEntry { name, id: dir_id },
+            })
+            .map_err(|_| ())
+            .expect("Just allocated additional capacity");
 
         self.directory_changes
             .push_within_capacity(DirectoryChange::Created { dir_id, dir })
@@ -1078,7 +1091,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         // FIXME how do I find this file_id if it is not yet in the mem_tree
         //
         // maybe I can create the mem-tree node but somehow not yet write the Directory data block
-        self.flush()?; // TEMP fix for above error
+        self.flush()?; // TEMP fix
 
         Ok(dir_id)
     }
