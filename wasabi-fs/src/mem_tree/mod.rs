@@ -128,7 +128,7 @@ impl<I> !Clone for MemTree<I> {}
 
 impl<I: InterruptState> MemTree<I> {
     /// Creates a new empty [MemTree]
-    pub fn empty(device_ptr: Option<DevicePointer<TreeNode>>) -> Self {
+    pub fn empty() -> Self {
         let root_node = MemTreeNode::Leave {
             parent: None,
             files: StaticVec::new(),
@@ -138,7 +138,7 @@ impl<I: InterruptState> MemTree<I> {
 
         let root = MemTreeLink {
             node: Some(Box::new(root_node)),
-            device_ptr,
+            device_ptr: None,
         };
 
         MemTree {
@@ -306,7 +306,8 @@ impl<I: InterruptState> MemTree<I> {
         Ok(result)
     }
 
-    pub fn create<D: BlockDevice>(
+    /// insert a new file node into the tree
+    pub fn insert_new<D: BlockDevice>(
         &self,
         device: &D,
         file: Arc<FileNode<I>>,
@@ -314,6 +315,7 @@ impl<I: InterruptState> MemTree<I> {
         self.insert(device, file, true)
     }
 
+    /// overrite an existing file node
     pub fn update<D: BlockDevice>(
         &self,
         device: &D,
@@ -512,7 +514,7 @@ impl<I: InterruptState> MemTree<I> {
     ) -> Result<(), MemTreeError> {
         assert!(root.parent_ref().is_none());
 
-        let (old_root_link_node, old_root_link_device) = {
+        let old_root_link_node = {
             let old_root_link = unsafe {
                 // Safety: we still hold the root_lock
                 self.get_root_mut()
@@ -530,12 +532,12 @@ impl<I: InterruptState> MemTree<I> {
 
             assert_eq!(old_root_link_node_ptr, root_node_ptr);
 
-            (old_root_link_node, old_root_link.device_ptr.take())
+            old_root_link_node
         };
 
         let left_link = MemTreeLink {
             node: old_root_link_node,
-            device_ptr: old_root_link_device,
+            device_ptr: None,
         };
 
         let right_node = Box::try_new(new_node)?;
@@ -1170,7 +1172,7 @@ impl<I: InterruptState> MemTree<I> {
         &self,
         device: &mut D,
         block_allocator: &mut BlockAllocator,
-    ) -> Result<(), FsError> {
+    ) -> Result<DevicePointer<TreeNode>, FsError> {
         trace!("flush");
         self.root_lock.lock();
 
@@ -1180,11 +1182,18 @@ impl<I: InterruptState> MemTree<I> {
         };
 
         let result = root_link.flush_to_device(device, block_allocator);
+
+        let root_ptr = root_link
+            .device_ptr
+            .expect("flush to device should always set device_ptr");
+
         unsafe {
             // Safety: we locked this ourself
             self.root_lock.unlock();
         }
-        result
+        result?;
+
+        Ok(root_ptr)
     }
 }
 
@@ -1199,7 +1208,7 @@ impl<I: InterruptState> MemTree<I> {
     }
 
     fn assert_valid_full(&mut self) {
-        // check all leaves are on the same level
+        // check all leaves are on the same level and all locks are released
         let mut found_leave = false;
         for node in self.iter_nodes() {
             match node {
@@ -1581,14 +1590,16 @@ impl<I: InterruptState> MemTreeLink<I> {
     ///
     /// If this fails with an Error the on device tree should always be in a mostly valid
     /// state.
-    /// Only the parent ptr might be invalid.t
+    /// Only the parent ptr might be invalid.
     /// TODO that might be a reason not to store it. We don't need it for access anyways.
     ///
     /// However there is no guarantee that all writes have been performed.
     ///
-    /// This function only updates the `dirty` flag of self, therefor the in memory
-    /// tree should still reflect the latest changes.
-    /// It might be possible to attempt to flush changes depending on the device error.
+    /// This function only updates the `dirty` flag of self and the device_ptr, therefor the in memory
+    /// tree should still reflect the latest changes. However it is no longer valid to assume that
+    /// a device ptr is valid, if the node also exists in memory.
+    ///
+    /// It might be possible to attempt to flush changes again depending on the device error.
     fn flush_to_device<D: BlockDevice>(
         &mut self,
         device: &mut D,
@@ -1599,19 +1610,11 @@ impl<I: InterruptState> MemTreeLink<I> {
                 self.device_ptr.is_some(),
                 "Using a MemTree that was created by calling 'invalid' is prohibited"
             );
+            trace!("flush MemTreeLink on device only node");
             return Ok(());
         };
-
-        let device_ptr = if let Some(device_ptr) = self.device_ptr {
-            device_ptr
-        } else {
-            let device_ptr = block_allocator.allocate_block()?;
-            let device_ptr = DevicePointer::new(device_ptr);
-            self.device_ptr = Some(device_ptr);
-            device_ptr
-        };
-
         let mut node = NodeGuard::<_, node_guard::MutChild>::lock(node);
+
         let node = node.borrow_mut();
 
         let dirty = match node {
@@ -1634,6 +1637,14 @@ impl<I: InterruptState> MemTreeLink<I> {
         if !dirty {
             return Ok(());
         }
+
+        // write to a new LBA
+        let device_ptr = block_allocator.allocate_block()?;
+        let device_ptr = DevicePointer::new(device_ptr);
+        if let Some(old_device_ptr) = self.device_ptr.replace(device_ptr) {
+            block_allocator.free_block(old_device_ptr.lba);
+        }
+
         let tree_node = match &node {
             MemTreeNode::Node { children, .. } => {
                 debug!("Write TreeNode to {:?}", device_ptr.lba);
@@ -1722,10 +1733,6 @@ mod test_mem_only {
 
     type FileNode = crate::mem_structs::FileNode<TestInterruptState>;
 
-    fn create_empty_tree() -> MemTree<TestInterruptState> {
-        MemTree::empty(None)
-    }
-
     fn create_file_node(id: u64) -> Arc<FileNode> {
         Arc::new(FileNode {
             id: FileId::try_new(id).unwrap(),
@@ -1748,7 +1755,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_insert_single() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(9), true)
             .tunwrap()?;
@@ -1782,7 +1789,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_insert_no_split() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(9), true)
             .tunwrap()?;
@@ -1829,7 +1836,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_insert_split_root() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(67), true)
             .tunwrap()?;
@@ -1909,7 +1916,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_insert_split_node_insert_in_root() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(67), true)
             .tunwrap()?;
@@ -1947,7 +1954,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_insert_100_files() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         let file_ids: &[u64] = &[
             743, 152, 983, 284, 621, 847, 519, 366, 215, 790, 488, 951, 104, 325, 876, 267, 638,
@@ -1982,7 +1989,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_insert_duplicate() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(12), true)
             .tunwrap()?;
@@ -2007,7 +2014,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_insert_duplicate_no_override() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(12), true)
             .tunwrap()?;
@@ -2033,7 +2040,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_delete_no_rebalance() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(1), true)
             .tunwrap()?;
@@ -2069,7 +2076,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_delete_unbalance_root() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(1), true)
             .tunwrap()?;
@@ -2103,7 +2110,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_delete_in_leave() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(1), true)
             .tunwrap()?;
@@ -2155,7 +2162,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_delete_rotate_left() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(1), true)
             .tunwrap()?;
@@ -2206,7 +2213,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_delete_rotate_right() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(1), true)
             .tunwrap()?;
@@ -2256,7 +2263,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_delete_merge() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(1), true)
             .tunwrap()?;
@@ -2298,7 +2305,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_delete_merge_last() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         tree.insert(&TestBlockDevice, create_file_node(1), true)
             .tunwrap()?;
@@ -2338,7 +2345,7 @@ mod test_mem_only {
 
     #[kernel_test]
     fn test_delete_100_files() -> Result<(), KernelTestError> {
-        let mut tree = create_empty_tree();
+        let mut tree = MemTree::empty();
 
         let insert_ids: &[u64] = &[
             42, 67, 13, 91, 28, 73, 5, 38, 84, 19, 99, 7, 34, 53, 22, 88, 45, 96, 31, 11, 79, 62,

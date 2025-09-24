@@ -51,9 +51,8 @@ use crate::{
 };
 
 pub(crate) const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(0) };
-pub(crate) const TREE_ROOT_BLOCK: LBA = unsafe { LBA::new_unchecked(1) };
 
-const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, TREE_ROOT_BLOCK];
+const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK];
 
 /// The minimum number of blocks required to create a fs.
 ///
@@ -62,7 +61,7 @@ const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK, TREE_ROOT_BLOCK];
 /// The real value is effected by harder to predict systems like blocks used for
 /// the block_allocator.
 // TODO figure out new min
-const MIN_BLOCK_COUNT: u64 = 9;
+const MIN_BLOCK_COUNT: u64 = 4;
 
 #[derive(Error, Debug)]
 #[allow(missing_docs)]
@@ -275,17 +274,18 @@ where
         trace!("flush start");
         match self.access_mode {
             AccessMode::ReadOnly => {
-                assert!(self.directory_changes.is_empty())
-                // TODO I want to call assert_valid here but I don't want this to panic
-                // self.mem_tree.assert_valid()
+                assert!(self.directory_changes.is_empty());
+                // TODO this panics. Change to return Err instead
+                self.mem_tree.assert_valid();
             }
             AccessMode::ReadWrite => {
                 let write_fs = self.assume_writable();
                 let changes = mem::replace(&mut write_fs.directory_changes, Vec::new());
                 write_fs.apply_directory_changes(changes)?;
 
-                self.mem_tree
-                    .flush_to_device(&mut self.device, &mut self.block_allocator)?
+                self.header_data.root_ptr = self
+                    .mem_tree
+                    .flush_to_device(&mut self.device, &mut self.block_allocator)?;
             }
         }
 
@@ -415,8 +415,9 @@ where
                 name_head: None,
                 version: FS_VERSION,
                 uuid: Uuid::nil(),
-                next_file_id: FileId::ROOT,
-                root_ptr: DevicePointer::new(TREE_ROOT_BLOCK),
+                next_file_id: FileId::ROOT.next(),
+                // this is an invalid pointer, but this is fine as long as status is Uninitialized
+                root_ptr: DevicePointer::new(LBA::MAX),
                 status: FsStatus::Uninitialized,
                 dirty: true,
                 mount_count: 1,
@@ -441,7 +442,6 @@ where
         override_check: OverrideCheck,
         access: AccessMode,
     ) -> Result<Self, FsError> {
-        // TODO this function is flushing the fs twice? Is that necessary
         let fs_found = check_for_filesystem(&device).map_err(map_device_error)?;
         if fs_found != FsFound::None {
             match override_check {
@@ -455,51 +455,53 @@ where
             }
         }
 
-        let mut fs = Self::create_fs_device_access(
-            device,
-            AccessMode::ReadWrite,
-            MemTree::empty(Some(DevicePointer::new(TREE_ROOT_BLOCK))),
-        )?;
+        let mut fs =
+            Self::create_fs_device_access(device, AccessMode::ReadWrite, MemTree::empty())?;
 
-        // create basic header and backup header
-        let root_block = TREE_ROOT_BLOCK;
-        // we need to specify something before we write the free block data structure
-        // and learn the right LBA. `MAX` might be used for the backup header.
-        // That said the value should not matter unless creation crashes and the
-        // fs is left in an uninitialized state.
-        let free_blocks_uninit_lba = LBA::MAX - 1;
-        let mut header = Block::new(MainHeader {
-            magic: MainHeader::MAGIC,
-            version: FS_VERSION,
-            uuid,
-            root: DevicePointer::new(root_block),
-            free_blocks: DevicePointer::new(LBA::MAX - 1),
-            backup_header: DevicePointer::new(fs.backup_header_lba),
-            name: None,
-            transient: Some(MainTransientHeader {
-                magic: MainTransientHeader::MAGIC,
-                mount_count: 1,
-                open_in_write_mode: true,
-                status: FsStatus::Uninitialized,
-            }),
-            next_file_id: FileId::ROOT.next(),
-        });
+        {
+            // create basic header and backup header
+            // we need to specify something before we write the free block data structure
+            // and learn the right LBA. `MAX` might be used for the backup header.
+            // That said the value should not matter unless creation crashes and the
+            // fs is left in an uninitialized state.
+            //
+            // TODO I really want to rework this in combination with [write_header].
+            let free_blocks_uninit_lba = LBA::MAX - 1;
+            fs.header_data.uuid = uuid;
+            let device_header = Block::new(MainHeader {
+                magic: MainHeader::MAGIC,
+                version: FS_VERSION,
+                uuid: fs.header_data.uuid,
+                root: fs.header_data.root_ptr,
+                free_blocks: DevicePointer::new(LBA::MAX), // temp value. created later
+                backup_header: DevicePointer::new(fs.backup_header_lba),
+                name: None, // created later
+                transient: Some(MainTransientHeader {
+                    magic: MainTransientHeader::MAGIC,
+                    mount_count: 1,
+                    open_in_write_mode: true,
+                    status: FsStatus::Uninitialized,
+                }),
+                next_file_id: fs.header_data.next_file_id,
+            });
 
-        // Write inital header to device to mark fs blocks
-        // TODO: should this be a compare_swap? Otherwise there is a possible race
-        // between multiple create_internal calls
-        fs.write_main_header(&header)?;
-        fs.copy_header_to_backup(&header)?;
+            // Write inital header to device to mark fs blocks
+            // TODO: should this be a compare_swap? Otherwise there is a possible race
+            // between multiple create_internal calls
+            fs.write_main_header(&device_header)?;
+            fs.copy_header_to_backup(&device_header)?;
+        }
 
         let name_block: Option<LBA> = name
             .as_ref()
             .map(|name| fs.write_string(name))
             .transpose()?;
         if let Some(name_block) = name_block {
-            header.name = Some(DevicePointer::new(name_block));
+            fs.header_data.name = name;
+            fs.header_data.name_head = Some(DevicePointer::new(name_block));
         }
 
-        let root_dir = mem_structs::Directory::ROOT;
+        let root_dir = mem_structs::Directory::create_root();
         let root_dir_block = root_dir.write(&mut fs)?.lba;
 
         let root_dir_node = Box::try_new(FileNode::new(
@@ -511,43 +513,14 @@ where
             0,
         ))?;
 
-        fs.mem_tree.create(&mut fs.device, root_dir_node.into())?;
+        fs.mem_tree
+            .insert_new(&mut fs.device, root_dir_node.into())?;
+
+        // update transient data in header
+        fs.header_data.status = FsStatus::Ready;
 
         // Flush writes block allocator and initial mem_tree to device
         fs.flush()?;
-
-        // update transient data in header
-        let Some(transient) = header.transient.as_mut() else {
-            unreachable!("main header always contains transient header");
-        };
-        match access {
-            AccessMode::ReadOnly => {
-                transient.open_in_write_mode = false;
-            }
-            AccessMode::ReadWrite => {
-                transient.open_in_write_mode = true;
-            }
-        }
-        transient.status = FsStatus::Ready;
-
-        // write backup and main header
-        // NOTE this must be the last device write before fs.created
-        // is called. Otherwise we might leave the FS in an invalid/uninitalized
-        // state after setting the status to Ready.
-        fs.copy_header_to_backup(&header)?;
-        fs.write_main_header(&header)?;
-        fs.header_data = HeaderData {
-            name,
-            name_head: name_block.map(DevicePointer::new),
-            version: FS_VERSION,
-            uuid,
-            next_file_id: header.next_file_id,
-            root_ptr: DevicePointer::new(TREE_ROOT_BLOCK),
-            status: FsStatus::Ready,
-            dirty: false,
-            mount_count: 1,
-            free_blocks: None,
-        };
 
         unsafe {
             // Safety: we just created an initialized the file system
@@ -671,6 +644,7 @@ where
 
         fs.block_allocator =
             BlockAllocator::load(&fs.device, header.free_blocks).map_err(map_device_error)?;
+        debug!("root at {:?}", header.root);
         fs.mem_tree.set_root_device_ptr(header.root);
 
         unsafe {
@@ -692,8 +666,6 @@ where
             transmute(data)
         };
 
-        debug_assert!(data.magic == MainHeader::MAGIC);
-
         Ok(data)
     }
 
@@ -704,7 +676,7 @@ where
             magic: MainHeader::MAGIC,
             version: FS_VERSION,
             uuid: self.header_data.uuid,
-            root: DevicePointer::new(TREE_ROOT_BLOCK),
+            root: self.header_data.root_ptr,
             free_blocks: self
                 .header_data
                 .free_blocks
@@ -896,7 +868,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
                         dir_lba.into(),
                         0,
                     ))?;
-                    self.mem_tree.create(&self.device, dir_node)?;
+                    self.mem_tree.insert_new(&self.device, dir_node)?;
                 }
                 DirectoryChange::InsertFile { dir_id, entry } => {
                     let changed_dir = if let Some(changed_dir) = changed_dirs.get_mut(&dir_id) {
@@ -1141,7 +1113,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             1,
         ))?;
 
-        self.mem_tree.create(&self.device, file_node)?;
+        self.mem_tree.insert_new(&self.device, file_node)?;
         self.directory_changes.push(DirectoryChange::InsertFile {
             dir_id: parent,
             entry: DirectoryEntry { name, id: file_id },

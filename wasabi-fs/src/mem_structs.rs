@@ -32,10 +32,13 @@ pub struct Directory {
 }
 
 impl Directory {
-    pub(super) const ROOT: Self = Self {
-        parent_id: None,
-        entries: Vec::new(),
-    };
+    /// Create a [Self] that represents the empty root of a file system
+    pub(super) const fn create_root() -> Self {
+        Self {
+            parent_id: None,
+            entries: Vec::new(),
+        }
+    }
 
     pub fn empty(parent_id: FileId) -> Self {
         Self {

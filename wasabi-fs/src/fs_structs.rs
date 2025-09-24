@@ -247,7 +247,7 @@ impl FileId {
     ///
     /// This is the same as `FileId::new(N).unwrap()` but works in a const context.
     /// [Self:new] and [Self::new_unchecked] are not `const` because they rely on
-    /// traits that are not yet const stable (rust internal trait attribute).
+    /// traits that are not yet const stable
     pub const fn new_const<const N: u64>() -> Self {
         if N == 0 {
             panic!("FileId::new_const<0>() is an illegal constant");
