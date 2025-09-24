@@ -416,6 +416,8 @@ impl MainHeader {
 #[repr(u8)]
 pub enum FsStatus {
     /// The file system is not yet initialized
+    ///
+    /// This means that any [DevicePointer] might be invalid
     #[default]
     Uninitialized,
     /// The file system is ready and can be used
@@ -477,12 +479,9 @@ const_assert!(NODE_MAX_CHILD_COUNT / 2 >= 2);
 #[allow(clippy::large_enum_variant)]
 pub enum TreeNode {
     Leave {
-        parent: Option<DevicePointer<TreeNode>>, // TODO do I need the parent pointer?
         files: StaticVec<FileNode, LEAVE_MAX_FILE_COUNT, u8>,
     },
     Node {
-        /// The parent of this Node or `None` if this is the root node
-        parent: Option<DevicePointer<TreeNode>>, // TODO do I need the parent pointer?
         /// a list of [TreeNode] pointers and their maximum [FileId] value.
         ///
         /// `children[i].0 == children[i].1.follow().max`

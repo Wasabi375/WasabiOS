@@ -1179,7 +1179,7 @@ impl<I: InterruptState> MemTree<I> {
             self.get_root_mut()
         };
 
-        let result = root_link.flush_to_device(None, device, block_allocator);
+        let result = root_link.flush_to_device(device, block_allocator);
         unsafe {
             // Safety: we locked this ourself
             self.root_lock.unlock();
@@ -1504,12 +1504,20 @@ impl<I: InterruptState> MemTreeLink<I> {
             device.read_pointer(device_ptr).map_err(map_device_error)?
         };
 
-        if let TreeNode::Leave { parent: _, files } = &device_node {
-            debug!(
-                "Resolve tree node at {:?} with files: {:?}",
-                device_ptr.lba,
-                files.iter().map(|f| f.id).collect::<Vec<_>>()
-            )
+        match &device_node {
+            TreeNode::Leave { files } => {
+                debug!(
+                    "Resolve tree node leave at {:?} with files: {:?}",
+                    device_ptr.lba,
+                    files.iter().map(|f| f.id).collect::<Vec<_>>()
+                )
+            }
+            TreeNode::Node { children } => {
+                trace!(
+                    "Resolve tree node at {:?} with children: {:?}",
+                    device_ptr.lba, children
+                )
+            }
         }
 
         self.node = Some(Box::try_new(MemTreeNode::new_from(
@@ -1583,7 +1591,6 @@ impl<I: InterruptState> MemTreeLink<I> {
     /// It might be possible to attempt to flush changes depending on the device error.
     fn flush_to_device<D: BlockDevice>(
         &mut self,
-        parent_ptr: Option<DevicePointer<TreeNode>>,
         device: &mut D,
         block_allocator: &mut BlockAllocator, // TODO add ignore dirty flag for error recovery
     ) -> Result<(), FsError> {
@@ -1616,7 +1623,7 @@ impl<I: InterruptState> MemTreeLink<I> {
             } => {
                 if *dirty_children {
                     for (child_link, _) in children {
-                        child_link.flush_to_device(Some(device_ptr), device, block_allocator)?;
+                        child_link.flush_to_device(device, block_allocator)?;
                     }
                     *dirty_children = false;
                 }
@@ -1631,7 +1638,6 @@ impl<I: InterruptState> MemTreeLink<I> {
             MemTreeNode::Node { children, .. } => {
                 debug!("Write TreeNode to {:?}", device_ptr.lba);
                 TreeNode::Node {
-                    parent: parent_ptr,
                     children: children
                         .iter()
                         .map(|(link, max_id)| {
@@ -1657,10 +1663,7 @@ impl<I: InterruptState> MemTreeLink<I> {
                     fs_files.iter().map(|f| f.id).collect::<Vec<_>>()
                 );
 
-                TreeNode::Leave {
-                    parent: parent_ptr,
-                    files: fs_files,
-                }
+                TreeNode::Leave { files: fs_files }
             }
         };
         let tree_node = Block::new(tree_node);
