@@ -11,11 +11,10 @@ use core::{
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use shared::math::IntoU64;
-use volatile::{access::ReadOnly, Volatile};
+use volatile::{Volatile, access::ReadOnly};
 use x86_64::{
-    align_down, align_up,
+    VirtAddr, align_down, align_up,
     structures::paging::{Page, PageSize},
-    VirtAddr,
 };
 
 /// A ptr to an untyped region of memory.
@@ -168,7 +167,7 @@ impl UntypedPtr {
             // Safety: self is mapped properly therefor this is also save. See Self::add
             Self::new(VirtAddr::new(align_up(
                 self.as_ptr::<u8>() as usize as u64,
-                align.into(),
+                align.into_u64(),
             )))
             .expect("Align up can never return 0, because self is not 0")
         }
@@ -184,7 +183,7 @@ impl UntypedPtr {
             // Safety: self is mapped properly therefor this is also save. See Self::add
             Self::new(VirtAddr::new(align_down(
                 self.as_ptr::<u8>() as usize as u64,
-                align.into(),
+                align.into_u64(),
             )))
         }
     }

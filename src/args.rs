@@ -321,6 +321,7 @@ impl Profile {
 pub enum WorkspacePackage {
     WasabiKernel,
     WasabiTest,
+    Wfs,
     SharedDerive,
     Shared,
     Logger,
@@ -378,7 +379,11 @@ impl KernelBinary {
 
 impl Into<clap::builder::OsStr> for KernelBinary {
     fn into(self) -> clap::builder::OsStr {
-        self.name().into()
+        match self {
+            KernelBinary::Wasabi => OsStr::new("wasabi"),
+            KernelBinary::Test => OsStr::new("test"),
+        }
+        .into()
     }
 }
 

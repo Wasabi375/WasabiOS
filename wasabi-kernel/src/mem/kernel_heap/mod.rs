@@ -17,17 +17,17 @@ use shared::sync::lockcell::RWLockCell;
 use super::{ptr::UntypedPtr, structs::Pages};
 use crate::{
     mem::{
-        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
-        MemError, Result,
+        MemError, Result, frame_allocator::FrameAllocator, page_allocator::PageAllocator,
+        page_table::PageTable,
     },
     prelude::{LockCell, TicketLock, UnwrapTicketLock},
 };
 
 use core::{
     alloc::{GlobalAlloc, Layout},
-    mem::{align_of, size_of, MaybeUninit},
+    mem::{MaybeUninit, align_of, size_of},
     ops::DerefMut,
-    ptr::{null_mut, NonNull},
+    ptr::{NonNull, null_mut},
     sync::atomic::{AtomicBool, Ordering},
 };
 use linked_list_allocator::Heap as LinkedHeap;
@@ -158,7 +158,7 @@ impl GlobalHeapFreezeHeaps {
     const fn new() -> Self {
         Self {
             valid_count: 0,
-            extra_heaps: MaybeUninit::uninit_array(),
+            extra_heaps: [const { MaybeUninit::uninit() }; Self::MAX_HEAPS],
         }
     }
 
@@ -249,9 +249,7 @@ unsafe impl GlobalAlloc for KernelHeapGlobalAllocator {
             let extras = if freeze_heaps.valid_count > 0 {
                 unsafe {
                     // Safety: the first `valid_extra_heap_count` heaps are initialized
-                    MaybeUninit::slice_assume_init_ref(
-                        &freeze_heaps.extra_heaps[0..freeze_heaps.valid_count],
-                    )
+                    freeze_heaps.extra_heaps[0..freeze_heaps.valid_count].assume_init_ref()
                 }
             } else {
                 &[]
@@ -334,7 +332,7 @@ pub fn freeze_global_heap() -> Result<()> {
 
     freeze_heaps.valid_count += 1;
 
-    log::warn!("Kernel Heap frozen");
+    log::debug!("Kernel Heap frozen");
 
     Ok(())
 }
@@ -346,8 +344,6 @@ pub fn freeze_global_heap() -> Result<()> {
 /// in the current freeze heap.
 #[cfg(feature = "freeze-heap")]
 pub fn try_unfreeze_global_heap() -> Result<()> {
-    use crate::todo_warn;
-
     let mut freeze_heaps = GLOBAL_ALLOCATOR.freeze_heaps.write();
 
     if freeze_heaps.valid_count == 0 {
@@ -372,7 +368,7 @@ pub fn try_unfreeze_global_heap() -> Result<()> {
     // lock and heap must be dropped after the write lock is released. Otherwise
     // dropping the heap might lead to a deadlock as it tries to access the GlobalAllocator
     // when trying to drop the Histrogram for the stats object.
-    todo_warn!("Free pages and frames used by freeze heap. Drop for KernelHeap?");
+    // TODO todo_warn!("Free pages and frames used by freeze heap. Drop for KernelHeap?");
     drop(heap);
 
     Ok(())
@@ -491,8 +487,7 @@ impl KernelHeap {
         }
 
         trace!("create slab allocators...");
-        let mut slabs: [MaybeUninit<_>; SLAB_ALLOCATOR_SIZES_BYTES.len()] =
-            MaybeUninit::uninit_array();
+        let mut slabs = [const { MaybeUninit::uninit() }; SLAB_ALLOCATOR_SIZES_BYTES.len()];
         for (slab, size) in slabs.iter_mut().zip(SLAB_ALLOCATOR_SIZES_BYTES.iter()) {
             // safety: our safety guarantees, that [KernelHeap::init] is called
             // before anything else, and there we call `nwe_slab.init`.
@@ -564,6 +559,8 @@ impl MutAllocator for KernelHeap {
                 return slab.alloc(layout);
             }
         }
+
+        // TODO do I want a fast path for allocating exact pages?
 
         #[cfg(feature = "mem-stats")]
         if let Some(stats) = self.stats.as_mut() {

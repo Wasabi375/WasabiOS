@@ -1,7 +1,10 @@
+#![allow(missing_docs)] // TODO temp
+
 use core::{
     fmt::{Display, Pointer},
     hash::Hash,
     marker::PhantomData,
+    mem::offset_of,
     ops::{Deref, DerefMut},
     ptr::NonNull,
     sync::atomic::{self, AtomicBool, AtomicUsize, Ordering},
@@ -186,14 +189,24 @@ impl<T: ?Sized> Unpin for SingleArc<T> {}
 impl<T: ?Sized> WeakSingleArc<T> {
     fn atomic_strong_ref(&self) -> &AtomicBool {
         // Safetey: data is a valid ptr, since we still have a weak ref to it.
-        // TODO: am I allowed to call as_ref? This violates aliasing for data
-        unsafe { &self.inner.as_ref().strong_ref }
+        unsafe {
+            &*self
+                .inner
+                .as_ptr()
+                .byte_offset(offset_of!(Inner<T>, strong_ref) as isize)
+                .cast()
+        }
     }
 
     fn atomic_ref_count(&self) -> &AtomicUsize {
         // Safetey: data is a valid ptr, since we still have a weak ref to it.
-        // TODO: am I allowed to call as_ref? This violates aliasing for data
-        unsafe { &self.inner.as_ref().ref_count }
+        unsafe {
+            &*self
+                .inner
+                .as_ptr()
+                .byte_offset(offset_of!(Inner<T>, ref_count) as isize)
+                .cast()
+        }
     }
 
     /// Try to upgrade to a [SingleArc].

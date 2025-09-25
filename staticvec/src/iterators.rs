@@ -6,6 +6,8 @@ use core::mem::{replace, size_of, MaybeUninit};
 use core::ptr;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 
+use shared::math::Number;
+
 use crate::utils::{distance_between, zst_ptr_add, zst_ptr_add_mut};
 use crate::StaticVec;
 
@@ -41,48 +43,34 @@ pub struct StaticVecIntoIter<T, const N: usize> {
 /// by the [`drain_iter`](crate::StaticVec::drain_iter) method on [`StaticVec`](crate::StaticVec),
 /// as while the [`drain`](crate::StaticVec::drain) method does have a similar purpose, it works by
 /// immediately returning a new [`StaticVec`](crate::StaticVec) as opposed to an iterator.
-pub struct StaticVecDrain<'a, T: 'a, const N: usize> {
+pub struct StaticVecDrain<'a, T: 'a, const N: usize, L = usize>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     pub(crate) start: usize,
     pub(crate) length: usize,
     pub(crate) iter: StaticVecIterConst<'a, T, N>,
-    pub(crate) vec: *mut StaticVec<T, N>,
+    pub(crate) vec: *mut StaticVec<T, N, L>,
 }
 
 /// A "splicing" iterator, analogous to `vec::Splice`.
 /// Instances of [`StaticVecSplice`](crate::iterators::StaticVecSplice) are created
 /// by the [`splice`](crate::StaticVec::splice) method on [`StaticVec`](crate::StaticVec).
-pub struct StaticVecSplice<T, I: Iterator<Item = T>, const N: usize> {
+pub struct StaticVecSplice<T, I: Iterator<Item = T>, const N: usize, L = usize>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) replace_with: I,
-    pub(crate) vec: *mut StaticVec<T, N>,
+    pub(crate) vec: *mut StaticVec<T, N, L>,
 }
 
 impl<'a, T: 'a, const N: usize> StaticVecIterConst<'a, T, N> {
-    /// Returns a string displaying the current values of the
-    /// iterator's `start` and `end` elements on two separate lines.
-    /// Locally requires that `T` implements [Debug](core::fmt::Debug)
-    /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn bounds_to_string(&self) -> String
-    where
-        T: Debug,
-    {
-        match self.len() {
-            0 => String::from("Empty iterator!"),
-            _ => unsafe {
-                // Safety: `start` and `end` are never null.
-                format!(
-          "Current value of element at `start`: {:?}\nCurrent value of element at `end`: {:?}",
-          &*self.start,
-          &*self.end.offset(-1)
-        )
-            },
-        }
-    }
-
     /// Returns an immutable slice consisting of the elements in the range between the iterator's
     /// `start` and `end` pointers.
     #[inline(always)]
@@ -260,30 +248,6 @@ impl<'a, T: 'a + Debug, const N: usize> Debug for StaticVecIterConst<'a, T, N> {
 }
 
 impl<'a, T: 'a, const N: usize> StaticVecIterMut<'a, T, N> {
-    /// Returns a string displaying the current values of the
-    /// iterator's `start` and `end` elements on two separate lines.
-    /// Locally requires that `T` implements [Debug](core::fmt::Debug)
-    /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn bounds_to_string(&self) -> String
-    where
-        T: Debug,
-    {
-        match self.len() {
-            0 => String::from("Empty iterator!"),
-            _ => unsafe {
-                // Safety: `start` and `end` are never null.
-                format!(
-          "Current value of element at `start`: {:?}\nCurrent value of element at `end`: {:?}",
-          &*self.start,
-          &*self.end.offset(-1)
-        )
-            },
-        }
-    }
-
     /// Returns an immutable slice consisting of the elements in the range between the iterator's
     /// `start` and `end` pointers. Though this is a mutable iterator, the slice cannot be mutable
     /// as it would lead to aliasing issues.
@@ -443,30 +407,6 @@ impl<'a, T: 'a + Debug, const N: usize> Debug for StaticVecIterMut<'a, T, N> {
 }
 
 impl<T, const N: usize> StaticVecIntoIter<T, N> {
-    /// Returns a string displaying the current values of the
-    /// iterator's `start` and `end` elements on two separate lines.
-    /// Locally requires that `T` implements [Debug](core::fmt::Debug)
-    /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn bounds_to_string(&self) -> String
-    where
-        T: Debug,
-    {
-        match self.len() {
-            0 => String::from("Empty iterator!"),
-            _ => unsafe {
-                // Safety: `start` and `end` are never out of bounds.
-                format!(
-          "Current value of element at `start`: {:?}\nCurrent value of element at `end`: {:?}",
-          &*StaticVec::first_ptr(&self.data).add(self.start),
-          &*StaticVec::first_ptr(&self.data).add(self.end - 1)
-        )
-            },
-        }
-    }
-
     /// Returns an immutable slice consisting of the elements in the range between the iterator's
     /// `start` and `end` indices.
     #[inline(always)]
@@ -694,21 +634,12 @@ impl<T, const N: usize> Drop for StaticVecIntoIter<T, N> {
     }
 }
 
-impl<'a, T: 'a, const N: usize> StaticVecDrain<'a, T, N> {
-    /// Returns a string displaying the current values of the
-    /// iterator's `start` and `end` elements on two separate lines.
-    /// Locally requires that `T` implements [Debug](core::fmt::Debug)
-    /// to make it possible to pretty-print the elements.
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn bounds_to_string(&self) -> String
-    where
-        T: Debug,
-    {
-        self.iter.bounds_to_string()
-    }
-
+impl<'a, T: 'a, const N: usize, L> StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     /// Returns an immutable slice consisting of the current range of elements the iterator has a view
     /// over.
     #[inline(always)]
@@ -717,7 +648,12 @@ impl<'a, T: 'a, const N: usize> StaticVecDrain<'a, T, N> {
     }
 }
 
-impl<'a, T: 'a, const N: usize> Iterator for StaticVecDrain<'a, T, N> {
+impl<'a, T: 'a, const N: usize, L> Iterator for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     type Item = T;
 
     #[inline(always)]
@@ -756,7 +692,12 @@ impl<'a, T: 'a, const N: usize> Iterator for StaticVecDrain<'a, T, N> {
     }
 }
 
-impl<'a, T: 'a, const N: usize> DoubleEndedIterator for StaticVecDrain<'a, T, N> {
+impl<'a, T: 'a, const N: usize, L> DoubleEndedIterator for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     #[inline(always)]
     fn next_back(&mut self) -> Option<T> {
         self.iter
@@ -765,7 +706,12 @@ impl<'a, T: 'a, const N: usize> DoubleEndedIterator for StaticVecDrain<'a, T, N>
     }
 }
 
-impl<'a, T: 'a, const N: usize> ExactSizeIterator for StaticVecDrain<'a, T, N> {
+impl<'a, T: 'a, const N: usize, L> ExactSizeIterator for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     #[inline(always)]
     fn len(&self) -> usize {
         self.iter.len()
@@ -777,23 +723,56 @@ impl<'a, T: 'a, const N: usize> ExactSizeIterator for StaticVecDrain<'a, T, N> {
     }
 }
 
-impl<'a, T: 'a, const N: usize> FusedIterator for StaticVecDrain<'a, T, N> {}
-unsafe impl<'a, T: 'a, const N: usize> TrustedLen for StaticVecDrain<'a, T, N> {}
+impl<'a, T: 'a, const N: usize, L> FusedIterator for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+}
+unsafe impl<'a, T: 'a, const N: usize, L> TrustedLen for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+}
 // We hide this one just in case it gets removed from `std` later, so no one relies on us relying on
 // it.
 #[doc(hidden)]
-unsafe impl<'a, T: Copy + 'a, const N: usize> TrustedRandomAccessNoCoerce
-    for StaticVecDrain<'a, T, N>
+unsafe impl<'a, T: Copy + 'a, const N: usize, L> TrustedRandomAccessNoCoerce
+    for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
 {
     const MAY_HAVE_SIDE_EFFECT: bool = false;
     fn size(&self) -> usize {
         distance_between(self.iter.end, self.iter.start)
     }
 }
-unsafe impl<'a, T: 'a + Sync, const N: usize> Sync for StaticVecDrain<'a, T, N> {}
-unsafe impl<'a, T: 'a + Send, const N: usize> Send for StaticVecDrain<'a, T, N> {}
+unsafe impl<'a, T: 'a + Sync, const N: usize, L> Sync for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+}
+unsafe impl<'a, T: 'a + Send, const N: usize, L> Send for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+}
 
-impl<'a, T: 'a + Debug, const N: usize> Debug for StaticVecDrain<'a, T, N> {
+impl<'a, T: 'a + Debug, const N: usize, L> Debug for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_tuple("StaticVecDrain")
@@ -802,7 +781,12 @@ impl<'a, T: 'a + Debug, const N: usize> Debug for StaticVecDrain<'a, T, N> {
     }
 }
 
-impl<'a, T: 'a, const N: usize> Drop for StaticVecDrain<'a, T, N> {
+impl<'a, T: 'a, const N: usize, L> Drop for StaticVecDrain<'a, T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     #[inline]
     fn drop(&mut self) {
         // Read out any remaining contents first.
@@ -815,14 +799,20 @@ impl<'a, T: 'a, const N: usize> Drop for StaticVecDrain<'a, T, N> {
                 let start = vec_ref.length;
                 let tail = self.start;
                 let mp = vec_ref.as_mut_ptr();
-                mp.add(tail).copy_to(mp.add(start), total_length);
-                vec_ref.set_len(start + total_length);
+                mp.add(tail)
+                    .copy_to(mp.add(start.try_into().unwrap()), total_length);
+                vec_ref.set_len(start + total_length.try_into().unwrap());
             }
         }
     }
 }
 
-impl<T, I: Iterator<Item = T>, const N: usize> Iterator for StaticVecSplice<T, I, N> {
+impl<T, I: Iterator<Item = T>, const N: usize, L> Iterator for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     type Item = T;
 
     #[inline]
@@ -833,13 +823,15 @@ impl<T, I: Iterator<Item = T>, const N: usize> Iterator for StaticVecSplice<T, I
             0 => None,
             _ => match self.replace_with.next() {
                 Some(replace_with) => unsafe {
-                    let removed =
-                        replace((&mut *self.vec).get_unchecked_mut(self.start), replace_with);
+                    let removed = replace(
+                        (&mut *self.vec).get_unchecked_mut(self.start.try_into().unwrap()),
+                        replace_with,
+                    );
                     self.start += 1;
                     Some(removed)
                 },
                 None => unsafe {
-                    let removed = (&mut *self.vec).remove_unchecked(self.start);
+                    let removed = (&mut *self.vec).remove_unchecked(self.start.try_into().unwrap());
                     self.end -= 1;
                     Some(removed)
                 },
@@ -859,8 +851,12 @@ impl<T, I: Iterator<Item = T>, const N: usize> Iterator for StaticVecSplice<T, I
     }
 }
 
-impl<T, I: Iterator<Item = T> + DoubleEndedIterator, const N: usize> DoubleEndedIterator
-    for StaticVecSplice<T, I, N>
+impl<T, I: Iterator<Item = T> + DoubleEndedIterator, const N: usize, L> DoubleEndedIterator
+    for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
 {
     #[inline]
     fn next_back(&mut self) -> Option<T> {
@@ -871,14 +867,15 @@ impl<T, I: Iterator<Item = T> + DoubleEndedIterator, const N: usize> DoubleEnded
             _ => match self.replace_with.next_back() {
                 Some(replace_with) => unsafe {
                     let removed = replace(
-                        (&mut *self.vec).get_unchecked_mut(self.end - 1),
+                        (&mut *self.vec).get_unchecked_mut((self.end - 1).try_into().unwrap()),
                         replace_with,
                     );
                     self.end -= 1;
                     Some(removed)
                 },
                 None => unsafe {
-                    let removed = (&mut *self.vec).remove_unchecked(self.end - 1);
+                    let removed =
+                        (&mut *self.vec).remove_unchecked((self.end - 1).try_into().unwrap());
                     self.end -= 1;
                     Some(removed)
                 },
@@ -887,7 +884,12 @@ impl<T, I: Iterator<Item = T> + DoubleEndedIterator, const N: usize> DoubleEnded
     }
 }
 
-impl<T, I: Iterator<Item = T>, const N: usize> ExactSizeIterator for StaticVecSplice<T, I, N> {
+impl<T, I: Iterator<Item = T>, const N: usize, L> ExactSizeIterator for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     #[inline(always)]
     fn len(&self) -> usize {
         self.end - self.start
@@ -899,19 +901,48 @@ impl<T, I: Iterator<Item = T>, const N: usize> ExactSizeIterator for StaticVecSp
     }
 }
 
-impl<T, I: Iterator<Item = T>, const N: usize> FusedIterator for StaticVecSplice<T, I, N> {}
-unsafe impl<T, I: Iterator<Item = T>, const N: usize> TrustedLen for StaticVecSplice<T, I, N> {}
-unsafe impl<T: Sync, I: Iterator<Item = T>, const N: usize> Sync for StaticVecSplice<T, I, N> {}
-unsafe impl<T: Send, I: Iterator<Item = T>, const N: usize> Send for StaticVecSplice<T, I, N> {}
+impl<T, I: Iterator<Item = T>, const N: usize, L> FusedIterator for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+}
+unsafe impl<T, I: Iterator<Item = T>, const N: usize, L> TrustedLen for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+}
+unsafe impl<T: Sync, I: Iterator<Item = T>, const N: usize, L> Sync for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+}
+unsafe impl<T: Send, I: Iterator<Item = T>, const N: usize, L> Send for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+}
 
-impl<T: Debug, I: Iterator<Item = T>, const N: usize> Debug for StaticVecSplice<T, I, N> {
+impl<T: Debug, I: Iterator<Item = T>, const N: usize, L> Debug for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         // Safety: `self.vec` will never be null, and `self.end` and `self.start` will always be within
         // an appropriate range.
         unsafe {
             let items = from_raw_parts(
-                (&*self.vec).ptr_at_unchecked(self.start),
+                (&*self.vec).ptr_at_unchecked(self.start.try_into().unwrap()),
                 self.end - self.start,
             );
             f.debug_tuple("StaticVecSplice").field(&items).finish()
@@ -919,14 +950,19 @@ impl<T: Debug, I: Iterator<Item = T>, const N: usize> Debug for StaticVecSplice<
     }
 }
 
-impl<T, I: Iterator<Item = T>, const N: usize> Drop for StaticVecSplice<T, I, N> {
+impl<T, I: Iterator<Item = T>, const N: usize, L> Drop for StaticVecSplice<T, I, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     #[inline]
     fn drop(&mut self) {
         while let Some(_) = self.next() {}
         let vec_ref = unsafe { &mut *self.vec };
         for replace_with in self.replace_with.by_ref() {
             // Stop looping if the StaticVec is at maximum capacity.
-            let old_length = vec_ref.length;
+            let old_length: usize = vec_ref.length.try_into().unwrap();
             if old_length == N {
                 break;
             }
@@ -934,10 +970,10 @@ impl<T, I: Iterator<Item = T>, const N: usize> Drop for StaticVecSplice<T, I, N>
             // since we already know that we're within an appropriate range in this context.
             let index = self.end;
             unsafe {
-                let vec_ptr = vec_ref.mut_ptr_at_unchecked(index);
+                let vec_ptr = vec_ref.mut_ptr_at_unchecked(index.try_into().unwrap());
                 vec_ptr.copy_to(vec_ptr.offset(1), old_length - index);
                 vec_ptr.write(replace_with);
-                vec_ref.set_len(old_length + 1);
+                vec_ref.set_len((old_length + 1).try_into().unwrap());
             }
             self.end += 1;
         }

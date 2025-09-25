@@ -339,7 +339,7 @@ impl Display for Duration {
 
         if scaled >= Duration::HOURS_MUL {
             let hours = scaled / Duration::HOURS_MUL;
-            f.write_fmt(format_args!("{:0>2}:", hours))?;
+            f.write_fmt(format_args!("{hours:0>2}:"))?;
             scaled -= hours * Duration::HOURS_MUL;
             write_rest = true;
             unit_type = Some(Duration::new_hours(0).multiplier_name());
@@ -347,7 +347,7 @@ impl Display for Duration {
 
         if scaled >= Duration::MINUTES_MUL || write_rest {
             let minutes = scaled / Duration::MINUTES_MUL;
-            f.write_fmt(format_args!("{:0>2}:", minutes))?;
+            f.write_fmt(format_args!("{minutes:0>2}:"))?;
             scaled -= minutes * Duration::MINUTES_MUL;
             write_rest = true;
             unit_type = unit_type.or(Some(Duration::new_minutes(0).multiplier_name()));
@@ -355,7 +355,7 @@ impl Display for Duration {
 
         if scaled >= Duration::SECONDS_MUL || write_rest {
             let seconds = scaled / Duration::SECONDS_MUL;
-            f.write_fmt(format_args!("{:0>2}.", seconds))?;
+            f.write_fmt(format_args!("{seconds:0>2}."))?;
             scaled -= seconds * Duration::SECONDS_MUL;
             write_rest = true;
             unit_type = unit_type.or(Some(Duration::new_seconds(0).multiplier_name()));
@@ -363,7 +363,7 @@ impl Display for Duration {
 
         if (scaled >= Duration::MILLIS_MUL) || write_rest {
             let millis = scaled / Duration::MILLIS_MUL;
-            f.write_fmt(format_args!("{:0>3}", millis))?;
+            f.write_fmt(format_args!("{millis:0>3}"))?;
             scaled -= millis * Duration::MILLIS_MUL;
 
             unit_type = unit_type.or(Some(Duration::new_millis(0).multiplier_name()));
@@ -375,7 +375,7 @@ impl Display for Duration {
 
         if scaled > 0 {
             let micros = scaled / Duration::MICROS_MUL;
-            f.write_fmt(format_args!("{:0>3}", micros))?;
+            f.write_fmt(format_args!("{micros:0>3}"))?;
             scaled -= micros * Duration::MICROS_MUL;
 
             unit_type = unit_type.or(Some(Duration::new_micros(0).multiplier_name()));

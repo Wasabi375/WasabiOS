@@ -2,7 +2,8 @@
 
 extern crate alloc;
 
-use testing::{description::kernel_test_setup, multitest};
+use testing::description::kernel_test_setup;
+use testing_derive::multitest;
 
 kernel_test_setup!();
 
@@ -51,6 +52,7 @@ mod tests {
 
     #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Assert)))]
     fn test_t_assert_false() -> Result<(), KernelTestError> {
+        #[allow(clippy::disallowed_names)]
         let foo = false;
         t_assert!(foo);
         Ok(())

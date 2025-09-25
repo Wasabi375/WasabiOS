@@ -1,43 +1,59 @@
 //! No std and no alloc vector and strings.
+//!
+//! There is a rust internal compiler error that leads to compiler crashes
+//! on some functions in this crate. The workaround is to add `#![feature(generic_const_exprs)]`
+//! to all crates using those functions.
+//! <https://github.com/rust-lang/rust/issues/133199>
 #![no_std]
 #![allow(
-  // Clippy wants every single instance of the word "StaticVec" to be in syntax-highlight
-  // backticks, which IMO looks way too "noisy" when actually rendered.
-  clippy::doc_markdown,
-  // Clippy thinks inline always is a bad idea even for the most simple of one-liners, so
-  // IMO it's just not a particularly helpful lint.
-  clippy::inline_always,
-  // The "if-let" syntax Clippy recommends as an alternative to "match" in this lint is
-  // generally way less readable IMO.
-  clippy::match_bool,
-  // Without this, every single use of const generics is warned against.
-  incomplete_features,
-  // allow core intrinsics
-  internal_features
+    // I don't really care about clippy in this crate right now
+    clippy::all,
+    // // Clippy wants every single instance of the word "StaticVec" to be in syntax-highlight
+    // // backticks, which IMO looks way too "noisy" when actually rendered.
+    // clippy::doc_markdown,
+    // // Clippy thinks inline always is a bad idea even for the most simple of one-liners, so
+    // // IMO it's just not a particularly helpful lint.
+    // clippy::inline_always,
+    // // The "if-let" syntax Clippy recommends as an alternative to "match" in this lint is
+    // // generally way less readable IMO.
+    // clippy::match_bool,
+    
+    // Without this, every single use of const generics is warned against.
+    incomplete_features,
+    // allow core intrinsics
+    internal_features
 )]
 #![feature(
+    const_eval_select,
     core_intrinsics,
     doc_cfg,
     exact_size_is_empty,
     generic_const_exprs,
     maybe_uninit_array_assume_init,
-    maybe_uninit_uninit_array,
+    maybe_uninit_uninit_array_transpose,
     pattern,
     slice_partition_dedup,
     specialization,
     trusted_len,
-    trusted_random_access,
-    const_eval_select
+    trusted_random_access
 )]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
+use core::fmt::Debug;
 use core::intrinsics::assume;
 use core::marker::PhantomData;
 use core::mem::{self, size_of, MaybeUninit};
 use core::ops::{
     Add, Bound::Excluded, Bound::Included, Bound::Unbounded, Div, Mul, RangeBounds, Sub,
 };
-use core::ptr;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
+use core::{ptr, usize};
+
+use shared::math::Number;
 
 pub use crate::errors::{CapacityError, PushCapacityError};
 pub use crate::heap::{
@@ -62,12 +78,21 @@ pub mod utils;
 /// A `Vec`-like struct (mostly directly API-compatible where it can be)
 /// implemented with const generics around an array of fixed `N` capacity.
 ///
+/// The length field of this struct is generic and defaults to `usize`.
+/// Any function on this struct may panic if `L` can not store `N`.
+///
 /// Please note that while `rustdoc` does currently correctly render inherent `const fn` method
 /// signatures, the same is not true of `const` trait implementation method signatures, so at this
 /// time it's recommended that you refer directly to the source code of this crate if unsure of
 /// whether a given trait has been implemented as `const` in conjunction with the `const_trait_impl`
 /// feature.
-pub struct StaticVec<T, const N: usize> {
+#[repr(C)]
+pub struct StaticVec<T, const N: usize, L = usize>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     // We create this field in an uninitialized state, and write to it element-wise as needed via
     // pointer methods. At no time should the regular `assume_init` function *ever* be called through
     // it unless an abundantly obviously-not-UB reason is present or a clear explanation is provided
@@ -77,10 +102,15 @@ pub struct StaticVec<T, const N: usize> {
     // The constant `N` parameter (and thus the total span of `data`) represent capacity for us,
     // while the field below represents, as its name suggests, the current length of a StaticVec
     // (that is, the current number of "live" elements) just as is the case for a regular `Vec`.
-    length: usize,
+    length: L,
 }
 
-impl<T, const N: usize> StaticVec<T, N> {
+impl<T, L, const N: usize> StaticVec<T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     /// Returns a new StaticVec instance.
     ///
     /// # Example usage:
@@ -98,8 +128,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            data: Self::new_data_uninit(),
-            length: 0,
+            data: StaticVec::new_data_uninit(),
+            length: <L as Number>::ZERO,
         }
     }
 
@@ -120,18 +150,18 @@ impl<T, const N: usize> StaticVec<T, N> {
     where
         T: Copy,
     {
-        let length = const_min(values.len(), N);
+        let length = const_min(values.len().try_into().unwrap(), N);
         Self {
             data: {
-                let mut data = Self::new_data_uninit();
+                let mut data = StaticVec::new_data_uninit();
                 unsafe {
                     values
                         .as_ptr()
-                        .copy_to_nonoverlapping(Self::first_ptr_mut(&mut data), length);
+                        .copy_to_nonoverlapping(StaticVec::first_ptr_mut(&mut data), length);
                     data
                 }
             },
-            length,
+            length: length.try_into().unwrap(),
         }
     }
 
@@ -186,10 +216,10 @@ impl<T, const N: usize> StaticVec<T, N> {
             Self {
                 data: {
                     unsafe {
-                        let mut data = Self::new_data_uninit();
+                        let mut data = StaticVec::new_data_uninit();
                         values
                             .as_ptr()
-                            .copy_to_nonoverlapping(Self::first_ptr_mut(&mut data), N2.min(N));
+                            .copy_to_nonoverlapping(StaticVec::first_ptr_mut(&mut data), N2.min(N));
                         // Wrap the values in a MaybeUninit to inhibit their destructors (if any),
                         // then manually drop any excess ones. From the assembly output I've looked
                         // at, the compiler interprets this whole sequence in a way that doesn't result
@@ -202,36 +232,8 @@ impl<T, const N: usize> StaticVec<T, N> {
                         data
                     }
                 },
-                length: N2.min(N),
+                length: N2.min(N).try_into().unwrap(),
             }
-        }
-    }
-
-    /// A version of [`new_from_array`](crate::StaticVec::new_from_array) specifically designed
-    /// for use as a `const fn` constructor (although it can of course be used in non-const contexts
-    /// as well.)
-    ///
-    /// Being `const` necessitates that this function can only accept arrays with a length
-    /// exactly equal to the declared capacity of the resulting StaticVec, so if you do need
-    /// flexibility with regards to input lengths it's recommended that you use
-    /// [`new_from_array`](crate::StaticVec::new_from_array) or the [`From`](core::convert::From)
-    /// implementations instead.
-    ///
-    /// Note that both forms of the [`staticvec!`] macro are implemented using
-    /// [`new_from_const_array`](crate::StaticVec::new_from_const_array), so you may also prefer
-    /// to use them instead of it directly.
-    ///
-    /// # Example usage:
-    /// ```
-    /// # use staticvec::{staticvec, StaticVec};
-    /// const v: StaticVec<i32, 4> = StaticVec::new_from_const_array([1, 2, 3, 4]);
-    /// assert_eq!(v, staticvec![1, 2, 3, 4]);
-    /// ```
-    #[inline(always)]
-    pub const fn new_from_const_array(values: [T; N]) -> Self {
-        Self {
-            data: MaybeUninit::new(values),
-            length: N,
         }
     }
 
@@ -247,7 +249,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(staticvec![1].len(), 1);
     /// ```
     #[inline(always)]
-    pub const fn len(&self) -> usize {
+    pub const fn len(&self) -> L {
         self.length
     }
 
@@ -269,7 +271,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// rather than a method.
     ///
     /// # Example usage:
-    /// ```
+    /// ``
     /// # use staticvec::*;
     /// assert_eq!(StaticVec::<f64, 12>::cap(), 12)
     /// ```
@@ -299,8 +301,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(vec.remaining_capacity(), 99);
     /// ```
     #[inline(always)]
-    pub const fn remaining_capacity(&self) -> usize {
-        N - self.length
+    pub fn remaining_capacity(&self) -> L {
+        TryInto::<L>::try_into(N).unwrap() - self.length
     }
 
     /// Returns the total size of the inhabited part of the StaticVec (which may be zero if it has a
@@ -320,8 +322,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(w.size_in_bytes(), 64);
     /// ```
     #[inline(always)]
-    pub const fn size_in_bytes(&self) -> usize {
-        size_of::<T>() * self.length
+    pub fn size_in_bytes(&self) -> usize {
+        size_of::<T>() * self.length.try_into().unwrap()
     }
 
     /// Directly sets the length field of the StaticVec to `new_len`. Useful if you intend
@@ -348,7 +350,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(vec, data);
     /// ```
     #[inline(always)]
-    pub unsafe fn set_len(&mut self, new_len: usize) {
+    pub unsafe fn set_len(&mut self, new_len: L) {
         // Most of the `unsafe` functions in this crate that are heavily used internally
         // have debug-build-only assertions where it's useful.
         /*
@@ -361,7 +363,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         */
         debug_assert!(
-            new_len <= N,
+            new_len.try_into().unwrap() <= N,
             "A `new_len` greater than `N` was passed to `StaticVec::set_len`!"
         );
         self.length = new_len;
@@ -375,8 +377,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert!(StaticVec::<i32, 4>::new().is_empty());
     /// ```
     #[inline(always)]
-    pub const fn is_empty(&self) -> bool {
-        self.length == 0
+    pub fn is_empty(&self) -> bool {
+        self.length == L::ZERO
     }
 
     /// Returns true if the current length of the StaticVec is greater than 0.
@@ -391,8 +393,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     // sure.
     #[allow(clippy::len_zero)]
     #[inline(always)]
-    pub const fn is_not_empty(&self) -> bool {
-        self.length > 0
+    pub fn is_not_empty(&self) -> bool {
+        !self.is_empty()
     }
 
     /// Returns true if the current length of the StaticVec is equal to its capacity.
@@ -403,8 +405,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert!(StaticVec::<i32, 4>::filled_with(|| 2).is_full());
     /// ```
     #[inline(always)]
-    pub const fn is_full(&self) -> bool {
-        self.length == N
+    pub fn is_full(&self) -> bool {
+        self.length == N.try_into().unwrap()
     }
 
     /// Returns true if the current length of the StaticVec is less than its capacity.
@@ -415,8 +417,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert!(StaticVec::<i32, 4>::new().is_not_full());
     /// ```
     #[inline(always)]
-    pub const fn is_not_full(&self) -> bool {
-        self.length < N
+    pub fn is_not_full(&self) -> bool {
+        !self.is_full()
     }
 
     /// Returns a constant pointer to the first element of the StaticVec's internal array.
@@ -476,7 +478,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     pub fn as_slice(&self) -> &[T] {
         // Safety: `self.as_ptr()` is a pointer to an array for which the first `length`
         // elements are guaranteed to be initialized. Therefore this is a valid slice.
-        unsafe { from_raw_parts(self.as_ptr(), self.length) }
+        unsafe { from_raw_parts(self.as_ptr(), self.length.try_into().unwrap()) }
     }
 
     /// Returns a mutable reference to a slice of the StaticVec's inhabited area.
@@ -492,7 +494,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     #[inline(always)]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         // Safety: See as_slice.
-        unsafe { from_raw_parts_mut(self.as_mut_ptr(), self.length) }
+        unsafe { from_raw_parts_mut(self.as_mut_ptr(), self.length.try_into().unwrap()) }
     }
 
     /// Returns a constant pointer to the element of the StaticVec at `index` without doing any
@@ -516,7 +518,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// }
     /// ```
     #[inline(always)]
-    pub unsafe fn ptr_at_unchecked(&self, index: usize) -> *const T {
+    pub unsafe fn ptr_at_unchecked(&self, index: L) -> *const T {
         // We (inclusively, to account for the possibility of `N` being 0) check against `N` as opposed
         // to `length` in our debug assertion here, as these `_unchecked` versions of `ptr_at` and
         // `mut_ptr_at` are primarily intended for initialization-related purposes (and used extensively
@@ -531,12 +533,12 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         */
         debug_assert!(
-            index <= N,
+            index <= N.try_into().unwrap(),
             "Bounds check failure in `StaticVec::ptr_at_unchecked`!",
         );
         // Safety: `index` is explicitly a `usize` to start with, and so cannot be negative at this
         // point.
-        self.as_ptr().add(index)
+        self.as_ptr().add(index.try_into().unwrap())
     }
 
     /// Returns a mutable pointer to the element of the StaticVec at `index` without doing any
@@ -565,7 +567,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, ["I", "am", "a", "StaticVec!"]);
     /// ```
     #[inline(always)]
-    pub unsafe fn mut_ptr_at_unchecked(&mut self, index: usize) -> *mut T {
+    pub unsafe fn mut_ptr_at_unchecked(&mut self, index: L) -> *mut T {
         // We (inclusively, to account for the possibility of `N` being 0) check against `N` as opposed
         // to `length` in our debug assertion here, as these `_unchecked` versions of `ptr_at` and
         // `mut_ptr_at` are primarily intended for initialization-related purposes (and used extensively
@@ -580,12 +582,12 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         */
         debug_assert!(
-            index <= N,
+            index <= N.try_into().unwrap(),
             "Bounds check failure in `StaticVec::mut_ptr_at_unchecked`!",
         );
         // Safety: `index` is explicitly a `usize` to start with, and so cannot be negative at this
         // point.
-        self.as_mut_ptr().add(index)
+        self.as_mut_ptr().add(index.try_into().unwrap())
     }
 
     /// Returns a constant pointer to the element of the StaticVec at `index` if `index`
@@ -600,7 +602,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// unsafe { assert_eq!(*p, "StaticVec!") };
     /// ```
     #[inline(always)]
-    pub fn ptr_at(&self, index: usize) -> *const T {
+    pub fn ptr_at(&self, index: L) -> *const T {
         /*
         // The formatted assertion macros are not const-compatible yet.
         assert!(
@@ -630,7 +632,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, ["I", "am", "a", "StaticVec!"]);
     /// ```
     #[inline(always)]
-    pub fn mut_ptr_at(&mut self, index: usize) -> *mut T {
+    pub fn mut_ptr_at(&mut self, index: L) -> *mut T {
         /*
         // The formatted assertion macros are not const-compatible yet.
         assert!(
@@ -665,7 +667,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// unsafe { assert_eq!(*staticvec![1, 2, 3].get_unchecked(1), 2) };
     /// ```
     #[inline(always)]
-    pub unsafe fn get_unchecked(&self, index: usize) -> &T {
+    pub unsafe fn get_unchecked(&self, index: L) -> &T {
         // This function is used internally in places where `length` has been intentionally
         // temporarily set to zero, so we do our debug assertion against `N`.
         /*
@@ -678,7 +680,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         */
         debug_assert!(
-            index < N,
+            index < N.try_into().unwrap(),
             "Bounds check failure in `StaticVec::get_unchecked`!"
         );
         &*self.ptr_at_unchecked(index)
@@ -703,7 +705,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, [1, 9, 3]);
     /// ```
     #[inline(always)]
-    pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut T {
+    pub unsafe fn get_unchecked_mut(&mut self, index: L) -> &mut T {
         // This function is used internally in places where `length` has been intentionally
         // temporarily set to zero, so we do our debug assertion against `N`.
         /*
@@ -716,7 +718,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         */
         debug_assert!(
-            index < N,
+            index < N.try_into().unwrap(),
             "Bounds check failure in `StaticVec::get_unchecked_mut`!"
         );
         &mut *self.mut_ptr_at_unchecked(index)
@@ -746,7 +748,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     );
         let length = self.length;
         self.mut_ptr_at_unchecked(length).write(value);
-        self.set_len(length + 1);
+        self.set_len(length + L::ONE);
     }
 
     /// Pops a value from the end of the StaticVec and returns it directly without asserting that
@@ -771,7 +773,7 @@ impl<T, const N: usize> StaticVec<T, N> {
             self.is_not_empty(),
             "`StaticVec::pop_unchecked` was called through an empty StaticVec!"
         );
-        let new_length = self.length - 1;
+        let new_length = self.length - L::ONE;
         self.set_len(new_length);
         self.ptr_at_unchecked(new_length).read()
     }
@@ -853,7 +855,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         if self.is_empty() {
             None
         } else {
-            Some(unsafe { self.get_unchecked(0) })
+            Some(unsafe { self.get_unchecked(L::ZERO) })
         }
     }
 
@@ -874,7 +876,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         if self.is_empty() {
             None
         } else {
-            Some(unsafe { self.get_unchecked_mut(0) })
+            Some(unsafe { self.get_unchecked_mut(L::ZERO) })
         }
     }
 
@@ -894,7 +896,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         if self.is_empty() {
             None
         } else {
-            Some(unsafe { self.get_unchecked(self.length - 1) })
+            Some(unsafe { self.get_unchecked(self.length - L::ONE) })
         }
     }
 
@@ -915,20 +917,22 @@ impl<T, const N: usize> StaticVec<T, N> {
         if self.is_empty() {
             None
         } else {
-            Some(unsafe { self.get_unchecked_mut(self.length - 1) })
+            Some(unsafe { self.get_unchecked_mut(self.length - L::ONE) })
         }
     }
 
     /// A crate-local unchecked version of `remove`, currently only used in the implementation of
     /// `StaticVecSplice`.
     #[inline]
-    pub(crate) fn remove_unchecked(&mut self, index: usize) -> T {
+    pub(crate) fn remove_unchecked(&mut self, index: L) -> T {
         let old_length = self.length;
         unsafe {
             let self_ptr = self.mut_ptr_at_unchecked(index);
             let res = self_ptr.read();
-            self_ptr.offset(1).copy_to(self_ptr, old_length - index - 1);
-            self.set_len(old_length - 1);
+            self_ptr
+                .offset(1)
+                .copy_to(self_ptr, (old_length - index - L::ONE).try_into().unwrap());
+            self.set_len(old_length - L::ONE);
             res
         }
     }
@@ -943,7 +947,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(staticvec![1, 2, 3].remove(1), 2);
     /// ```
     #[inline]
-    pub fn remove(&mut self, index: usize) -> T {
+    pub fn remove(&mut self, index: L) -> T {
         let old_length = self.length;
         assert!(
             index < old_length,
@@ -953,8 +957,10 @@ impl<T, const N: usize> StaticVec<T, N> {
             let self_ptr = self.mut_ptr_at_unchecked(index);
             assume(!self_ptr.is_null());
             let res = self_ptr.read();
-            self_ptr.offset(1).copy_to(self_ptr, old_length - index - 1);
-            self.set_len(old_length - 1);
+            self_ptr
+                .offset(1)
+                .copy_to(self_ptr, (old_length - index - L::ONE).try_into().unwrap());
+            self.set_len(old_length - L::ONE);
             res
         }
     }
@@ -974,7 +980,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     {
         // Adapted this from normal Vec's implementation.
         if let Some(pos) = self.iter().position(|x| *x == *item) {
-            Some(self.remove(pos))
+            Some(self.remove(pos.try_into().unwrap()))
         } else {
             None
         }
@@ -992,10 +998,10 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, ["AAA", "DDD", "CCC"]);
     /// ```
     #[inline(always)]
-    pub fn swap_pop(&mut self, index: usize) -> Option<T> {
+    pub fn swap_pop(&mut self, index: L) -> Option<T> {
         if index < self.length {
             unsafe {
-                let new_length = self.length - 1;
+                let new_length = self.length - L::ONE;
                 let last_value = self.ptr_at_unchecked(new_length).read();
                 self.set_len(new_length);
                 Some(ptr::replace(self.mut_ptr_at_unchecked(index), last_value))
@@ -1017,13 +1023,13 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, ["AAA", "DDD", "CCC"]);
     /// ```
     #[inline(always)]
-    pub fn swap_remove(&mut self, index: usize) -> T {
+    pub fn swap_remove(&mut self, index: L) -> T {
         assert!(
             index < self.length,
             "Bounds check failure in `StaticVec::swap_remove`!"
         );
         unsafe {
-            let new_length = self.length - 1;
+            let new_length = self.length - L::ONE;
             let last_value = self.ptr_at_unchecked(new_length).read();
             self.set_len(new_length);
             ptr::replace(self.mut_ptr_at_unchecked(index), last_value)
@@ -1042,17 +1048,17 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, [1, 4, 2, 3]);
     /// ```
     #[inline]
-    pub fn insert(&mut self, index: usize, value: T) {
+    pub fn insert(&mut self, index: L, value: T) {
         let old_length = self.length;
         assert!(
-            old_length < N && index <= old_length,
+            old_length < N.try_into().unwrap() && index <= old_length,
             "Insufficient remaining capacity or bounds check failure in `StaticVec::insert`!"
         );
         unsafe {
             let self_ptr = self.mut_ptr_at_unchecked(index);
-            self_ptr.copy_to(self_ptr.offset(1), old_length - index);
+            self_ptr.copy_to(self_ptr.offset(1), (old_length - index).try_into().unwrap());
             self_ptr.write(value);
-            self.set_len(old_length + 1);
+            self.set_len(old_length + L::ONE);
         }
     }
 
@@ -1077,13 +1083,14 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, [1, 2, 3, 4, 5, 6, 7, 8]);
     /// ```
     #[inline]
-    pub fn insert_many<I: IntoIterator<Item = T>>(&mut self, index: usize, iter: I)
+    pub fn insert_many<I: IntoIterator<Item = T>>(&mut self, index: L, iter: I)
     where
         I::IntoIter: ExactSizeIterator<Item = T>,
     {
-        let old_length = self.length;
+        let index: usize = index.try_into().unwrap();
+        let old_length: usize = self.length.try_into().unwrap();
         assert!(
-            old_length < N && index <= old_length,
+            old_length < N.try_into().unwrap() && index <= old_length,
             "Insufficient remaining capacity or bounds check failure in `StaticVec::insert_many`!"
         );
         let mut it = iter.into_iter();
@@ -1096,15 +1103,15 @@ impl<T, const N: usize> StaticVec<T, N> {
             "Insufficient remaining capacity or bounds check failure in `StaticVec::insert_many`!"
         );
         unsafe {
-            let mut self_ptr = self.mut_ptr_at_unchecked(index);
+            let mut self_ptr = self.mut_ptr_at_unchecked(index.try_into().unwrap());
             self_ptr.copy_to(self_ptr.add(iter_size), old_length - index);
-            self.length = index;
+            self.length = index.try_into().unwrap();
             let mut item_count = 0;
             while item_count < N {
                 if let Some(item) = it.next() {
                     let mut current = self_ptr.add(item_count);
                     if item_count >= iter_size {
-                        self_ptr = self.mut_ptr_at_unchecked(index);
+                        self_ptr = self.mut_ptr_at_unchecked(index.try_into().unwrap());
                         current = self_ptr.add(item_count);
                         current.copy_to(current.offset(1), old_length - index);
                     }
@@ -1114,7 +1121,7 @@ impl<T, const N: usize> StaticVec<T, N> {
                     break;
                 }
             }
-            self.set_len(old_length + item_count);
+            self.set_len((old_length + item_count).try_into().unwrap());
         }
     }
 
@@ -1130,21 +1137,22 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, [1, 2, 3, 4, 5, 6, 7, 8]);
     /// ```
     #[inline]
-    pub fn insert_from_slice(&mut self, index: usize, values: &[T])
+    pub fn insert_from_slice(&mut self, index: L, values: &[T])
     where
         T: Copy,
     {
-        let old_length = self.length;
+        let index: usize = index.try_into().unwrap();
+        let old_length: usize = self.length.try_into().unwrap();
         let values_length = values.len();
         assert!(
-      old_length < N && index <= old_length && values_length <= self.remaining_capacity(),
+      old_length < N && index <= old_length && values_length <= self.remaining_capacity().try_into().unwrap(),
       "Insufficient remaining capacity or bounds check failure in `StaticVec::insert_from_slice`!"
     );
         unsafe {
-            let self_ptr = self.mut_ptr_at_unchecked(index);
+            let self_ptr = self.mut_ptr_at_unchecked(index.try_into().unwrap());
             self_ptr.copy_to(self_ptr.add(values_length), old_length - index);
             self_ptr.copy_from_nonoverlapping(values.as_ptr(), values_length);
-            self.set_len(old_length + values_length);
+            self.set_len((old_length + values_length).try_into().unwrap());
         }
     }
 
@@ -1159,14 +1167,14 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(vec.try_insert(2, 0), Err(CapacityError::<5> {}));
     /// ```
     #[inline]
-    pub fn try_insert(&mut self, index: usize, value: T) -> Result<(), CapacityError<N>> {
+    pub fn try_insert(&mut self, index: L, value: T) -> Result<(), CapacityError<N>> {
         let old_length = self.length;
-        if old_length < N && index <= old_length {
+        if old_length < N.try_into().unwrap() && index <= old_length {
             unsafe {
                 let self_ptr = self.mut_ptr_at_unchecked(index);
-                self_ptr.copy_to(self_ptr.offset(1), old_length - index);
+                self_ptr.copy_to(self_ptr.offset(1), (old_length - index).try_into().unwrap());
                 self_ptr.write(value);
-                self.set_len(old_length + 1);
+                self.set_len(old_length + L::ONE);
             }
             Ok(())
         } else {
@@ -1188,22 +1196,22 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert!(v2.try_insert_from_slice(207, &[5, 6]).is_err());
     /// ```
     #[inline]
-    pub fn try_insert_from_slice(
-        &mut self,
-        index: usize,
-        values: &[T],
-    ) -> Result<(), CapacityError<N>>
+    pub fn try_insert_from_slice(&mut self, index: L, values: &[T]) -> Result<(), CapacityError<N>>
     where
         T: Copy,
     {
-        let old_length = self.length;
+        let index: usize = index.try_into().unwrap();
+        let old_length: usize = self.length.try_into().unwrap();
         let values_length = values.len();
-        if old_length < N && index <= old_length && values_length <= self.remaining_capacity() {
+        if old_length < N
+            && index <= old_length
+            && values_length <= self.remaining_capacity().try_into().unwrap()
+        {
             unsafe {
-                let self_ptr = self.mut_ptr_at_unchecked(index);
+                let self_ptr = self.mut_ptr_at_unchecked(index.try_into().unwrap());
                 self_ptr.copy_to(self_ptr.add(values_length), old_length - index);
                 self_ptr.copy_from_nonoverlapping(values.as_ptr(), values_length);
-                self.set_len(old_length + values_length);
+                self.set_len((old_length + values_length).try_into().unwrap());
             }
             Ok(())
         } else {
@@ -1247,7 +1255,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         // be initialized, or simply a benign empty slice if the StaticVec it is called through is
         // empty.
         unsafe { ptr::drop_in_place(self.as_mut_slice()) };
-        self.length = 0;
+        self.length = L::ZERO;
     }
 
     /// Returns a [`StaticVecIterConst`](crate::iterators::StaticVecIterConst) over the StaticVec's
@@ -1270,8 +1278,8 @@ impl<T, const N: usize> StaticVec<T, N> {
             StaticVecIterConst {
                 start: start_ptr,
                 end: match size_of::<T>() {
-                    0 => zst_ptr_add(start_ptr, self.length),
-                    _ => start_ptr.add(self.length),
+                    0 => zst_ptr_add(start_ptr, self.length.try_into().unwrap()),
+                    _ => start_ptr.add(self.length.try_into().unwrap()),
                 },
                 marker: PhantomData,
             }
@@ -1299,39 +1307,12 @@ impl<T, const N: usize> StaticVec<T, N> {
             StaticVecIterMut {
                 start: start_ptr,
                 end: match size_of::<T>() {
-                    0 => zst_ptr_add_mut(start_ptr, self.length),
-                    _ => start_ptr.add(self.length),
+                    0 => zst_ptr_add_mut(start_ptr, self.length.try_into().unwrap()),
+                    _ => start_ptr.add(self.length.try_into().unwrap()),
                 },
                 marker: PhantomData,
             }
         }
-    }
-
-    /// Returns a separate, stable-sorted StaticVec of the contents of the StaticVec's inhabited area
-    /// without modifying the original data. Locally requires that `T` implements
-    /// [`Copy`](core::marker::Copy) to avoid soundness issues, and [`Ord`](core::cmp::Ord) to make
-    /// the sorting possible.
-    ///
-    /// # Example usage:
-    /// ```
-    /// # use staticvec::{staticvec, StaticVec};
-    /// const V: StaticVec<StaticVec<i32, 2>, 2> = staticvec![staticvec![1, 3], staticvec![4, 2]];
-    /// assert_eq!(
-    ///   V.iter().flatten().collect::<StaticVec<i32, 4>>().sorted(),
-    ///   [1, 2, 3, 4]
-    /// );
-    /// ```
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline]
-    pub fn sorted(&self) -> Self
-    where
-        T: Copy + Ord,
-    {
-        // StaticVec uses specialization to have an optimized version of `Clone` for copy types.
-        let mut res = self.clone();
-        res.sort();
-        res
     }
 
     /// Returns a separate, unstable-sorted StaticVec of the contents of the StaticVec's inhabited
@@ -1387,18 +1368,21 @@ impl<T, const N: usize> StaticVec<T, N> {
     where
         T: Copy + PartialOrd,
     {
-        let length = self.length;
+        let length: usize = self.length.try_into().unwrap();
         if length < 2 {
             // StaticVec uses specialization to have an optimized verson of `Clone` for copy types.
             return self.clone();
         }
-        let mut res = Self::new_data_uninit();
-        let res_ptr = Self::first_ptr_mut(&mut res);
+        let mut res = StaticVec::new_data_uninit();
+        let res_ptr = StaticVec::first_ptr_mut(&mut res);
         // Copy the inhabited part of `self` into the array we'll use for the returned StaticVec.
         unsafe { self.as_ptr().copy_to_nonoverlapping(res_ptr, length) };
         // Sort the array, and then build and return a new StaticVec from it.
         quicksort_internal(res_ptr, 0, (length - 1) as isize);
-        Self { data: res, length }
+        Self {
+            data: res,
+            length: length.try_into().unwrap(),
+        }
     }
 
     /// Provides the same sorting functionality as
@@ -1424,7 +1408,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     where
         T: Copy + PartialOrd,
     {
-        let length = self.length;
+        let length: usize = self.length.try_into().unwrap();
         if length < 2 {
             return;
         }
@@ -1449,7 +1433,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         T: Copy,
     {
         Self {
-            data: reverse_copy(self.length, &self.data),
+            data: reverse_copy(self.length.try_into().unwrap(), &self.data),
             length: self.length,
         }
     }
@@ -1473,11 +1457,12 @@ impl<T, const N: usize> StaticVec<T, N> {
         let mut res = Self::new();
         for i in 0..N {
             unsafe {
-                res.mut_ptr_at_unchecked(i).write(initializer());
+                res.mut_ptr_at_unchecked(i.try_into().unwrap())
+                    .write(initializer());
             }
             // Adjusting the length of `res` as we go ensures any items already written to it will be
             // dropped properly in the event that `initializer` panics at some point.
-            res.length += 1;
+            res.length += L::ONE;
         }
         res
     }
@@ -1500,15 +1485,16 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v[3], 4);
     /// ```
     #[inline]
-    pub fn filled_with_by_index<F: FnMut(usize) -> T>(mut initializer: F) -> Self {
+    pub fn filled_with_by_index<F: FnMut(L) -> T>(mut initializer: F) -> Self {
         let mut res = Self::new();
         for i in 0..N {
+            let i = i.try_into().unwrap();
             unsafe {
                 res.mut_ptr_at_unchecked(i).write(initializer(i));
             }
             // Adjusting the length of `res` as we go ensures any items already written to it will be
             // dropped properly in the event that `initializer` panics at some point.
-            res.length += 1;
+            res.length += L::ONE;
         }
         res
     }
@@ -1531,14 +1517,15 @@ impl<T, const N: usize> StaticVec<T, N> {
     where
         T: Copy,
     {
-        let old_length = self.length;
+        let old_length: usize = self.length.try_into().unwrap();
         let added_length = const_min(values.len(), N - old_length);
         // Safety: added_length is <= our remaining capacity and values.len.
         unsafe {
-            values
-                .as_ptr()
-                .copy_to_nonoverlapping(self.mut_ptr_at_unchecked(old_length), added_length);
-            self.set_len(old_length + added_length);
+            values.as_ptr().copy_to_nonoverlapping(
+                self.mut_ptr_at_unchecked(old_length.try_into().unwrap()),
+                added_length,
+            );
+            self.set_len((old_length + added_length).try_into().unwrap());
         }
     }
 
@@ -1560,14 +1547,15 @@ impl<T, const N: usize> StaticVec<T, N> {
         T: Copy,
     {
         let old_length = self.length;
-        let added_length = values.len();
-        if N - old_length < added_length {
+        let added_length: L = values.len().try_into().unwrap();
+        if TryInto::<L>::try_into(N).unwrap() - old_length < added_length {
             return Err(CapacityError {});
         }
         unsafe {
-            values
-                .as_ptr()
-                .copy_to_nonoverlapping(self.mut_ptr_at_unchecked(old_length), added_length);
+            values.as_ptr().copy_to_nonoverlapping(
+                self.mut_ptr_at_unchecked(old_length),
+                added_length.try_into().unwrap(),
+            );
             self.set_len(old_length + added_length);
         }
         Ok(())
@@ -1592,24 +1580,30 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(b, [5, 6, 7, 8]);
     /// ```
     #[inline]
-    pub fn append<const N2: usize>(&mut self, other: &mut StaticVec<T, N2>) {
+    pub fn append<const N2: usize>(&mut self, other: &mut StaticVec<T, N2, L>) {
         let old_length = self.length;
         // Get the maximum number of items both within our capacity and within
         // what `other` actually has to offer.
-        let item_count = const_min(N - old_length, other.length);
+        let item_count: L = const_min(
+            N - old_length.try_into().unwrap(),
+            other.length.try_into().unwrap(),
+        )
+        .try_into()
+        .unwrap();
         // Calculate what the length of `other` should be changed to once we've
         // moved the items from it into self.
         let other_new_length = other.length - item_count;
         unsafe {
             // Copy over the items.
             self.mut_ptr_at_unchecked(old_length)
-                .copy_from_nonoverlapping(other.as_ptr(), item_count);
+                .copy_from_nonoverlapping(other.as_ptr(), item_count.try_into().unwrap());
             // Shift the items leftwards in `other` if / as necessary. This only
             // really does anything if it's the case that the remaining capacity
             // of `self` was less than the number of items `other` had available.
-            other
-                .as_mut_ptr()
-                .copy_from(other.ptr_at_unchecked(item_count), other_new_length);
+            other.as_mut_ptr().copy_from(
+                other.ptr_at_unchecked(item_count),
+                other_new_length.try_into().unwrap(),
+            );
             // Adjust the lengths of `other` and `self`.
             other.set_len(other_new_length);
             self.set_len(old_length + item_count);
@@ -1630,17 +1624,21 @@ impl<T, const N: usize> StaticVec<T, N> {
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::staticvec;
     /// assert!(staticvec!['a', 'b'].concat(&staticvec!['c', 'd']) == ['a', 'b', 'c', 'd']);
     /// ```
     #[inline]
-    pub fn concat<const N2: usize>(&self, other: &StaticVec<T, N2>) -> StaticVec<T, { N + N2 }>
+    pub fn concat<const N2: usize>(
+        &self,
+        other: &StaticVec<T, N2, L>,
+    ) -> StaticVec<T, { N + N2 }, L>
     where
         T: Copy,
     {
-        let length = self.length;
-        let other_length = other.length;
-        let mut res = StaticVec::new_data_uninit();
+        let length: usize = self.length.try_into().unwrap();
+        let other_length: usize = other.length.try_into().unwrap();
+        let mut res = MaybeUninit::uninit();
         let res_ptr = res.as_mut_ptr() as *mut T;
         unsafe {
             // Copy over all of `self`.
@@ -1653,7 +1651,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         }
         StaticVec {
             data: res,
-            length: length + other_length,
+            length: (length + other_length).try_into().unwrap(),
         }
     }
 
@@ -1666,14 +1664,15 @@ impl<T, const N: usize> StaticVec<T, N> {
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::staticvec;
     /// assert!(staticvec!["a", "b"].concat_clone(&staticvec!["c", "d"]) == ["a", "b", "c", "d"]);
     /// ```
     #[inline]
     pub fn concat_clone<const N2: usize>(
         &self,
-        other: &StaticVec<T, N2>,
-    ) -> StaticVec<T, { N + N2 }>
+        other: &StaticVec<T, N2, L>,
+    ) -> StaticVec<T, { N + N2 }, L>
     where
         T: Clone,
     {
@@ -1703,7 +1702,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// );
     /// ```
     #[inline]
-    pub fn intersperse(&self, separator: T) -> StaticVec<T, { N * 2 }>
+    pub fn intersperse(&self, separator: T) -> StaticVec<T, { N * 2 }, L>
     where
         T: Copy,
     {
@@ -1718,22 +1717,22 @@ impl<T, const N: usize> StaticVec<T, N> {
         // as otherwise we'll hit a particular bug where `rustc` says:
         // "expected struct `StaticVec<_, { N * 2 }>`, found struct `StaticVec<_, { N * 2 }>`".
         let mut res_ptr = StaticVec::first_ptr_mut(&mut res) as *mut T;
-        let mut i = 0;
+        let mut i = L::ZERO;
         let length = self.length;
-        while i < length - 1 {
+        while i < length - L::ONE {
             unsafe {
                 res_ptr.write(self.ptr_at_unchecked(i).read());
                 res_ptr.offset(1).write(separator);
                 res_ptr = res_ptr.offset(2);
             }
-            i += 1;
+            i += L::ONE;
         }
         unsafe {
             res_ptr.write(self.ptr_at_unchecked(i).read());
         }
         StaticVec {
             data: res,
-            length: (length * 2) - 1,
+            length: ((length.try_into().unwrap() * 2) - 1).try_into().unwrap(),
         }
     }
 
@@ -1754,7 +1753,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// );
     /// ```
     #[inline]
-    pub fn intersperse_clone(&self, separator: T) -> StaticVec<T, { N * 2 }>
+    pub fn intersperse_clone(&self, separator: T) -> StaticVec<T, { N * 2 }, L>
     where
         T: Clone,
     {
@@ -1764,11 +1763,11 @@ impl<T, const N: usize> StaticVec<T, N> {
         let mut res = StaticVec::new();
         let length = self.length;
         unsafe {
-            for i in 0..length - 1 {
-                res.push_unchecked(self.get_unchecked(i).clone());
+            for i in 0..length.try_into().unwrap() - 1 {
+                res.push_unchecked(self.get_unchecked(i.try_into().unwrap()).clone());
                 res.push_unchecked(separator.clone());
             }
-            res.push_unchecked(self.get_unchecked(length - 1).clone());
+            res.push_unchecked(self.get_unchecked(length - L::ONE).clone());
         }
         res
     }
@@ -1789,16 +1788,16 @@ impl<T, const N: usize> StaticVec<T, N> {
     #[doc(cfg(feature = "alloc"))]
     #[inline]
     pub fn from_vec(mut vec: Vec<T>) -> Self {
-        let vec_len = vec.len();
+        let vec_len: usize = vec.len();
         let item_count = vec_len.min(N);
         Self {
             data: {
                 // Set the length of `vec` to 0 to prevent double-drops.
                 unsafe { vec.set_len(0) };
-                let mut data = Self::new_data_uninit();
+                let mut data = StaticVec::new_data_uninit();
                 unsafe {
                     vec.as_ptr()
-                        .copy_to_nonoverlapping(Self::first_ptr_mut(&mut data), item_count);
+                        .copy_to_nonoverlapping(StaticVec::first_ptr_mut(&mut data), item_count);
                     // Manually drop any excess values in the source vec to avoid undesirable memory leaks.
                     if vec_len > item_count {
                         ptr::drop_in_place(from_raw_parts_mut(
@@ -1809,7 +1808,7 @@ impl<T, const N: usize> StaticVec<T, N> {
                     data
                 }
             },
-            length: item_count,
+            length: item_count.try_into().unwrap(),
         }
     }
 
@@ -1830,13 +1829,13 @@ impl<T, const N: usize> StaticVec<T, N> {
     #[inline(always)]
     pub fn into_vec(mut self) -> Vec<T> {
         let mut res = Vec::with_capacity(N);
-        let length = self.length;
+        let length = self.length.try_into().unwrap();
         unsafe {
             self.as_ptr()
                 .copy_to_nonoverlapping(res.as_mut_ptr(), length);
             res.set_len(length);
             // Set the length of `self` to 0 to prevent double-drops.
-            self.set_len(0);
+            self.set_len(L::ZERO);
             res
         }
     }
@@ -1897,34 +1896,35 @@ impl<T, const N: usize> StaticVec<T, N> {
     pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> Self {
         // Borrowed this part from normal Vec's implementation.
         let old_length = self.length;
-        let start = match range.start_bound() {
+        let start: usize = match range.start_bound() {
             Included(&idx) => idx,
             Excluded(&idx) => idx + 1,
             Unbounded => 0,
         };
-        let end = match range.end_bound() {
+        let end: usize = match range.end_bound() {
             Included(&idx) => idx + 1,
             Excluded(&idx) => idx,
-            Unbounded => old_length,
+            Unbounded => old_length.try_into().unwrap(),
         };
         assert!(
-            start <= end && end <= old_length,
+            start <= end && end <= old_length.try_into().unwrap(),
             "Bounds check failure in `StaticVec::drain`!"
         );
         let res_length = end - start;
         Self {
             data: {
-                let mut res = Self::new_data_uninit();
+                let mut res = StaticVec::new_data_uninit();
                 unsafe {
-                    self.ptr_at_unchecked(start)
-                        .copy_to_nonoverlapping(Self::first_ptr_mut(&mut res), res_length);
+                    self.ptr_at_unchecked(start.try_into().unwrap())
+                        .copy_to_nonoverlapping(StaticVec::first_ptr_mut(&mut res), res_length);
                     let mp = self.as_mut_ptr();
-                    mp.add(end).copy_to(mp.add(start), old_length - end);
-                    self.set_len(old_length - res_length);
+                    mp.add(end)
+                        .copy_to(mp.add(start), old_length.try_into().unwrap() - end);
+                    self.set_len(old_length - res_length.try_into().unwrap());
                     res
                 }
             },
-            length: res_length,
+            length: res_length.try_into().unwrap(),
         }
     }
 
@@ -1944,7 +1944,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v2, [6, 5, 4]);
     /// ```
     #[inline]
-    pub fn drain_iter<R: RangeBounds<usize>>(&mut self, range: R) -> StaticVecDrain<T, N> {
+    pub fn drain_iter<R: RangeBounds<usize>>(&mut self, range: R) -> StaticVecDrain<T, N, L> {
         // Borrowed this part from normal Vec's implementation.
         let length = self.length;
         let start = match range.start_bound() {
@@ -1955,18 +1955,18 @@ impl<T, const N: usize> StaticVec<T, N> {
         let end = match range.end_bound() {
             Included(&idx) => idx + 1,
             Excluded(&idx) => idx,
-            Unbounded => length,
+            Unbounded => length.try_into().unwrap(),
         };
         assert!(
-            start <= end && end <= length,
+            start <= end && end <= length.try_into().unwrap(),
             "Bounds check failure in `StaticVec::drain_iter`!"
         );
         unsafe {
             // Set the length to `start` to avoid memory issues if anything goes wrong with the Drain.
-            self.set_len(start);
+            self.set_len(start.try_into().unwrap());
             let start_ptr = match size_of::<T>() {
                 0 => zst_ptr_add(self.as_ptr(), start),
-                _ => self.ptr_at_unchecked(start),
+                _ => self.ptr_at_unchecked(start.try_into().unwrap()),
             };
             // `start_ptr` will never be null, so this is a safe assumption to give to
             // the optimizer.
@@ -1974,12 +1974,12 @@ impl<T, const N: usize> StaticVec<T, N> {
             // Create the StaticVecDrain from the specified range.
             StaticVecDrain {
                 start: end,
-                length: length - end,
+                length: length.try_into().unwrap() - end,
                 iter: StaticVecIterConst {
                     start: start_ptr,
                     end: match size_of::<T>() {
                         0 => zst_ptr_add(self.as_ptr(), end),
-                        _ => self.ptr_at_unchecked(end),
+                        _ => self.ptr_at_unchecked(end.try_into().unwrap()),
                     },
                     marker: PhantomData,
                 },
@@ -2005,20 +2005,22 @@ impl<T, const N: usize> StaticVec<T, N> {
         let old_length = self.length;
         // Temporarily set our length to 0 to avoid double drops and such if anything
         // goes wrong in the filter loop.
-        self.length = 0;
+        self.length = L::ZERO;
         let mut res = Self::new();
-        let mut res_length = 0;
+        let mut res_length = L::ZERO;
         unsafe {
             // If `self.length` was already 0, this loop is skipped completely.
-            for i in 0..old_length {
+            for i in 0..old_length.try_into().unwrap() {
+                let i: L = i.try_into().unwrap();
                 // This is fine because we intentionally set `self.length` to `0` ourselves just now.
                 if filter(self.get_unchecked_mut(i)) {
                     res.mut_ptr_at_unchecked(res_length)
                         .write(self.ptr_at_unchecked(i).read());
-                    res_length += 1;
-                } else if res_length > 0 {
+                    res_length += L::ONE;
+                } else if res_length > L::ZERO {
                     let mp = self.as_mut_ptr();
-                    mp.add(i).copy_to_nonoverlapping(mp.add(i - res_length), 1);
+                    mp.add(i.try_into().unwrap())
+                        .copy_to_nonoverlapping(mp.add((i - res_length).try_into().unwrap()), 1);
                 }
             }
         }
@@ -2052,7 +2054,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         &mut self,
         range: R,
         replace_with: I,
-    ) -> StaticVecSplice<T, I::IntoIter, N> {
+    ) -> StaticVecSplice<T, I::IntoIter, N, L> {
         let length = self.length;
         let start = match range.start_bound() {
             Included(&idx) => idx,
@@ -2062,10 +2064,10 @@ impl<T, const N: usize> StaticVec<T, N> {
         let end = match range.end_bound() {
             Included(&idx) => idx + 1,
             Excluded(&idx) => idx,
-            Unbounded => length,
+            Unbounded => length.try_into().unwrap(),
         };
         assert!(
-            start <= end && end <= length,
+            start <= end && end <= length.try_into().unwrap(),
             "Bounds check failure in `StaticVec::splice`!"
         );
         StaticVecSplice {
@@ -2103,14 +2105,14 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, [1, 2]);
     /// ```
     #[inline(always)]
-    pub fn truncate(&mut self, length: usize) {
+    pub fn truncate(&mut self, length: L) {
         if length < self.length {
             let old_length = self.length;
             unsafe {
                 self.set_len(length);
                 ptr::drop_in_place(from_raw_parts_mut(
                     self.mut_ptr_at_unchecked(length),
-                    old_length - length,
+                    (old_length - length).try_into().unwrap(),
                 ));
             }
         }
@@ -2130,7 +2132,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v2, [2, 3]);
     /// ```
     #[inline]
-    pub fn split_off(&mut self, at: usize) -> Self {
+    pub fn split_off(&mut self, at: L) -> Self {
         let old_length = self.length;
         assert!(
             at <= old_length,
@@ -2140,9 +2142,11 @@ impl<T, const N: usize> StaticVec<T, N> {
         Self {
             data: unsafe {
                 self.set_len(at);
-                let mut split = Self::new_data_uninit();
-                self.ptr_at_unchecked(at)
-                    .copy_to_nonoverlapping(Self::first_ptr_mut(&mut split), split_length);
+                let mut split = StaticVec::new_data_uninit();
+                self.ptr_at_unchecked(at).copy_to_nonoverlapping(
+                    StaticVec::first_ptr_mut(&mut split),
+                    split_length.try_into().unwrap(),
+                );
                 split
             },
             length: split_length,
@@ -2156,6 +2160,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::*;
     /// let v1 = staticvec![Box::new(1), Box::new(2), Box::new(3), Box::new(4), Box::new(5), Box::new(6)];
     /// let t1 = v1.split_at::<0>();
@@ -2170,10 +2175,10 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(t3.0, [Box::new(1), Box::new(2), Box::new(3), Box::new(4), Box::new(5), Box::new(6)]);
     /// assert_eq!(t3.1, []);
     #[inline]
-    pub fn split_at<const M: usize>(self) -> (StaticVec<T, M>, StaticVec<T, { N - M }>) {
+    pub fn split_at<const M: usize>(self) -> (StaticVec<T, M, L>, StaticVec<T, { N - M }, L>) {
         let old_length = self.length;
         assert!(
-            M <= old_length,
+            M <= old_length.try_into().unwrap(),
             "Bounds check failure in `StaticVec::split_at'!"
         );
         let mut left = MaybeUninit::<[T; M]>::uninit();
@@ -2181,7 +2186,7 @@ impl<T, const N: usize> StaticVec<T, N> {
         let self_ptr = self.as_ptr();
         let left_ptr = StaticVec::first_ptr_mut(&mut left);
         let right_ptr = StaticVec::first_ptr_mut(&mut right);
-        let right_length = old_length - M;
+        let right_length = old_length.try_into().unwrap() - M;
         unsafe {
             self_ptr.copy_to_nonoverlapping(left_ptr, M);
             self_ptr
@@ -2191,11 +2196,11 @@ impl<T, const N: usize> StaticVec<T, N> {
             (
                 StaticVec {
                     data: left,
-                    length: M,
+                    length: M.try_into().unwrap(),
                 },
                 StaticVec {
                     data: right,
-                    length: right_length,
+                    length: right_length.try_into().unwrap(),
                 },
             )
         }
@@ -2214,7 +2219,13 @@ impl<T, const N: usize> StaticVec<T, N> {
     #[inline(always)]
     pub fn dedup_by<F: FnMut(&mut T, &mut T) -> bool>(&mut self, same_bucket: F) {
         // Mostly the same as Vec's version.
-        let new_length = self.as_mut_slice().partition_dedup_by(same_bucket).0.len();
+        let new_length = self
+            .as_mut_slice()
+            .partition_dedup_by(same_bucket)
+            .0
+            .len()
+            .try_into()
+            .unwrap();
         self.truncate(new_length);
     }
 
@@ -2272,7 +2283,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// );
     /// ```
     #[inline]
-    pub fn difference<const N2: usize>(&self, other: &StaticVec<T, N2>) -> Self
+    pub fn difference<const N2: usize>(&self, other: &StaticVec<T, N2, L>) -> Self
     where
         T: Clone + PartialEq,
     {
@@ -2304,6 +2315,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::staticvec;
     /// assert_eq!(
     ///   staticvec![1, 2, 3].symmetric_difference(&staticvec![3, 4, 5]),
@@ -2313,8 +2325,8 @@ impl<T, const N: usize> StaticVec<T, N> {
     #[inline]
     pub fn symmetric_difference<const N2: usize>(
         &self,
-        other: &StaticVec<T, N2>,
-    ) -> StaticVec<T, { N + N2 }>
+        other: &StaticVec<T, N2, L>,
+    ) -> StaticVec<T, { N + N2 }, L>
     where
         T: Clone + PartialEq,
     {
@@ -2365,7 +2377,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// );
     /// ```
     #[inline]
-    pub fn intersection<const N2: usize>(&self, other: &StaticVec<T, N2>) -> Self
+    pub fn intersection<const N2: usize>(&self, other: &StaticVec<T, N2, L>) -> Self
     where
         T: Clone + PartialEq,
     {
@@ -2397,6 +2409,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     ///
     /// # Example usage:
     /// ```
+    /// #![feature(generic_const_exprs)]
     /// # use staticvec::staticvec;
     /// assert_eq!(
     ///   staticvec![1, 2, 3].union(&staticvec![4, 2, 3, 4]),
@@ -2406,7 +2419,7 @@ impl<T, const N: usize> StaticVec<T, N> {
   #[allow(clippy::from_iter_instead_of_collect)]
   #[inline]
   #[rustfmt::skip]
-    pub fn union<const N2: usize>(&self, other: &StaticVec<T, N2>) -> StaticVec<T, { N + N2 }>
+    pub fn union<const N2: usize>(&self, other: &StaticVec<T, N2, L>) -> StaticVec<T, { N + N2 }, L>
   where T: Clone + PartialEq {
     if self.length <= other.length {
       let mut res = StaticVec::from_iter(self.iter().chain(other.difference(self).iter()).cloned());
@@ -2430,7 +2443,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(V.triple(), (V.as_ptr(), 4, 4));
     /// ```
     #[inline(always)]
-    pub fn triple(&self) -> (*const T, usize, usize) {
+    pub fn triple(&self) -> (*const T, L, usize) {
         (self.as_ptr(), self.length, N)
     }
 
@@ -2449,7 +2462,7 @@ impl<T, const N: usize> StaticVec<T, N> {
     /// assert_eq!(v, [8, 5, 6, 7]);
     /// ```
     #[inline(always)]
-    pub fn triple_mut(&mut self) -> (*mut T, usize, usize) {
+    pub fn triple_mut(&mut self) -> (*mut T, L, usize) {
         (self.as_mut_ptr(), self.length, N)
     }
 
@@ -2482,12 +2495,13 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         let mut res = Self::new();
         for i in 0..N {
+            let i: L = i.try_into().unwrap();
             unsafe {
                 res.mut_ptr_at_unchecked(i)
                     .write(*self.get_unchecked(i) + *other.get_unchecked(i));
             }
         }
-        res.length = N;
+        res.length = N.try_into().unwrap();
         res
     }
 
@@ -2520,12 +2534,13 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         let mut res = Self::new();
         for i in 0..N {
+            let i: L = i.try_into().unwrap();
             unsafe {
                 res.mut_ptr_at_unchecked(i)
                     .write(*self.get_unchecked(i) - *other.get_unchecked(i));
             }
         }
-        res.length = N;
+        res.length = N.try_into().unwrap();
         res
     }
 
@@ -2558,12 +2573,13 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         let mut res = Self::new();
         for i in 0..N {
+            let i: L = i.try_into().unwrap();
             unsafe {
                 res.mut_ptr_at_unchecked(i)
                     .write(*self.get_unchecked(i) * *other.get_unchecked(i));
             }
         }
-        res.length = N;
+        res.length = N.try_into().unwrap();
         res
     }
 
@@ -2596,15 +2612,18 @@ impl<T, const N: usize> StaticVec<T, N> {
         );
         let mut res = Self::new();
         for i in 0..N {
+            let i: L = i.try_into().unwrap();
             unsafe {
                 res.mut_ptr_at_unchecked(i)
                     .write(*self.get_unchecked(i) / *other.get_unchecked(i));
             }
         }
-        res.length = N;
+        res.length = N.try_into().unwrap();
         res
     }
+}
 
+impl<T, const N: usize> StaticVec<T, N, usize> {
     /// An internal convenience function to get an *uninitialized* instance of
     /// `MaybeUninit<[T; N]>`.
     #[inline(always)]
@@ -2635,30 +2654,163 @@ impl<T, const N: usize> StaticVec<T, N> {
         }
         res
     }
-}
 
-impl<T: Copy, const N: usize> StaticVec<T, N> {
-    /// creates a copy of the StaticVec with a new capcity
-    pub fn copy_with_new_capacity<const M: usize>(&self) -> StaticVec<T, M> {
-        if M < N {
-            let mut res = StaticVec::<T, M>::new();
-            res.extend_from_slice(&self[0..=M]);
-            res
-        } else {
-            let mut res = StaticVec::<T, M>::new();
-            res.extend_from_slice(&self[..]);
-            res
+    /// A version of [`new_from_array`](crate::StaticVec::new_from_array) specifically designed
+    /// for use as a `const fn` constructor (although it can of course be used in non-const contexts
+    /// as well.)
+    ///
+    /// Being `const` necessitates that this function can only accept arrays with a length
+    /// exactly equal to the declared capacity of the resulting StaticVec, so if you do need
+    /// flexibility with regards to input lengths it's recommended that you use
+    /// [`new_from_array`](crate::StaticVec::new_from_array) or the [`From`](core::convert::From)
+    /// implementations instead.
+    ///
+    /// Note that both forms of the [`staticvec!`] macro are implemented using
+    /// [`new_from_const_array`](crate::StaticVec::new_from_const_array), so you may also prefer
+    /// to use them instead of it directly.
+    ///
+    /// # Example usage:
+    /// ```
+    /// # use staticvec::{staticvec, StaticVec};
+    /// const v: StaticVec<i32, 4> = StaticVec::new_from_const_array([1, 2, 3, 4]);
+    /// assert_eq!(v, staticvec![1, 2, 3, 4]);
+    /// ```
+    #[inline(always)]
+    pub const fn new_from_const_array(values: [T; N]) -> Self {
+        Self {
+            data: MaybeUninit::new(values),
+            length: N,
         }
     }
 }
 
-impl<const N: usize> StaticVec<u8, N> {
+impl<T: Copy, const N: usize> StaticVec<T, N, usize> {
+    /// creates a copy of the StaticVec with a new capcity
+    pub fn copy_with_new_capacity<const M: usize>(&self) -> StaticVec<T, M, usize> {
+        if M < N {
+            let mut res = StaticVec::new();
+            res.extend_from_slice(&self[0..=M]);
+            res
+        } else {
+            let mut res = StaticVec::new();
+            res.extend_from_slice(self.as_slice());
+            res
+        }
+    }
+
+    /// Const version of [Self::remaining_capacity]
+    #[inline(always)]
+    pub const fn remaining_capacity_const(&self) -> usize {
+        N - self.length
+    }
+
+    /// Const version of [Self::size_in_bytes]
+    #[inline(always)]
+    pub const fn size_in_bytes_const(&self) -> usize {
+        size_of::<T>() * self.length
+    }
+}
+
+impl<T, L, const N: usize> StaticVec<T, N, L>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+    /// Casts the length type to `L2`.
+    ///
+    /// This will panic if `TryInto::<L2>(length)` panics for any `length < N`.
+    ///
+    /// # Example usage
+    /// ```
+    /// # use staticvec::StaticVec;
+    /// let mut v = StaticVec::<i32, 4, u8>::new();
+    /// v.push(1);
+    /// assert_eq!(v.len(), 1u8);
+    /// let mut v = v.cast_length::<usize, _>().unwrap();
+    /// assert_eq!(v.len(), 1usize);
+    /// ```
+    pub fn cast_length<L2, E>(self) -> Result<StaticVec<T, N, L2>, E>
+    where
+        L2: Number + TryFrom<usize> + TryInto<usize> + TryFrom<L, Error = E>,
+        <L2 as TryFrom<L>>::Error: Debug,
+        <L2 as TryFrom<usize>>::Error: Debug,
+        <L2 as TryInto<usize>>::Error: Debug,
+        E: From<<L as TryInto<L>>::Error>,
+    {
+        assert!(TryInto::<L2>::try_into(TryInto::<L>::try_into(N).unwrap()).is_ok());
+
+        let length: L2 = TryInto::<L2>::try_into(self.length)?;
+
+        let mut data = StaticVec::new_data_uninit();
+
+        let self_ptr = self.as_ptr();
+        let data_ptr = StaticVec::first_ptr_mut(&mut data);
+
+        unsafe {
+            self_ptr.copy_to_nonoverlapping(data_ptr, length.try_into().unwrap());
+            mem::forget(self);
+        }
+
+        Ok(StaticVec { data, length })
+    }
+}
+
+impl<T, L, const N: usize> StaticVec<T, N, L>
+where
+    T: Clone,
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
+    /// Clone the vector and also casts the lenght type to `L2`
+    ///
+    /// This may panic if `TryInto::<L2>(length)` panics for any `length < N`.
+    ///
+    /// # Example usage
+    /// ```
+    /// # use staticvec::StaticVec;
+    /// let mut v = StaticVec::<i32, 4, u8>::new();
+    /// v.push(1);
+    /// assert_eq!(v.len(), 1u8);
+    /// let mut v2 = v.clone_cast_length::<usize, _>().unwrap();
+    /// v2.push(2);
+    /// assert_eq!(v.len(), 1u8);
+    /// assert_eq!(v2.len(), 2usize);
+    /// ```
+    pub fn clone_cast_length<L2, E>(&self) -> Result<StaticVec<T, N, L2>, E>
+    where
+        L2: Number + TryFrom<usize> + TryInto<usize> + TryFrom<L, Error = E>,
+        <L2 as TryFrom<L>>::Error: Debug,
+        <L2 as TryFrom<usize>>::Error: Debug,
+        <L2 as TryInto<usize>>::Error: Debug,
+        E: From<<L as TryInto<L>>::Error>,
+    {
+        assert!(TryInto::<L2>::try_into(TryInto::<L>::try_into(N).unwrap()).is_ok());
+
+        let length: L2 = TryInto::<L2>::try_into(self.length)?;
+        let mut data = StaticVec::new_data_uninit().transpose();
+
+        for i in 0..length.try_into().unwrap() {
+            unsafe {
+                data[i].write(self.get_unchecked(i.try_into().unwrap()).clone());
+            }
+        }
+
+        Ok(StaticVec {
+            data: data.transpose(),
+            length,
+        })
+    }
+}
+
+impl<const N: usize> StaticVec<u8, N, usize> {
     /// Called solely in `__new_from_const_str`, where the input `MaybeUninit` is guaranteed to have
     /// been properly initialized starting at the beginning with the bytes of an `&str` literal,
     /// and the input `length` is the known-at-compile-time length of said literal.
     #[doc(hidden)]
     #[inline(always)]
-    pub(crate) fn new_from_str_data(data: MaybeUninit<[u8; N]>, length: usize) -> Self {
+    pub(crate) const fn new_from_str_data(data: MaybeUninit<[u8; N]>, length: usize) -> Self {
         Self { data, length }
     }
 
@@ -2666,9 +2818,9 @@ impl<const N: usize> StaticVec<u8, N> {
     /// representation of a proper `&str` literal.
     #[doc(hidden)]
     #[inline]
-    pub(crate) fn bytes_to_data(values: &[u8]) -> MaybeUninit<[u8; N]> {
+    pub(crate) const fn bytes_to_data(values: &[u8]) -> MaybeUninit<[u8; N]> {
         // Get an uninitialized array of bytes, with `N` capacity.
-        let mut res = MaybeUninit::uninit_array::<N>();
+        let mut res = [const { MaybeUninit::uninit() }; N];
         // Move `values.len()` worth of bytes from `values` to `res`. I'm unaware of any other way that
         // this could be done currently that would leave us with something usable to create a StaticVec
         // for which the generic `N` could be *different* from `values.len()`, so thank
@@ -2697,12 +2849,12 @@ impl<const N: usize> StaticVec<u8, N> {
     /// prefix and hide it from `rustdoc` anyways just so no one thinks it's for general use.
     #[doc(hidden)]
     #[inline(always)]
-    pub fn __new_from_const_str(values: &str) -> Self {
+    pub const fn __new_from_const_str(values: &str) -> Self {
         // This works at compile time too, of course, thanks to the `const_panic` feature.
         assert!(
-      values.len() <= N,
-      "Attempted to create a `StaticString` with insufficient capacity from an `&str` literal!"
-    );
+            values.len() <= N,
+            "Attempted to create a `StaticString` with insufficient capacity from an `&str` literal!"
+        );
         Self::new_from_str_data(Self::bytes_to_data(values.as_bytes()), values.len())
     }
 }

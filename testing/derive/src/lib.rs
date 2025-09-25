@@ -17,16 +17,18 @@ use syn::parse_macro_input;
 /// # Arguments:
 ///
 /// * name: <test name>
-///     Rename the test
+///   Rename the test
 /// * expected_exit: <exit_value>
-///     The test is expected to exit with the given [TestExitState]
+///   The test is expected to exit with the given [TestExitState]
 /// * focus|x|f
-///     If any test is marked as focused, then only focused tests are executed.
-///     This can be used to override the ignore flag.
+///   If any test is marked as focused, then only focused tests are executed.
+///   This can be used to override the ignore flag.
 /// * ignore|i
-///     The test is ignored
+///   The test is ignored
 /// * multiprocessor|mp
-///     The test is using multiple cores, an can take a [DataBarrier] input parameter
+///   The test is using multiple cores, an can take a [DataBarrier] input parameter
+/// * allow_{}_leak frame/page/heap/mapping
+///   The test is considered successfull even if there is a memory leak of the given type
 ///
 ///
 /// # Setup
@@ -50,7 +52,7 @@ use syn::parse_macro_input;
 ///
 /// #[kernel_test(mp)]
 /// fn mp_test_with_barrier(db: &DataBarrier<Box<dyn Any + Send>>) -> Result<(), KernelTestError> {}
-//// ```
+/// ```
 #[proc_macro_attribute]
 pub fn kernel_test(attribute: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attribute as kernel_test::args::TestArgs);

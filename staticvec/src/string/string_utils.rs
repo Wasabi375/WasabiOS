@@ -1,4 +1,8 @@
+use shared::math::Number;
+use shared::math::NumberConstants;
+
 use super::{StaticString, StringError};
+use core::fmt::Debug;
 use core::slice::from_raw_parts;
 use core::str::from_utf8_unchecked;
 
@@ -24,31 +28,35 @@ const MAX_THREE_B: u32 = 0x10000;
 
 /// Encodes `character` into `string` at the specified position.
 #[inline(always)]
-pub(crate) unsafe fn encode_char_utf8_unchecked<const N: usize>(
-    string: &mut StaticString<N>,
+pub(crate) unsafe fn encode_char_utf8_unchecked<const N: usize, L>(
+    string: &mut StaticString<N, L>,
     character: char,
-    index: usize,
-) {
+    index: L,
+) where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     let dest = string.vec.mut_ptr_at_unchecked(index);
     let code = character as u32;
     if code < MAX_ONE_B {
         dest.write(code as u8);
-        string.vec.set_len(string.len() + 1);
+        string.vec.set_len(string.len() + L::ONE);
     } else if code < MAX_TWO_B {
         dest.write((code >> 6 & 0x1F) as u8 | TAG_TWO_B);
         dest.offset(1).write((code & 0x3F) as u8 | TAG_CONT);
-        string.vec.set_len(string.len() + 2);
+        string.vec.set_len(string.len() + L::constant(2));
     } else if code < MAX_THREE_B {
         dest.write((code >> 12 & 0x0F) as u8 | TAG_THREE_B);
         dest.offset(1).write((code >> 6 & 0x3F) as u8 | TAG_CONT);
         dest.offset(2).write((code & 0x3F) as u8 | TAG_CONT);
-        string.vec.set_len(string.len() + 3);
+        string.vec.set_len(string.len() + L::constant(3));
     } else {
         dest.write((code >> 18 & 0x07) as u8 | TAG_FOUR_B);
         dest.offset(1).write((code >> 12 & 0x3F) as u8 | TAG_CONT);
         dest.offset(2).write((code >> 6 & 0x3F) as u8 | TAG_CONT);
         dest.offset(3).write((code & 0x3F) as u8 | TAG_CONT);
-        string.vec.set_len(string.len() + 4);
+        string.vec.set_len(string.len() + L::constant(4));
     }
 }
 
@@ -81,30 +89,37 @@ macro_rules! shift_right_unchecked {
     ($self_var:expr, $from_var:expr, $to_var:expr) => {
         debug_assert!(
             $from_var as usize <= $to_var as usize
-                && $to_var as usize + $self_var.len() - $from_var as usize <= $self_var.capacity()
+                && $to_var as usize + TryInto::<usize>::try_into($self_var.len()).unwrap()
+                    - $from_var as usize
+                    <= $self_var.capacity()
         );
         debug_assert!($self_var.as_str().is_char_boundary($from_var));
         let mp = $self_var.vec.as_mut_ptr();
-        mp.add($from_var)
-            .copy_to(mp.add($to_var), $self_var.len() - $from_var);
+        mp.add($from_var).copy_to(
+            mp.add($to_var),
+            TryInto::<usize>::try_into($self_var.len()).unwrap() - $from_var,
+        );
     };
 }
 
 macro_rules! shift_left_unchecked {
     ($self_var:expr, $from_var:expr, $to_var:expr) => {
         debug_assert!(
-            $to_var as usize <= $from_var as usize && $from_var as usize <= $self_var.len()
+            $to_var as usize <= $from_var as usize
+                && $from_var as usize <= $self_var.len().try_into().unwrap()
         );
         debug_assert!($self_var.as_str().is_char_boundary($from_var));
         let mp = $self_var.vec.as_mut_ptr();
-        mp.add($from_var)
-            .copy_to(mp.add($to_var), $self_var.len() - $from_var);
+        mp.add($from_var).copy_to(
+            mp.add($to_var),
+            TryInto::<usize>::try_into($self_var.len()).unwrap() - $from_var,
+        );
     };
 }
 
 /// Returns an error if `size` is greater than `limit`.
 #[inline(always)]
-pub(crate) fn is_inside_boundary(size: usize, limit: usize) -> Result<(), StringError> {
+pub(crate) fn is_inside_boundary<L: Number>(size: L, limit: L) -> Result<(), StringError> {
     match size <= limit {
         false => Err(StringError::OutOfBounds),
         true => Ok(()),
@@ -127,10 +142,15 @@ pub(crate) fn str_is_char_boundary(s: &str, index: usize) -> bool {
 
 /// Returns an error if `index` is not at a valid UTF-8 character boundary.
 #[inline(always)]
-pub(crate) fn is_char_boundary<const N: usize>(
-    string: &StaticString<N>,
+pub(crate) fn is_char_boundary<const N: usize, L>(
+    string: &StaticString<N, L>,
     index: usize,
-) -> Result<(), StringError> {
+) -> Result<(), StringError>
+where
+    L: Number + TryFrom<usize> + TryInto<usize>,
+    <L as TryFrom<usize>>::Error: Debug,
+    <L as TryInto<usize>>::Error: Debug,
+{
     match str_is_char_boundary(string.as_str(), index) {
         false => Err(StringError::NotCharBoundary),
         true => Ok(()),
@@ -163,13 +183,12 @@ macro_rules! push_char_unchecked_internal {
             _ => {
                 let old_length = $self_var.len();
                 unsafe {
-                    $crate::string::string_utils::encode_utf8_raw($char_var, $len)
-                        .as_ptr()
-                        .copy_to_nonoverlapping(
-                            $self_var.vec.mut_ptr_at_unchecked(old_length),
-                            $len,
-                        );
-                    $self_var.vec.set_len(old_length + $len);
+                    let encoded = $crate::string::string_utils::encode_utf8_raw($char_var, $len);
+                    encoded.as_ptr().copy_to_nonoverlapping(
+                        $self_var.vec.mut_ptr_at_unchecked(old_length),
+                        $len,
+                    );
+                    $self_var.vec.set_len(old_length + $len.try_into().unwrap());
                 }
             }
         };
@@ -181,9 +200,13 @@ macro_rules! push_str_unchecked_internal {
     ($self_var:expr, $str_var:expr, $self_len_var:expr, $str_len_var:expr) => {
         #[allow(unused_unsafe)]
         unsafe {
-            let dest = $self_var.vec.mut_ptr_at_unchecked($self_len_var);
+            let dest = $self_var
+                .vec
+                .mut_ptr_at_unchecked($self_len_var.try_into().unwrap());
             $str_var.as_ptr().copy_to_nonoverlapping(dest, $str_len_var);
-            $self_var.vec.set_len($self_len_var + $str_len_var);
+            $self_var
+                .vec
+                .set_len(($self_len_var + $str_len_var).try_into().unwrap());
         }
     };
 }

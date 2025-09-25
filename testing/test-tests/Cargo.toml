@@ -9,7 +9,8 @@ test = []
 
 [dependencies]
 shared.workspace = true
-testing = {path = ".."}
+testing.workspace = true
+testing-derive.workspace = true
 
 linkme.workspace = true
 log.workspace = true

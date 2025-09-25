@@ -1,15 +1,17 @@
 [package]
 name = "shared"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 default= []
 no-unicode-log = []
 
 [dependencies]
-x86_64.workspace = true
+derive-where.workspace = true
 log.workspace = true
 paste.workspace = true
+simple_endian.workspace = true
+static_assertions.workspace = true
 thiserror.workspace = true
-
+x86_64.workspace = true

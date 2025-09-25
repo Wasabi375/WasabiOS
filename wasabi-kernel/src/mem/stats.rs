@@ -84,7 +84,7 @@ impl HeapStats {
 
     /// Register an allocation
     pub fn register_alloc<U: IntoU64>(&mut self, bytes: U) {
-        let bytes = bytes.into();
+        let bytes = bytes.into_u64();
         trace!("register allock: {bytes}");
 
         self.used += bytes;
@@ -104,7 +104,7 @@ impl HeapStats {
 
     /// Register a free
     pub fn register_free<U: IntoU64>(&mut self, bytes: U) {
-        let bytes = bytes.into();
+        let bytes = bytes.into_u64();
         trace!("register free: {bytes}");
 
         assert!(self.used >= bytes, "{} >= {}", self.used, bytes);
@@ -382,11 +382,20 @@ impl PageTableStats {
 
     /// Log the stats
     pub fn log(&self, level: log::Level) {
-        log::log!(level, "PageTableStats:\n\tmapped: {} 4k, {} 2m, {} 1g\n\tunmapped: {} 4k, {} 2m, {} 1g\n\tremapped: {} 4k, {} 2m, {} 1g\n\tnot present: {}",
-            self.total_mapped_4k, self.total_mapped_2m, self.total_mapped_1g,
-            self.total_unmapped_4k, self.total_unmapped_2m, self.total_unmapped_1g,
-            self.total_remapped_4k, self.total_remapped_2m, self.total_remapped_1g,
-            self.total_mapped_without_present);
+        log::log!(
+            level,
+            "PageTableStats:\n\tmapped: {} 4k, {} 2m, {} 1g\n\tunmapped: {} 4k, {} 2m, {} 1g\n\tremapped: {} 4k, {} 2m, {} 1g\n\tnot present: {}",
+            self.total_mapped_4k,
+            self.total_mapped_2m,
+            self.total_mapped_1g,
+            self.total_unmapped_4k,
+            self.total_unmapped_2m,
+            self.total_unmapped_1g,
+            self.total_remapped_4k,
+            self.total_remapped_2m,
+            self.total_remapped_1g,
+            self.total_mapped_without_present
+        );
         for i in 0..64 {
             let Some(flag) = PageTableFlags::from_bits(1 << i) else {
                 continue;

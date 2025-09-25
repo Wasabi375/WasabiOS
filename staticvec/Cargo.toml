@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+serde = ["dep:serde"]
 alloc = []
-serde = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+shared = { path = "../shared" }
+serde = { version = "1.0.215", features = [ "derive" ], optional = true }
 

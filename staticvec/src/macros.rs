@@ -251,11 +251,12 @@ macro_rules! sortedstaticvec {
 /// # Examples
 ///
 /// ```
-/// format_static!("test");
-/// format_static!("hello {}", "world!");
-/// format_static!("x = {}, y = {y}", 10, y = 30);
+/// use staticvec::format_static;
+/// format_static!(4, "test");
+/// format_static!(12, "hello {}", "world!");
+/// format_static!(14, "x = {}, y = {y}", 10, y = 30);
 /// let (x, y) = (1, 2);
-/// format_static!("{x} + {y} = 3");
+/// format_static!(9, "{x} + {y} = 3");
 /// ```
 #[macro_export]
 macro_rules! format_static {
@@ -264,7 +265,7 @@ macro_rules! format_static {
         use core::fmt::Write;
         use $crate::StaticString;
 
-        fn format_inner(args: Arguments<'_>) -> StaticString<$len> {
+        fn format_inner(args: Arguments<'_>) -> StaticString<$len, usize> {
             let mut string = StaticString::new();
             string.write_fmt(args).unwrap();
             string
@@ -275,62 +276,18 @@ macro_rules! format_static {
     }};
 }
 
-macro_rules! impl_extend_ex {
-    ($var_a:tt, $var_b:tt) => {
-        /// Appends all elements, if any, from `iter` to the StaticVec. If `iter` has a size greater
-        /// than the StaticVec's capacity, any items after that point are ignored.
-        #[allow(unused_parens)]
-        #[inline]
-        default fn extend_ex(&mut self, iter: I) {
-            let mut it = iter.into_iter();
-            let mut i = self.length;
-            while i < N {
-                if let Some($var_a) = it.next() {
-                    unsafe {
-                        self.mut_ptr_at_unchecked(i).write($var_b);
-                    }
-                } else {
-                    break;
-                }
-                i += 1;
-            }
-            self.length = i;
-        }
-    };
-}
-
-macro_rules! impl_from_iter_ex {
-    ($var_a:tt, $var_b:tt) => {
-        /// Creates a new StaticVec instance from the elements, if any, of `iter`.
-        /// If `iter` has a size greater than the StaticVec's capacity, any items after
-        /// that point are ignored.
-        #[allow(unused_parens)]
-        #[inline]
-        default fn from_iter_ex(iter: I) -> Self {
-            let mut res = Self::new_data_uninit();
-            let mut it = iter.into_iter();
-            let mut i = 0;
-            while i < N {
-                if let Some($var_a) = it.next() {
-                    unsafe {
-                        Self::first_ptr_mut(&mut res).add(i).write($var_b);
-                    }
-                } else {
-                    break;
-                }
-                i += 1;
-            }
-            Self {
-                data: res,
-                length: i,
-            }
-        }
-    };
-}
-
 macro_rules! impl_partial_eq_with_as_slice {
     ($left:ty, $right:ty) => {
-        impl<T1, T2: PartialEq<T1>, const N1: usize, const N2: usize> PartialEq<$left> for $right {
+        impl<T1, T2: PartialEq<T1>, L1, L2, const N1: usize, const N2: usize> PartialEq<$left>
+            for $right
+        where
+            L1: Number + TryFrom<usize> + TryInto<usize>,
+            <L1 as TryFrom<usize>>::Error: Debug,
+            <L1 as TryInto<usize>>::Error: Debug,
+            L2: Number + TryFrom<usize> + TryInto<usize>,
+            <L2 as TryFrom<usize>>::Error: Debug,
+            <L2 as TryInto<usize>>::Error: Debug,
+        {
             #[inline(always)]
             fn eq(&self, other: &$left) -> bool {
                 self.as_slice() == other.as_slice()
@@ -346,7 +303,13 @@ macro_rules! impl_partial_eq_with_as_slice {
 
 macro_rules! impl_partial_eq_with_get_unchecked {
     ($left:ty, $right:ty) => {
-        impl<T1, T2: PartialEq<T1>, const N1: usize, const N2: usize> PartialEq<$left> for $right {
+        impl<T1, T2: PartialEq<T1>, L2, const N1: usize, const N2: usize> PartialEq<$left>
+            for $right
+        where
+            L2: Number + TryFrom<usize> + TryInto<usize>,
+            <L2 as TryFrom<usize>>::Error: Debug,
+            <L2 as TryInto<usize>>::Error: Debug,
+        {
             #[inline(always)]
             fn eq(&self, other: &$left) -> bool {
                 unsafe { self.as_slice() == other.get_unchecked(..) }
@@ -362,7 +325,13 @@ macro_rules! impl_partial_eq_with_get_unchecked {
 
 macro_rules! impl_partial_eq_with_equals_no_deref {
     ($left:ty, $right:ty) => {
-        impl<T1, T2: PartialEq<T1>, const N: usize> PartialEq<$left> for $right {
+        impl<T1, T2, const N: usize, L> PartialEq<$left> for $right
+        where
+            T2: PartialEq<T1>,
+            L: Number + TryFrom<usize> + TryInto<usize>,
+            <L as TryFrom<usize>>::Error: Debug,
+            <L as TryInto<usize>>::Error: Debug,
+        {
             #[inline(always)]
             fn eq(&self, other: &$left) -> bool {
                 self.as_slice() == other
@@ -378,7 +347,13 @@ macro_rules! impl_partial_eq_with_equals_no_deref {
 
 macro_rules! impl_partial_eq_with_equals_deref {
     ($left:ty, $right:ty) => {
-        impl<T1, T2: PartialEq<T1>, const N: usize> PartialEq<$left> for $right {
+        impl<T1, T2, const N: usize, L> PartialEq<$left> for $right
+        where
+            T2: PartialEq<T1>,
+            L: Number + TryFrom<usize> + TryInto<usize>,
+            <L as TryFrom<usize>>::Error: Debug,
+            <L as TryInto<usize>>::Error: Debug,
+        {
             #[inline(always)]
             fn eq(&self, other: &$left) -> bool {
                 self.as_slice() == *other
@@ -394,8 +369,15 @@ macro_rules! impl_partial_eq_with_equals_deref {
 
 macro_rules! impl_partial_ord_with_as_slice {
     ($left:ty, $right:ty) => {
-        impl<T1, T2: PartialOrd<T1>, const N1: usize, const N2: usize> PartialOrd<$left>
+        impl<T1, T2: PartialOrd<T1>, const N1: usize, const N2: usize, L1, L2> PartialOrd<$left>
             for $right
+        where
+            L1: Number + TryFrom<usize> + TryInto<usize>,
+            <L1 as TryFrom<usize>>::Error: Debug,
+            <L1 as TryInto<usize>>::Error: Debug,
+            L2: Number + TryFrom<usize> + TryInto<usize>,
+            <L2 as TryFrom<usize>>::Error: Debug,
+            <L2 as TryInto<usize>>::Error: Debug,
         {
             #[inline(always)]
             fn partial_cmp(&self, other: &$left) -> Option<Ordering> {
@@ -407,8 +389,12 @@ macro_rules! impl_partial_ord_with_as_slice {
 
 macro_rules! impl_partial_ord_with_get_unchecked {
     ($left:ty, $right:ty) => {
-        impl<T1, T2: PartialOrd<T1>, const N1: usize, const N2: usize> PartialOrd<$left>
+        impl<T1, T2: PartialOrd<T1>, const N1: usize, const N2: usize, L> PartialOrd<$left>
             for $right
+        where
+            L: Number + TryFrom<usize> + TryInto<usize>,
+            <L as TryFrom<usize>>::Error: Debug,
+            <L as TryInto<usize>>::Error: Debug,
         {
             #[inline(always)]
             fn partial_cmp(&self, other: &$left) -> Option<Ordering> {
@@ -420,7 +406,12 @@ macro_rules! impl_partial_ord_with_get_unchecked {
 
 macro_rules! impl_partial_ord_with_as_slice_against_slice {
     ($left:ty, $right:ty) => {
-        impl<T1, T2: PartialOrd<T1>, const N: usize> PartialOrd<$left> for $right {
+        impl<T1, T2: PartialOrd<T1>, const N: usize, L> PartialOrd<$left> for $right
+        where
+            L: Number + TryFrom<usize> + TryInto<usize>,
+            <L as TryFrom<usize>>::Error: Debug,
+            <L as TryInto<usize>>::Error: Debug,
+        {
             #[inline(always)]
             fn partial_cmp(&self, other: &$left) -> Option<Ordering> {
                 partial_compare(self.as_slice(), other)

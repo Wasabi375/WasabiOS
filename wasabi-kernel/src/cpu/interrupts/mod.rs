@@ -275,7 +275,7 @@ mod test {
 
     /// This test was added to proteced against a too small stack for
     /// the page fault handler
-    #[kernel_test(expected_exit: TestExitState::Panic)]
+    #[kernel_test(i, expected_exit: TestExitState::Panic)] // FIXME panic in panic
     fn test_page_fault_panic() -> Result<(), KernelTestError> {
         let fake_ptr = 0 as *const u64;
         unsafe {

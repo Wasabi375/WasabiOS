@@ -2,46 +2,107 @@
 
 mod mod_group;
 
+use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+
 pub use mod_group::*;
+use simple_endian::LittleEndian;
 
 /// A utility trait for all number types
-pub trait Number: Copy {
+pub trait Number:
+    Copy
+    + Add<Self, Output = Self>
+    + Sub<Self, Output = Self>
+    + Mul<Self, Output = Self>
+    + Div<Self, Output = Self>
+    + AddAssign
+    + SubAssign
+    + MulAssign
+    + DivAssign
+    + PartialEq
+    + Eq
+    + PartialOrd
+    + Ord
+{
     /// The lowest representable value
     const MIN: Self;
     /// The largest representable value
     const MAX: Self;
-    /// the zero value
+    /// the value zero
     const ZERO: Self;
-    /// the 1 value
+    /// the value one
     const ONE: Self;
 }
 
+/// A helper trait to generate constants for [Number]s.
+#[const_trait]
+pub trait NumberConstants {
+    /// Creates a [Number] of `value`.
+    ///
+    /// This can be used instead of literals
+    fn constant(value: usize) -> Self;
+}
+
+impl<T> const NumberConstants for T
+where
+    T: Number + ~const core::ops::Add,
+{
+    #[allow(clippy::assign_op_pattern)]
+    fn constant(value: usize) -> Self {
+        let mut res = Self::ZERO;
+        let mut count = 0;
+        while count < value {
+            res = res + Self::ONE;
+            count += 1;
+        }
+        res
+    }
+}
+
 /// Types that implement this can be converted into a u64.
-///
-/// This is implemented for `T: Into<u64>` and `usize` which does not impl Into
 pub trait IntoU64 {
     /// Converts `self` into u64
-    fn into(self) -> u64;
+    fn into_u64(self) -> u64;
 }
 
 /// Types that implement this can be converted into a i64.
-///
-/// This is implemented for `T: Into<i64>` and `usize` which does not impl Into
 pub trait IntoI64 {
     /// Converts `self` into i64
-    fn into(self) -> i64;
+    fn into_i64(self) -> i64;
+}
+
+/// Types that implement this can be converted into a usize.
+pub trait IntoUSize {
+    /// Converts `self` into i64
+    fn into_usize(self) -> usize;
+}
+
+/// Types that implement this can be converted into a usize.
+pub trait IntoISize {
+    /// Converts `self` into isize
+    fn into_isize(self) -> isize;
 }
 
 macro_rules! impl_into_ui64 {
     ($typ:ident) => {
         impl IntoU64 for $typ {
-            fn into(self) -> u64 {
+            fn into_u64(self) -> u64 {
                 self as u64
             }
         }
         impl IntoI64 for $typ {
-            fn into(self) -> i64 {
+            fn into_i64(self) -> i64 {
                 self as i64
+            }
+        }
+
+        impl IntoUSize for $typ {
+            fn into_usize(self) -> usize {
+                self as usize
+            }
+        }
+        impl IntoISize for $typ {
+            fn into_isize(self) -> isize {
+                self as isize
             }
         }
     };
@@ -52,11 +113,13 @@ impl_into_ui64!(u16);
 impl_into_ui64!(u32);
 impl_into_ui64!(u64);
 impl_into_ui64!(usize);
+impl_into_ui64!(u128);
 impl_into_ui64!(i8);
 impl_into_ui64!(i16);
 impl_into_ui64!(i32);
 impl_into_ui64!(i64);
 impl_into_ui64!(isize);
+impl_into_ui64!(i128);
 
 /// A utility trait for all unsinged number types
 pub trait UnsingedNumber: Number {}
@@ -134,14 +197,21 @@ pub trait CheckedMul<T>: Sized {
 }
 
 macro_rules! impl_number {
-    ($t:ident) => {
+    ($t:ty, $min:expr, $max:expr, $zero:expr, $one:expr) => {
         impl Number for $t {
-            const MIN: Self = Self::MIN;
-            const MAX: Self = Self::MAX;
-            const ZERO: Self = 0;
-            const ONE: Self = 1;
+            const MIN: Self = $min;
+            const MAX: Self = $max;
+            const ZERO: Self = $zero;
+            const ONE: Self = $one;
         }
+    };
+    ($t:ty) => {
+        impl_number!($t, Self::MIN, Self::MAX, 0, 1);
+    };
+}
 
+macro_rules! impl_number_ops {
+    ($t:ty) => {
         impl WrappingAdd<$t> for $t {
             type Output = $t;
 
@@ -201,8 +271,13 @@ macro_rules! impl_number {
         }
     };
 }
+
 macro_rules! impl_unsinged {
-    ($t:ident) => {
+    ($t:ty, $min:expr, $max:expr, $zero:expr, $one:expr) => {
+        impl_number!($t, $min, $max, $zero, $one);
+        impl UnsingedNumber for $t {}
+    };
+    ($t:ty) => {
         impl_number!($t);
         impl UnsingedNumber for $t {}
     };
@@ -221,3 +296,37 @@ impl_number!(i32);
 impl_number!(i64);
 impl_number!(i128);
 impl_number!(isize);
+
+impl_number_ops!(u8);
+impl_number_ops!(u16);
+impl_number_ops!(u32);
+impl_number_ops!(u64);
+impl_number_ops!(u128);
+impl_number_ops!(usize);
+
+impl_number_ops!(i8);
+impl_number_ops!(i16);
+impl_number_ops!(i32);
+impl_number_ops!(i64);
+impl_number_ops!(i128);
+impl_number_ops!(isize);
+
+impl_unsinged!(
+    LittleEndian<u64>,
+    LittleEndian::from_bits(u64::MIN.to_le()),
+    LittleEndian::from_bits(u64::MAX.to_le()),
+    LittleEndian::from_bits(0u64.to_le()),
+    LittleEndian::from_bits(1u64.to_le())
+);
+
+#[cfg(test)]
+mod test {
+    use super::NumberConstants;
+    #[test]
+    fn test_const_number_literals() {
+        assert_eq!(0u8, u8::constant(0));
+        assert_eq!(1u16, u16::constant(1));
+        assert_eq!(5u8, u8::constant(5));
+        assert_eq!(4321u64, u64::constant(4321));
+    }
+}

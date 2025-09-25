@@ -26,9 +26,9 @@ use super::{
 };
 
 #[allow(unused_imports)]
-use crate::{todo_error, todo_warn};
-#[allow(unused_imports)]
 use log::{debug, info, trace, warn};
+#[allow(unused_imports)]
+use shared::{todo_error, todo_warn};
 
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]

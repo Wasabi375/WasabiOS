@@ -1,0 +1,19 @@
+[package]
+name = "fuse"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wfs = { path  = ".." }
+shared = { path = "../../shared" }
+host-shared.workspace = true
+
+fuser = { version = "0.15.0", git = "https://github.com/Wasabi375/fuser.git" }
+libc = "0.2.161"
+
+clap = { version = "4.5", features = ["derive"] }
+simple_logger = { version = "4.2.0", default-features = false, features = ["colors"] }
+uuid = { workspace = true, features = ["v4"] }
+log.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true

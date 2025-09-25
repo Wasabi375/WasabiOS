@@ -1,0 +1,32 @@
+[package]
+name = "wfs"
+version.workspace = true
+edition.workspace = true
+
+
+[features] 
+test = ["dep:testing", "test-tree-branching"]
+test-tree-branching = [] # Tree branching is based on fixed values for unit tests
+
+[dependencies]
+shared = { path = "../shared" }
+staticvec = { path = "../staticvec" }
+testing = { path = "../testing", optional = true }
+testing-derive.workspace = true
+
+bit_field.workspace = true
+bitflags.workspace = true
+crossbeam-epoch.workspace = true
+derive-where.workspace = true
+hashbrown.workspace = true
+linkme.workspace = true
+log.workspace = true
+nonmaxunsigned.workspace = true
+simple_endian.workspace = true
+static_assertions.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+testing = { path = "../testing", optional = false }
+host-shared = { workspace = true, features = [ "test" ] }

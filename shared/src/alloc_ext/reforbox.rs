@@ -8,6 +8,7 @@ use alloc::boxed::Box;
 ///
 /// # Example
 /// `RefOrOwn<str, Box<str>>`
+// TODO can't I just use Cow here?
 pub enum RefOrBox<'a, T: ?Sized + 'a> {
     /// value is accessed via reference
     Ref(&'a T),
@@ -21,7 +22,7 @@ impl<T> Deref for RefOrBox<'_, T> {
     fn deref(&self) -> &Self::Target {
         match self {
             RefOrBox::Ref(value) => value,
-            RefOrBox::Boxed(ref value) => value.borrow(),
+            RefOrBox::Boxed(value) => value.borrow(),
         }
     }
 }

@@ -178,20 +178,22 @@ static TESTING_CORE_INTERRUPT_STATE: CoreInterruptState = CoreInterruptState;
 fn get_test_iter() -> impl Iterator<Item = &'static KernelTestDescription> {
     #[cfg(not(feature = "test-tests"))]
     {
-        get_kernel_tests!(wasabi_kernel)
+        get_kernel_tests!(wasabi_kernel, wfs)
     }
     #[cfg(feature = "test-tests")]
     {
-        get_kernel_tests!(wasabi_kernel, testing_tests)
+        get_kernel_tests!(wasabi_kernel, testing_tests, wfs)
     }
 }
 
 fn init_mp() {
-    testing::multiprocessor::init_interrupt_state(
-        &TESTING_CORE_INTERRUPT_STATE,
-        get_ready_core_count(Ordering::SeqCst),
-    );
     unsafe {
+        // this function is called before tests are executed and is always called with
+        // the same arguments, assuming that ready_core_count is constant
+        testing::multiprocessor::init_interrupt_state(
+            &TESTING_CORE_INTERRUPT_STATE,
+            get_ready_core_count(Ordering::SeqCst),
+        );
         // we call this on all processors with the same value so this will not affect
         // any processors currently waiting
         TEST_START_BARRIER.set_target(

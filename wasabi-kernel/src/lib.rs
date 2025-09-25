@@ -13,7 +13,6 @@
     let_chains,
     maybe_uninit_slice,
     maybe_uninit_array_assume_init,
-    maybe_uninit_uninit_array,
     never_type,
     pointer_is_aligned_to,
     ptr_alignment_type,
@@ -51,22 +50,22 @@ use kernel_info::KernelInfo;
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
 use shared::{
+    KiB,
     cpu::time::timestamp_now_tsc,
     types::{CoreId, Duration},
-    KiB,
 };
 use static_assertions::const_assert;
 use time::time_since_tsc;
 use x86_64::{
-    structures::paging::{PageSize, Size4KiB},
     PhysAddr,
+    structures::paging::{PageSize, Size4KiB},
 };
 
 use crate::{
     core_local::core_boot,
     cpu::{acpi::ACPI, apic, cpuid, halt, interrupts},
 };
-use bootloader_api::{config::Mapping, info::Optional, BootInfo};
+use bootloader_api::{BootInfo, config::Mapping, info::Optional};
 use core::{
     hint::spin_loop,
     sync::atomic::{AtomicU8, Ordering},
@@ -238,7 +237,7 @@ pub const fn bootloader_config_common(
 
     #[cfg(feature = "fixed-kernel-vaddr")]
     {
-        config.mappings.kernel_code = Mapping::FixedAddress(KERNEL_BINARY_VADDR.as_u64())
+        config.mappings.kernel_base = Mapping::FixedAddress(KERNEL_BINARY_VADDR.as_u64())
     }
 
     config
@@ -311,7 +310,7 @@ macro_rules! entry_point {
             let kernel_main: fn() -> ! = $path;
             $crate::kernel_bsp_entry(boot_info, kernel_conf, kernel_main);
         }
-        bootloader_api::entry_point!(__impl_kernel_start, config = &BOOTLOADER_CONFIG);
+        bootloader_api::entry_point!(__impl_kernel_start, config = $b_conf);
     };
 }
 

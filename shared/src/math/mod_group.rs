@@ -59,7 +59,7 @@ where
     T: PartialOrd + UnsingedNumber,
 {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        self.value.partial_cmp(&other.value)
+        Some(self.cmp(other))
     }
 }
 
