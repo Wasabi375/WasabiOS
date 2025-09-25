@@ -1,13 +1,14 @@
 use core::{fmt, marker::PhantomData, mem::size_of, num::NonZeroU64};
 
 use bitflags::bitflags;
+use block_device::{BlockGroup, LBA};
 use simple_endian::LittleEndian;
 use static_assertions::const_assert;
 use staticvec::StaticVec;
 use uuid::Uuid;
 
 use crate::{
-    BLOCK_SIZE, BlockGroup, LBA,
+    BLOCK_SIZE,
     block_allocator::BlockAllocator,
     fs::{FsError, MAIN_HEADER_BLOCK},
     interface::BlockDevice,

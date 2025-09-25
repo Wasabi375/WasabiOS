@@ -31,6 +31,7 @@ members = [
     "libs/logger",
     "libs/shared",
     "libs/shared/derive",
+    "libs/block-device",
 
     "modules/wasabi-fs",
     "modules/wasabi-fs/fuse",
@@ -53,6 +54,7 @@ shared = { path = "libs/shared" }
 shared-derive = { path = "libs/shared/derive" }
 interrupt-fn-builder = { path = "libs/interrupt-fn-builder" }
 logger = { path = "libs/logger" }
+block-device = { path = "libs/block-device" }
 
 # modules
 wfs = { path = "modules/wasabi-fs" }

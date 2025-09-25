@@ -14,6 +14,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
+use block_device::LBA;
 use hashbrown::HashMap;
 use log::{debug, error, trace, warn};
 use shared::{
@@ -28,7 +29,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    BLOCK_SIZE, Block, BlockSlice, FS_VERSION, LBA,
+    BLOCK_SIZE, Block, BlockSlice, FS_VERSION,
     block_allocator::BlockAllocator,
     blocks_required_for,
     existing_fs_check::{FsFound, check_for_filesystem},

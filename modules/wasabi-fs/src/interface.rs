@@ -1,10 +1,11 @@
 use core::{error::Error, mem::size_of, ptr::NonNull};
 
 use alloc::boxed::Box;
+use block_device::{BlockGroup, LBA};
 use log::error;
 
 use crate::{
-    BLOCK_SIZE, BlockGroup, BlockSlice, LBA, blocks_required_for,
+    BLOCK_SIZE, BlockSlice, blocks_required_for,
     fs_structs::{BlockConstructable, DevicePointer},
 };
 
@@ -180,7 +181,10 @@ pub trait BlockDevice {
 pub mod test {
     use alloc::boxed::Box;
 
+    use block_device::{BlockGroup, LBA};
     use thiserror::Error;
+
+    use crate::BlockSlice;
 
     use super::{BlockDevice, BlockDeviceOrMemError};
 
@@ -198,16 +202,13 @@ pub mod test {
             Ok(0)
         }
 
-        fn read_block(
-            &self,
-            _lba: crate::LBA,
-        ) -> Result<Box<crate::BlockSlice>, Self::BlockDeviceError> {
+        fn read_block(&self, _lba: LBA) -> Result<Box<BlockSlice>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn read_blocks_contig(
             &self,
-            _start: crate::LBA,
+            _start: LBA,
             _block_count: u64,
         ) -> Result<Box<[u8]>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
@@ -215,42 +216,39 @@ pub mod test {
 
         fn write_block(
             &mut self,
-            _lba: crate::LBA,
-            _data: core::ptr::NonNull<crate::BlockSlice>,
+            _lba: LBA,
+            _data: core::ptr::NonNull<BlockSlice>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn write_blocks_contig(
             &mut self,
-            _start: crate::LBA,
+            _start: LBA,
             // TODO can I use NonNull<[BlockSlice]> instead?
             _data: core::ptr::NonNull<[u8]>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
-        fn read_block_atomic(
-            &self,
-            _lba: crate::LBA,
-        ) -> Result<Box<crate::BlockSlice>, Self::BlockDeviceError> {
+        fn read_block_atomic(&self, _lba: LBA) -> Result<Box<BlockSlice>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn write_block_atomic(
             &mut self,
-            _lba: crate::LBA,
-            _data: core::ptr::NonNull<crate::BlockSlice>,
+            _lba: LBA,
+            _data: core::ptr::NonNull<BlockSlice>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn compare_exchange_block(
             &mut self,
-            _lba: crate::LBA,
-            _current: core::ptr::NonNull<crate::BlockSlice>,
-            _new: core::ptr::NonNull<crate::BlockSlice>,
-        ) -> Result<Result<(), Box<crate::BlockSlice>>, Self::BlockDeviceError> {
+            _lba: LBA,
+            _current: core::ptr::NonNull<BlockSlice>,
+            _new: core::ptr::NonNull<BlockSlice>,
+        ) -> Result<Result<(), Box<BlockSlice>>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
@@ -259,7 +257,7 @@ pub mod test {
             _blocks: I,
         ) -> Result<Box<[u8]>, BlockDeviceOrMemError<Self::BlockDeviceError>>
         where
-            I: Iterator<Item = crate::BlockGroup> + Clone,
+            I: Iterator<Item = BlockGroup> + Clone,
         {
             Err(TestBlockDeviceError.into())
         }
@@ -270,7 +268,7 @@ pub mod test {
             _data: super::WriteData,
         ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
         where
-            I: Iterator<Item = crate::BlockGroup> + Clone,
+            I: Iterator<Item = BlockGroup> + Clone,
         {
             Err(TestBlockDeviceError.into())
         }

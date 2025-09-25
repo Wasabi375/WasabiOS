@@ -1,0 +1,17 @@
+[package]
+name = "block-device"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+test = []
+
+[dependencies]
+shared.workspace = true
+
+log.workspace = true
+thiserror.workspace = true
+nonmaxunsigned.workspace = true
+simple_endian.workspace = true
+static_assertions.workspace = true

@@ -7,12 +7,13 @@ use crate::fs_structs::{
     DirectoryEntry as FsDirectoryEntry, DirectoryHead, DirectoryPart, FileNode as FsFileNode,
     FileType, Perm, Timestamp,
 };
-use crate::{BLOCK_SIZE, Block, BlockGroup, LBA, blocks_required_for};
+use crate::{BLOCK_SIZE, Block, blocks_required_for};
 use crate::{
     fs_structs::{BlockList as FsBlockList, DevicePointer, FileId},
     interface::BlockDevice,
 };
 use alloc::{boxed::Box, vec::Vec};
+use block_device::{BlockGroup, LBA};
 use shared::counts_required_for;
 use shared::iter::IterExt;
 use shared::math::IntoUSize;
@@ -424,8 +425,8 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(mut current_group) = self.group_iter.next() {
-            if self.skip_bytes >= current_group.bytes() {
-                self.skip_bytes -= current_group.bytes();
+            if self.skip_bytes >= current_group.bytes(BLOCK_SIZE) {
+                self.skip_bytes -= current_group.bytes(BLOCK_SIZE);
                 continue;
             }
 
@@ -441,17 +442,17 @@ where
                 0
             };
 
-            let len = if self.remaining_bytes < current_group.bytes() {
+            let len = if self.remaining_bytes < current_group.bytes(BLOCK_SIZE) {
                 current_group = current_group.shorten(blocks_required_for!(self.remaining_bytes));
                 self.remaining_bytes
             } else {
-                current_group.bytes()
+                current_group.bytes(BLOCK_SIZE)
             };
             assert!(self.remaining_bytes >= len);
 
             self.remaining_bytes -= len;
 
-            assert!(offset + len <= current_group.bytes());
+            assert!(offset + len <= current_group.bytes(BLOCK_SIZE));
             return Some(PartialBlockGroup {
                 group: current_group,
                 offset,

@@ -1,8 +1,8 @@
 use core::mem::offset_of;
 
-use crate::{
-    BLOCK_SIZE, LBA, fs::MAIN_HEADER_BLOCK, fs_structs::MainHeader, interface::BlockDevice,
-};
+use block_device::LBA;
+
+use crate::{BLOCK_SIZE, fs::MAIN_HEADER_BLOCK, fs_structs::MainHeader, interface::BlockDevice};
 
 /// The possible Filesystems we can check for
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

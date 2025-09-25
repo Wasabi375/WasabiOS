@@ -1,12 +1,13 @@
 use core::{cmp::max, num::NonZeroU64};
 
 use alloc::{boxed::Box, vec::Vec};
+use block_device::{BlockGroup, LBA};
 use log::{error, info, trace};
 use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
 
 use crate::{
-    Block, BlockGroup, LBA,
+    Block,
     fs::FsError,
     fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, DevicePointer, FreeBlockGroups},
     interface::BlockDevice,

@@ -1690,6 +1690,7 @@ enum DeleteRebalanceMode {
 mod test_mem_only {
     use alloc::{sync::Arc, vec::Vec};
 
+    use block_device::LBA;
     use shared::sync::lockcell::ReadWriteCell;
     use testing::{
         KernelTestError, TestUnwrapExt, kernel_test, multiprocessor::TestInterruptState, t_assert,
@@ -1697,7 +1698,6 @@ mod test_mem_only {
     };
 
     use crate::{
-        LBA,
         fs_structs::{FileId, FileType, Perm, Timestamp},
         interface::test::TestBlockDevice,
         mem_tree::MemTreeError,

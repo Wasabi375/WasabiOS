@@ -11,6 +11,8 @@ test-tree-branching = [] # Tree branching is based on fixed values for unit test
 [dependencies]
 shared.workspace = true
 staticvec.workspace = true
+block-device.workspace = true
+
 testing = { workspace = true, optional = true }
 testing-derive.workspace = true
 
