@@ -14,3 +14,6 @@ testing-derive.workspace = true
 
 linkme.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+host-shared = { workspace = true, features = [ "test" ] }

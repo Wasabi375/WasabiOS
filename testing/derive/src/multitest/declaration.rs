@@ -1,7 +1,7 @@
 use proc_macro::{Diagnostic, Level};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{token::Brace, Attribute, Error, Expr, Ident, Item, ItemFn, ItemMod, ItemUse, Result};
+use syn::{Attribute, Error, Expr, Ident, Item, ItemFn, ItemMod, ItemUse, Result, token::Brace};
 
 use crate::kernel_test::args::{TestArgs, TestFunctionVariance};
 
@@ -233,10 +233,4 @@ fn expand_normal_function(fun: &ItemFn) -> TokenStream {
     quote! {
         #fun
     }
-}
-
-// TODO temp
-#[allow(dead_code)]
-fn warn(msg: impl Into<String>) {
-    Diagnostic::new(Level::Warning, msg).emit();
 }

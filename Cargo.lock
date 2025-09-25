@@ -1775,6 +1775,7 @@ dependencies = [
 name = "testing-tests"
 version = "0.1.0"
 dependencies = [
+ "host-shared",
  "linkme",
  "log",
  "shared",
