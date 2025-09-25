@@ -1,4 +1,3 @@
-use proc_macro::{Diagnostic, Level};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{Attribute, Error, Expr, Ident, Item, ItemFn, ItemMod, ItemUse, Result, token::Brace};

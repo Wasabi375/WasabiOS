@@ -1,17 +1,10 @@
 //! [NodeGuard] provides save access to a [super::MemTreeNode].
 
-use alloc::boxed::Box;
 use core::{marker::PhantomData, ptr::NonNull};
-use static_assertions::const_assert;
 
 use shared::sync::InterruptState;
 
-use crate::{
-    fs_structs::{FileId, NODE_MAX_CHILD_COUNT},
-    interface::BlockDevice,
-};
-
-use super::{DeleteRebalanceMode, MemTreeLink, MemTreeNode};
+use super::MemTreeNode;
 
 pub trait Borrow {
     fn is_mut() -> bool;
@@ -114,6 +107,7 @@ impl<'a, I: InterruptState, B: Borrow> NodeGuard<'a, I, B> {
         }
     }
 
+    #[allow(unused)]
     pub fn awaken_ref(mut self) -> &'a MemTreeNode<I> {
         self.drop_check = false;
         // Safety: NodeGuard gurantees we have at least shared access

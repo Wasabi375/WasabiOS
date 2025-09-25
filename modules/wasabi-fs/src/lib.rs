@@ -10,19 +10,17 @@
     try_with_capacity,
     vec_push_within_capacity
 )]
-#![allow(unused, dead_code)] // TODO temp
-#![warn(unused_must_use, unused_mut, unused_labels)]
 
 use core::{
-    mem::{size_of, transmute},
-    num::{NonZeroU16, NonZeroU64},
+    mem::size_of,
+    num::NonZeroU64,
     ops::{Add, AddAssign, Deref, DerefMut, Sub, SubAssign},
     ptr::NonNull,
 };
 
 use nonmaxunsigned::{NonMaxU64, NonMaxU64Le};
-use shared::{KiB, math::IntoU64};
-use simple_endian::{LittleEndian, SpecificEndian};
+use shared::KiB;
+use simple_endian::LittleEndian;
 use static_assertions::const_assert_eq;
 
 extern crate alloc;

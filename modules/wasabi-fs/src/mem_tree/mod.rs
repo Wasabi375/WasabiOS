@@ -1,49 +1,32 @@
-use core::{
-    alloc::AllocError,
-    assert_matches::assert_matches,
-    borrow::BorrowMut,
-    cell::{RefCell, UnsafeCell},
-    default, error,
-    error::Error,
-    marker::PhantomData,
-    mem::{self, MaybeUninit},
-    ops::Deref,
-    panic,
-    ptr::{self, NonNull, null_mut},
-    sync::atomic::{AtomicBool, AtomicPtr, Ordering},
-};
+use core::{alloc::AllocError, cell::UnsafeCell, error::Error, ptr::NonNull};
 
-use alloc::{
-    boxed::{self, Box},
-    sync::Arc,
-    vec::Vec,
-};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use log::{debug, trace};
 use shared::{
     sync::{InterruptState, lockcell::UnsafeTicketLock},
-    todo_error, todo_warn,
+    todo_warn,
     r#unsafe::extend_lifetime_mut,
 };
-use staticvec::{StaticVec, staticvec};
+use staticvec::StaticVec;
 use testing_derive::multitest;
 use thiserror::Error;
 
 use crate::{
     Block,
     block_allocator::BlockAllocator,
-    fs::{FileSystem, FsError, FsWrite, map_device_error},
-    fs_structs::{
-        DevicePointer, FileId, FileNode as FsFileNode, LEAVE_MAX_FILE_COUNT, MainHeader,
-        NODE_MAX_CHILD_COUNT, TreeNode,
-    },
+    fs::{FsError, map_device_error},
+    fs_structs::{DevicePointer, FileId, LEAVE_MAX_FILE_COUNT, NODE_MAX_CHILD_COUNT, TreeNode},
     interface::BlockDevice,
     mem_structs::FileNode,
 };
 
-use self::iter::MemTreeNodeIter;
-
-pub mod iter;
 mod node_guard;
+
+#[cfg(any(feature = "test", test))]
+pub mod iter;
+
+#[cfg(any(feature = "test", test))]
+use iter::MemTreeNodeIter;
 
 use node_guard::NodeGuard;
 
@@ -297,7 +280,7 @@ impl<I: InterruptState> MemTree<I> {
         id: FileId,
     ) -> Result<Option<Arc<FileNode<I>>>, FsError> {
         let leave = self.find_leave::<_, node_guard::Immut>(device, id)?;
-        let MemTreeNode::Leave { files, lock, .. } = leave.borrow() else {
+        let MemTreeNode::Leave { files, lock: _, .. } = leave.borrow() else {
             panic!("Find leave should always return a leave node");
         };
 
@@ -427,7 +410,7 @@ impl<I: InterruptState> MemTree<I> {
             parent: next_parent,
             children,
             dirty,
-            dirty_children,
+            dirty_children: _,
             ..
         } = current.borrow_mut()
         else {
@@ -1203,6 +1186,7 @@ impl<I: InterruptState> MemTree<I> {
     ///
     /// This iterator returns all resolved [MemTreeNode]s from left to right,
     /// one level at a time, e.g. root, first node in root, second node in root, leaves
+    #[allow(unused)]
     fn iter_nodes(&mut self) -> MemTreeNodeIter<'_, I> {
         MemTreeNodeIter::new(self)
     }
@@ -1376,7 +1360,9 @@ impl<I: InterruptState> MemTreeNode<I> {
 }
 
 impl<I: InterruptState> MemTreeNode<I> {
+    #[allow(unused)]
     fn assert_valid_node_only(&self) {
+        // TODO do I still need this for tests?
         assert!(!self.get_lock().is_unlocked());
 
         match self {
@@ -1407,8 +1393,7 @@ impl<I: InterruptState> MemTreeNode<I> {
 
         assert_eq!(
             parent.map(|p| p as *const _),
-            self.get_parent()
-                .map(|ptr| unsafe { ptr.as_ptr() as *const _ }),
+            self.get_parent().map(|ptr| ptr.as_ptr() as *const _),
             "Parent does not match"
         );
 
@@ -1508,10 +1493,7 @@ impl<I: InterruptState> MemTreeLink<I> {
             panic!("A node that is not stored in memory, should always be stored on device");
         };
 
-        let device_node = unsafe {
-            // Safety: device_ptr should be a valid pointer on the device
-            device.read_pointer(device_ptr).map_err(map_device_error)?
-        };
+        let device_node = device.read_pointer(device_ptr).map_err(map_device_error)?;
 
         match &device_node {
             TreeNode::Leave { files } => {
@@ -1552,7 +1534,8 @@ impl<I: InterruptState> MemTreeLink<I> {
     ///
     /// Return the in memory representation of the [MemTreeNode] or None
     /// if there was none.
-    fn drop_in_mem(&mut self, tree: &mut MemTree<I>) {
+    #[allow(unused)]
+    pub fn drop_in_mem(&mut self, _tree: &mut MemTree<I>) {
         let Some(node) = self.node.as_mut() else {
             return;
         };
@@ -1571,7 +1554,7 @@ impl<I: InterruptState> MemTreeLink<I> {
     /// the caller must ensure he holds the necessray locks
     #[inline]
     unsafe fn as_ref(&self) -> Option<&MemTreeNode<I>> {
-        unsafe { self.node.as_ref().map(|n| n.as_ref()) }
+        self.node.as_ref().map(|n| n.as_ref())
     }
 
     /// Get a mutable reference to the [MemTreeNode]
@@ -1581,7 +1564,7 @@ impl<I: InterruptState> MemTreeLink<I> {
     /// the caller must ensure he holds the necessray locks
     #[inline]
     unsafe fn as_mut(&mut self) -> Option<&mut MemTreeNode<I>> {
-        unsafe { self.node.as_mut().map(|n| n.as_mut()) }
+        self.node.as_mut().map(|n| n.as_mut())
     }
 
     /// Flushes any in memory changes to the device
@@ -1705,31 +1688,22 @@ enum DeleteRebalanceMode {
 
 #[multitest(cfg: feature = "test")]
 mod test_mem_only {
-    use alloc::{boxed::Box, sync::Arc, vec::Vec};
-    use core::{
-        assert_matches::assert_matches,
-        num::NonZero,
-        ops::Deref,
-        sync::atomic::{AtomicBool, AtomicPtr},
-    };
+    use alloc::{sync::Arc, vec::Vec};
 
-    use shared::sync::lockcell::{ReadWriteCell, UnsafeTicketLock};
-    use staticvec::StaticVec;
+    use shared::sync::lockcell::ReadWriteCell;
     use testing::{
         KernelTestError, TestUnwrapExt, kernel_test, multiprocessor::TestInterruptState, t_assert,
         t_assert_eq, t_assert_matches, tfail,
     };
 
     use crate::{
-        BlockGroup, LBA,
-        fs_structs::{
-            BlockListHead, DevicePointer, DeviceStringHead, FileId, FileType, Perm, Timestamp,
-        },
+        LBA,
+        fs_structs::{FileId, FileType, Perm, Timestamp},
         interface::test::TestBlockDevice,
         mem_tree::MemTreeError,
     };
 
-    use super::{MemTree, MemTreeLink, MemTreeNode};
+    use super::{MemTree, MemTreeNode};
 
     type FileNode = crate::mem_structs::FileNode<TestInterruptState>;
 

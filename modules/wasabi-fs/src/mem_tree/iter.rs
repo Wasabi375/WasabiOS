@@ -1,12 +1,10 @@
-use core::ops::Deref;
-
 use alloc::collections::VecDeque;
 use shared::sync::InterruptState;
 
 use super::{MemTree, MemTreeNode};
 
 pub(crate) struct MemTreeNodeIter<'a, I: InterruptState> {
-    tree: &'a MemTree<I>,
+    _tree: &'a MemTree<I>,
     open: VecDeque<&'a MemTreeNode<I>>,
 }
 
@@ -17,7 +15,7 @@ impl<'a, I: InterruptState> MemTreeNodeIter<'a, I> {
             tree.get_root().as_ref()
         };
         Self {
-            tree,
+            _tree: tree,
             open: root.iter().copied().collect(),
         }
     }

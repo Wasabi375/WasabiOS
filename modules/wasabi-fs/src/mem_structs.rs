@@ -1,5 +1,4 @@
-use core::cmp::{max, min};
-use core::sync::atomic::AtomicU64;
+use core::cmp::min;
 
 use crate::block_allocator::{BlockAllocator, BlockGroupList};
 use crate::fs::{FsError, FsMalformedError, FsWrite, map_device_error};
@@ -8,19 +7,17 @@ use crate::fs_structs::{
     DirectoryEntry as FsDirectoryEntry, DirectoryHead, DirectoryPart, FileNode as FsFileNode,
     FileType, Perm, Timestamp,
 };
-use crate::{BLOCK_SIZE, Block, BlockGroup, LBA, block_allocator, blocks_required_for};
+use crate::{BLOCK_SIZE, Block, BlockGroup, LBA, blocks_required_for};
 use crate::{
     fs_structs::{BlockList as FsBlockList, DevicePointer, FileId},
     interface::BlockDevice,
 };
-use alloc::sync::Arc;
 use alloc::{boxed::Box, vec::Vec};
-use log::{error, trace};
+use shared::counts_required_for;
 use shared::iter::IterExt;
-use shared::math::{IntoU64, IntoUSize};
+use shared::math::IntoUSize;
 use shared::sync::InterruptState;
 use shared::sync::lockcell::{RWLockCell, ReadWriteCell};
-use shared::{counts_required_for, todo_error};
 use staticvec::StaticVec;
 
 use super::fs::FileSystem;

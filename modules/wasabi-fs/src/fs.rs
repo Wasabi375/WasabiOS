@@ -1,13 +1,9 @@
 use core::{
-    any::Any,
     assert_matches::assert_matches,
     cmp::min,
-    error::{self, Error},
+    error::Error,
     marker::PhantomData,
-    mem::{self, size_of, transmute},
-    num::NonZeroU64,
-    ptr::NonNull,
-    usize,
+    mem::{self, transmute},
 };
 
 use alloc::{
@@ -19,35 +15,31 @@ use alloc::{
     vec::Vec,
 };
 use hashbrown::HashMap;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, trace, warn};
 use shared::{
     alloc_ext::owned_slice::OwnedSlice,
     counts_required_for,
-    rangeset::RangeSet,
     sync::{
         InterruptState,
         lockcell::{RWLockCell, ReadWriteCell},
     },
-    todo_warn,
 };
-use static_assertions::const_assert;
-use staticvec::StaticVec;
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    BLOCK_SIZE, Block, BlockGroup, BlockSlice, FS_VERSION, LBA,
-    block_allocator::{self, BlockAllocator, BlockGroupList},
+    BLOCK_SIZE, Block, BlockSlice, FS_VERSION, LBA,
+    block_allocator::BlockAllocator,
     blocks_required_for,
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
-        self, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockListHead, BlockString,
-        BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileNode as FsFileNode, FileType,
-        FreeBlockGroups, FsStatus, MainHeader, MainTransientHeader, Perm, Timestamp, TreeNode,
+        self, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockString,
+        BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileType, FreeBlockGroups,
+        FsStatus, MainHeader, MainTransientHeader, TreeNode,
     },
     interface::{BlockDevice, BlockDeviceOrMemError, WriteData},
     mem_structs::{self, BlockList, Directory, DirectoryChange, DirectoryEntry, FileNode},
-    mem_tree::{self, MemTree, MemTreeError},
+    mem_tree::{MemTree, MemTreeError},
 };
 
 pub(crate) const MAIN_HEADER_BLOCK: LBA = unsafe { LBA::new_unchecked(0) };
@@ -117,7 +109,7 @@ impl From<MemTreeError> for FsError {
 }
 
 impl From<AllocError> for FsError {
-    fn from(value: AllocError) -> Self {
+    fn from(_value: AllocError) -> Self {
         FsError::Oom
     }
 }
@@ -466,7 +458,6 @@ where
             // fs is left in an uninitialized state.
             //
             // TODO I really want to rework this in combination with [write_header].
-            let free_blocks_uninit_lba = LBA::MAX - 1;
             fs.header_data.uuid = uuid;
             let device_header = Block::new(MainHeader {
                 magic: MainHeader::MAGIC,
@@ -518,6 +509,7 @@ where
 
         // update transient data in header
         fs.header_data.status = FsStatus::Ready;
+        fs.access_mode = access;
 
         // Flush writes block allocator and initial mem_tree to device
         fs.flush()?;
@@ -558,12 +550,10 @@ where
             ));
         }
 
-        let backup_header = unsafe {
-            // Safety: we are reading a [MainHeader] from the reported backup location
-            fs.device
-                .read_pointer(header.backup_header)
-                .map_err(map_device_error)?
-        };
+        let backup_header = fs
+            .device
+            .read_pointer(header.backup_header)
+            .map_err(map_device_error)?;
 
         if !header.matches_backup(&backup_header) {
             return Err(FsMalformedError::HeaderMismatch.into());
@@ -743,12 +733,10 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
         length_remaining -= length_in_block;
 
         while length_remaining > 0 {
-            let block = unsafe {
-                // We are reading a string
-                self.device
-                    .read_pointer(next_ptr.ok_or(FsMalformedError::MalformedStringLength)?)
-            }
-            .map_err(map_device_error)?;
+            let block = self
+                .device
+                .read_pointer(next_ptr.ok_or(FsMalformedError::MalformedStringLength)?)
+                .map_err(map_device_error)?;
             next_ptr = block.next;
 
             let length_in_block = min(length_remaining, BLOCK_STRING_PART_DATA_LENGTH);
@@ -763,11 +751,10 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
     }
 
     pub fn read_string(&self, string_ptr: DevicePointer<BlockString>) -> Result<Box<str>, FsError> {
-        let head_block = unsafe {
-            // We are reading a string
-            self.device.read_pointer(string_ptr)
-        }
-        .map_err(map_device_error)?;
+        let head_block = self
+            .device
+            .read_pointer(string_ptr)
+            .map_err(map_device_error)?;
         self.read_string_head(&head_block.0)
     }
 
@@ -889,7 +876,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         }
 
         for (dir_id, changed_dir) in changed_dirs {
-            let Some(file_node) = (self.mem_tree.find(&self.device, dir_id)?) else {
+            let Some(file_node) = self.mem_tree.find(&self.device, dir_id)? else {
                 error!("Trying to apply directory update to non-existent file {dir_id:?}");
                 return Err(FsError::FileDoesNotExist(dir_id));
             };
@@ -924,12 +911,6 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         let next = self.header_data.next_file_id;
         self.header_data.next_file_id = self.header_data.next_file_id.next();
         next
-    }
-
-    fn write_tree_node(&mut self, lba: LBA, node: &Block<TreeNode>) -> Result<(), FsError> {
-        self.device
-            .write_block(lba, node.block_data())
-            .map_err(map_device_error)
     }
 
     fn write_string_parts(
@@ -1225,7 +1206,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         let old_end_block: Option<Box<BlockSlice>>;
 
         let mut old_block_start: &[u8] = &[];
-        let mut old_block_end: &[u8] = &[];
+        let old_block_end: &[u8];
 
         assert!(offset_in_first_block < BLOCK_SIZE as u64);
 

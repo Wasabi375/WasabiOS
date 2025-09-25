@@ -1,13 +1,12 @@
 use core::{cmp::max, num::NonZeroU64};
 
 use alloc::{boxed::Box, vec::Vec};
-use log::{debug, error, info, trace};
+use log::{error, info, trace};
 use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
-use thiserror::Error;
 
 use crate::{
-    Block, BlockGroup, LBA, blocks_required_for,
+    Block, BlockGroup, LBA,
     fs::FsError,
     fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, DevicePointer, FreeBlockGroups},
     interface::BlockDevice,
@@ -394,7 +393,7 @@ impl BlockAllocator {
     ///
     /// This will error if the allocator is dirty. See [Self::is_dirty]
     #[allow(clippy::result_unit_err)]
-    pub fn check_matches_device<D: BlockDevice>(&self, device: &D) -> Result<(), ()> {
+    pub fn check_matches_device<D: BlockDevice>(&self, _device: &D) -> Result<(), ()> {
         if self.is_dirty() {
             return Err(());
         }

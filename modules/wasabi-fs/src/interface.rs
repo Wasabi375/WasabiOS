@@ -1,8 +1,4 @@
-use core::{
-    error::Error,
-    mem::{self, size_of, transmute},
-    ptr::NonNull,
-};
+use core::{error::Error, mem::size_of, ptr::NonNull};
 
 use alloc::boxed::Box;
 use log::error;
@@ -204,63 +200,63 @@ pub mod test {
 
         fn read_block(
             &self,
-            lba: crate::LBA,
+            _lba: crate::LBA,
         ) -> Result<Box<crate::BlockSlice>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn read_blocks_contig(
             &self,
-            start: crate::LBA,
-            block_count: u64,
+            _start: crate::LBA,
+            _block_count: u64,
         ) -> Result<Box<[u8]>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn write_block(
             &mut self,
-            lba: crate::LBA,
-            data: core::ptr::NonNull<crate::BlockSlice>,
+            _lba: crate::LBA,
+            _data: core::ptr::NonNull<crate::BlockSlice>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn write_blocks_contig(
             &mut self,
-            start: crate::LBA,
+            _start: crate::LBA,
             // TODO can I use NonNull<[BlockSlice]> instead?
-            data: core::ptr::NonNull<[u8]>,
+            _data: core::ptr::NonNull<[u8]>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn read_block_atomic(
             &self,
-            lba: crate::LBA,
+            _lba: crate::LBA,
         ) -> Result<Box<crate::BlockSlice>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn write_block_atomic(
             &mut self,
-            lba: crate::LBA,
-            data: core::ptr::NonNull<crate::BlockSlice>,
+            _lba: crate::LBA,
+            _data: core::ptr::NonNull<crate::BlockSlice>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn compare_exchange_block(
             &mut self,
-            lba: crate::LBA,
-            current: core::ptr::NonNull<crate::BlockSlice>,
-            new: core::ptr::NonNull<crate::BlockSlice>,
+            _lba: crate::LBA,
+            _current: core::ptr::NonNull<crate::BlockSlice>,
+            _new: core::ptr::NonNull<crate::BlockSlice>,
         ) -> Result<Result<(), Box<crate::BlockSlice>>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn read_blocks<I>(
             &self,
-            blocks: I,
+            _blocks: I,
         ) -> Result<Box<[u8]>, BlockDeviceOrMemError<Self::BlockDeviceError>>
         where
             I: Iterator<Item = crate::BlockGroup> + Clone,
@@ -270,8 +266,8 @@ pub mod test {
 
         fn write_blocks<I>(
             &mut self,
-            blocks: I,
-            data: super::WriteData,
+            _blocks: I,
+            _data: super::WriteData,
         ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
         where
             I: Iterator<Item = crate::BlockGroup> + Clone,

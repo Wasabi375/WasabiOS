@@ -1,34 +1,29 @@
-use alloc::vec::Vec;
-use core::{
-    default, fmt,
-    marker::PhantomData,
-    mem::size_of,
-    num::{NonZeroU8, NonZeroU16, NonZeroU64},
-    usize,
-};
+use core::{fmt, marker::PhantomData, mem::size_of, num::NonZeroU64};
 
 use bitflags::bitflags;
-use shared::math::IntoI64;
 use simple_endian::LittleEndian;
-use static_assertions::{const_assert, const_assert_ne};
-use staticvec::{StaticString, StaticVec};
+use static_assertions::const_assert;
+use staticvec::StaticVec;
 use uuid::Uuid;
 
 use crate::{
     BLOCK_SIZE, BlockGroup, LBA,
-    block_allocator::{self, BlockAllocator},
+    block_allocator::BlockAllocator,
     fs::{FsError, MAIN_HEADER_BLOCK},
     interface::BlockDevice,
     mem_structs,
 };
 
+// TODO is this used or can I delete this
 trait BlockLinkedList: Sized + BlockConstructable {
     type Next: BlockLinkedList<Next = Self::Next>;
 
     /// The pointer to the next part of [Self]
+    #[allow(unused)]
     fn next(&self) -> Option<DevicePointer<Self::Next>>;
 
     /// Free all blocks within self
+    #[allow(unused)]
     fn free<D: BlockDevice>(
         self: DevicePointer<Self>,
         device: &D,

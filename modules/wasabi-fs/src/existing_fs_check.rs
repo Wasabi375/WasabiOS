@@ -1,12 +1,7 @@
 use core::mem::offset_of;
 
-use shared::dbg;
-
 use crate::{
-    fs::{FsError, MAIN_HEADER_BLOCK},
-    fs_structs::MainHeader,
-    interface::BlockDevice,
-    BLOCK_SIZE, LBA,
+    BLOCK_SIZE, LBA, fs::MAIN_HEADER_BLOCK, fs_structs::MainHeader, interface::BlockDevice,
 };
 
 /// The possible Filesystems we can check for
