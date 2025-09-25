@@ -22,18 +22,23 @@ ureq = "2.10.1"
 
 [workspace]
 members = [
-    "histogram", 
-    "host/shared",
-    "interrupt-fn-builder",
-    "logger",
-    "shared",
-    "shared-derive",
-    "staticvec",
+    "forked-libs/histogram", 
+    "forked-libs/staticvec",
+
+    "host-libs/shared",
+
+    "libs/interrupt-fn-builder",
+    "libs/logger",
+    "libs/shared",
+    "libs/shared/derive",
+
+    "modules/wasabi-fs",
+    "modules/wasabi-fs/fuse",
+
     "testing",
     "testing/derive",
     "testing/test-tests",
-    "wasabi-fs",
-    "wasabi-fs/fuse",
+
     "wasabi-kernel",
     "wasabi-test",
 ]
@@ -43,11 +48,28 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-host-shared = { path = "host/shared" }
-shared = { path = "shared" }
+#libs
+shared = { path = "libs/shared" }
+shared-derive = { path = "libs/shared/derive" }
+interrupt-fn-builder = { path = "libs/interrupt-fn-builder" }
+logger = { path = "libs/logger" }
+
+# modules
+wfs = { path = "modules/wasabi-fs" }
+
+# testing libs
 testing = { path = "testing" }
 testing-derive = { path = "testing/derive" }
+testing-tests = { path = "testing/test-tests" }
 
+# host libs
+host-shared = { path = "host-libs/shared" }
+
+# forked libs
+histogram = { path = "forked-libs/histogram" }
+staticvec = { path = "forked-libs/staticvec" }
+
+# external deps
 anyhow =  "1.0.94"
 bit_field = "0.10.2"
 bitflags = "2.6.0"

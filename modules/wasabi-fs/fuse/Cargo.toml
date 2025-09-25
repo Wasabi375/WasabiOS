@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-wfs = { path  = ".." }
-shared = { path = "../../shared" }
+wfs.workspace = true
+shared.workspace = true
 host-shared.workspace = true
 
 fuser = { version = "0.15.0", git = "https://github.com/Wasabi375/fuser.git" }

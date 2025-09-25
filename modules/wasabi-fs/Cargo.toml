@@ -9,9 +9,9 @@ test = ["dep:testing", "test-tree-branching"]
 test-tree-branching = [] # Tree branching is based on fixed values for unit tests
 
 [dependencies]
-shared = { path = "../shared" }
-staticvec = { path = "../staticvec" }
-testing = { path = "../testing", optional = true }
+shared.workspace = true
+staticvec.workspace = true
+testing = { workspace = true, optional = true }
 testing-derive.workspace = true
 
 bit_field.workspace = true
@@ -28,5 +28,5 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-testing = { path = "../testing", optional = false }
+testing = { workspace = true, optional = false }
 host-shared = { workspace = true, features = [ "test" ] }

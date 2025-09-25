@@ -16,13 +16,13 @@ freeze-heap = ["mem-stats"]
 
 
 [dependencies]
-histogram = { path = "../histogram", optional = true }
-interrupt-fn-builder =  { path = "../interrupt-fn-builder" }
-logger = { path = "../logger" }
-shared = { path = "../shared" }
-shared-derive = { path = "../shared-derive" }
-staticvec = { path = "../staticvec" }
-testing = { path = "../testing", optional = true }
+histogram = { workspace = true, optional = true }
+interrupt-fn-builder.workspace = true
+logger.workspace = true
+shared.workspace = true
+shared-derive.workspace = true
+staticvec.workspace = true
+testing = { workspace = true, optional = true }
 
 bitflags.workspace = true
 bit_field.workspace = true

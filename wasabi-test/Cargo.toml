@@ -14,11 +14,11 @@ default = ["mem-stats"]
 
 [dependencies]
 wasabi-kernel = { path = "../wasabi-kernel", features = ["test", "no-unicode-log"]}
-shared = { path = "../shared" }
-staticvec = { path = "../staticvec" }
-testing = { path = "../testing" }
-testing-tests = { path = "../testing/test-tests", optional = true }
-wfs = { path = "../wasabi-fs", features = ["test"] }
+shared.workspace = true
+staticvec.workspace = true
+testing.workspace = true
+testing-tests = { workspace = true, optional = true }
+wfs = { workspace = true, features = ["test"] }
 
 bootloader_api.workspace = true
 log.workspace = true

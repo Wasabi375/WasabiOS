@@ -10,5 +10,5 @@ no-color = []
 
 [dependencies]
 log.workspace = true
-shared = { path = "../shared" }
-staticvec = { path = "../staticvec" }
+shared.workspace = true
+staticvec.workspace = true

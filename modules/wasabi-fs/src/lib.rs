@@ -1,5 +1,4 @@
 #![cfg_attr(not(test), no_std)]
-#![deny(unsafe_op_in_unsafe_fn)]
 #![feature(
     allocator_api,
     arbitrary_self_types,
