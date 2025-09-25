@@ -242,8 +242,15 @@ macro_rules! blocks_required_for {
 
 /// The current version of the fs
 ///
+/// The bytes corespond to major, minor, patch, alpha-status
+///
+/// ### Alpha-status
+///
+/// - 255: released
+/// - 0..254: dev, incremented on breaking change during dev.
+///
 /// See [fs_structs::MainHeader::version]
-pub const FS_VERSION: [u8; 4] = [0, 1, 0, 3];
+pub const FS_VERSION: [u8; 4] = [0, 1, 0, 255];
 
 /// Align `T` on block boundaries
 ///
