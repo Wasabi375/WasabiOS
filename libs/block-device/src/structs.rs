@@ -25,6 +25,7 @@ impl TryFrom<u64> for LBA {
 }
 
 impl LBA {
+    /// create a new LBA
     pub const fn new(addr: u64) -> Option<Self> {
         if addr == u64::MAX {
             None
@@ -42,22 +43,27 @@ impl LBA {
         Self(unsafe { NonMaxU64Le::new_unchecked(addr) })
     }
 
+    /// create an LBA from a byte offset given a block-size
     pub fn from_byte_offset<const BLOCK_SIZE: usize>(offset: u64) -> Option<LBA> {
         LBA::new(offset / BLOCK_SIZE as u64)
     }
 
+    /// calculate the byte offset for a given block-size
     pub fn to_byte_offset<const BLOCK_SIZE: usize>(self) -> u64 {
         self.get() * BLOCK_SIZE as u64
     }
 
+    /// return the underlying [NonMaxU64] address
     pub fn addr(self) -> NonMaxU64 {
         self.0.to_native()
     }
 
+    /// return the address as a u64
     pub fn get(self) -> u64 {
         self.0.to_native().get()
     }
 
+    /// the maximum value that is valid
     pub const MAX: LBA = LBA(NonMaxU64Le::MAX);
 }
 
@@ -125,6 +131,7 @@ pub struct BlockGroup {
 }
 
 impl BlockGroup {
+    /// create a new block group from start and end(inclusive)
     pub fn new(start: LBA, end: LBA) -> Self {
         Self {
             start,
@@ -134,6 +141,7 @@ impl BlockGroup {
         }
     }
 
+    /// create a new block group based on the block count
     pub fn with_count(start: LBA, count: NonZeroU64) -> Self {
         Self {
             start,
@@ -141,32 +149,39 @@ impl BlockGroup {
         }
     }
 
+    /// the address of the last block in the group
     pub fn end(&self) -> LBA {
         self.start + self.count() - 1
     }
 
+    /// the count of blocks in the group
     pub fn count(&self) -> u64 {
         self.count.to_native().get()
     }
 
+    /// the number of bytes in the group based on the `block_size`
     pub fn bytes(&self, block_size: usize) -> u64 {
         self.count() * block_size as u64
     }
 
+    /// returns `true` if the address is within the group
     pub fn contains(&self, lba: LBA) -> bool {
         self.start <= lba && lba <= self.end()
     }
 
+    /// greate a new group at a given offset (in blocks)
     pub fn subgroup(&self, block_offset: u64) -> Self {
         assert!(self.count() > block_offset);
         BlockGroup::new(self.start + block_offset, self.end())
     }
 
+    /// Create a new group with the last n blocks removed
     pub fn remove_end(&self, blocks_to_remove: u64) -> Self {
         assert!(self.count() > blocks_to_remove);
         BlockGroup::new(self.start, self.end() - blocks_to_remove)
     }
 
+    /// Create a new group with the same start, but the new length
     pub fn shorten(&self, new_length: u64) -> Self {
         assert!(new_length <= self.count());
         self.remove_end(self.count() - new_length)
@@ -177,6 +192,7 @@ impl BlockGroup {
 #[derive(Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct DevicePointer<T> {
+    /// the address on the device
     pub lba: LBA,
     _block_type: PhantomData<T>,
 }
@@ -190,6 +206,7 @@ impl<T> Clone for DevicePointer<T> {
 impl<T> Copy for DevicePointer<T> {}
 
 impl<T> DevicePointer<T> {
+    /// create a new device pointer
     pub fn new(lba: LBA) -> Self {
         Self {
             lba,

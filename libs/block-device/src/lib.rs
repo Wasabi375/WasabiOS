@@ -6,7 +6,7 @@
 #![no_std]
 #![allow(incomplete_features)] // for generic_const_exprs
 #![feature(arbitrary_self_types, box_as_ptr, generic_const_exprs)]
-// #![warn(missing_docs)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -61,6 +61,7 @@ macro_rules! block_size_types {
         where
             [(); $size - core::mem::size_of::<T>()]:,
         {
+            /// The data stored within the block
             pub data: T,
             _pad: [u8; 4096 - core::mem::size_of::<T>()],
         }
@@ -126,18 +127,37 @@ macro_rules! block_size_types {
     };
 }
 
+/// Helper struct containing data that should be written to a [BlockDevice]
+///
+/// Assuming [Self::data] is written to an existing range of blocks, then [Self::old_block_start]
+/// contains the start of the first block that is partially overritten. [Self::old_block_end]
+/// similarly contains the end of the last block that is partially overritten.
+///
+/// The combined size of all 3 fields should be a multiple of the block-size of the
+/// [BlockDevice] the data is written to.
+///
+/// After the write the blocks overritten should contain [Self::old_block_start] followed
+/// by [Self::data] and end with [Self::old_block_end].
 pub struct WriteData<'a> {
+    /// The data to write to the device
     pub data: &'a [u8],
 
+    /// The old data in the first written block, until the start of [Self::data]
     pub old_block_start: &'a [u8],
+    /// The old data in the last block, after [Self::data]
     pub old_block_end: &'a [u8],
 }
 
 impl WriteData<'_> {
+    /// The total length of the data
+    ///
+    /// This should be a multiple of the block-size of the target [BlockDevice]
     pub fn total_len(&self) -> usize {
         self.data.len() + self.old_block_start.len() + self.old_block_end.len()
     }
 
+    /// Check that `self` is valid and can be written to a [BlockDevice] with the given
+    /// `block_size`.
     // TODO is_valid check should really be done in a "constructor"
     pub fn is_valid_for(&self, block_size: usize) -> bool {
         if self.old_block_start.len() >= block_size {
@@ -187,6 +207,10 @@ pub enum BlockDeviceOrMemError<BDError: Error + Send + Sync + 'static> {
 /// from any block device.
 pub trait BlockConstructable<const BLOCK_SIZE: usize> {}
 
+/// A block device
+///
+/// this represents a virtual or hardware device that can be read and written to
+/// in fixed size blocks.
 // TODO why is data a NonNull and not just a ref?
 pub trait BlockDevice {
     /// A gerneric error returned by the block device
@@ -310,6 +334,7 @@ pub trait BlockDevice {
 }
 
 #[cfg(any(feature = "test", test))]
+#[allow(missing_docs)]
 pub mod test {
     use alloc::boxed::Box;
 
@@ -319,11 +344,13 @@ pub mod test {
 
     use super::{BlockDevice, BlockDeviceOrMemError, WriteData};
 
+    /// A test block device that errors on use
     #[derive(Debug, Clone, Copy)]
     pub struct TestBlockDevice;
 
     #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
     #[error("Test Block device should never be accessed")]
+    #[allow(missing_docs)]
     pub struct TestBlockDeviceError;
 
     block_size_types!(4096: TBlock, TBlockSlice);
