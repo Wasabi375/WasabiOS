@@ -15,9 +15,9 @@ use log::{debug, error, info, trace, warn};
 use bootloader_api::BootInfo;
 use shared::sync::lockcell::LockCell;
 use wasabi_kernel::{
-    bootloader_config_common,
+    KernelConfig, bootloader_config_common,
     cpu::{self},
-    default_kernel_config, time, KernelConfig,
+    default_kernel_config, time,
 };
 
 #[cfg(feature = "mem-stats")]
@@ -35,7 +35,7 @@ fn kernel_main() -> ! {
     }
 
     if locals!().is_bsp() {
-        // pci::pci_experiment();
+        wasabi_kernel::pci::pci_experiment();
     }
 
     #[cfg(feature = "mem-stats")]

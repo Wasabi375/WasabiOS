@@ -21,14 +21,15 @@ use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
     locals,
     mem::{
+        MemError,
         frame_allocator::FrameAllocator,
         page_allocator::PageAllocator,
         page_table::{PageTable, PageTableMapError},
         ptr::UntypedPtr,
-        MemError,
     },
     pages_required_for,
     pci::{
+        CommonRegisterOffset, Device, PCI_ACCESS, RegisterAddress,
         nvme::{
             admin_commands::{
                 ControllerId, IOCommandSetVector, IOCommandSetVectorIterator,
@@ -36,7 +37,6 @@ use crate::{
             },
             properties::ArbitrationMechanism,
         },
-        CommonRegisterOffset, Device, RegisterAddress, PCI_ACCESS,
     },
     utils::log_hex_dump,
 };
@@ -57,8 +57,8 @@ use shared::{
 };
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
     PhysAddr,
+    structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
 };
 
 #[allow(unused_imports)]
@@ -203,8 +203,7 @@ impl NVMEController {
 
         trace!(
             "nvme controller properties at phys {:p} mapped to {:p}",
-            properties_base_paddr,
-            properties_base_ptr
+            properties_base_paddr, properties_base_ptr
         );
 
         /// See NVME over PCIe Transport Spec: Figure 4: PCI Express Specific Property
@@ -277,7 +276,9 @@ impl NVMEController {
         // ensure admin head and tail were set using the correct stride
         let cap = this.read_capabilities();
         if cap.doorbell_stride != 4 {
-            trace!("doorbell stride is not 4. This is fine, it just means we need to readjust the admin queue doorbells!");
+            trace!(
+                "doorbell stride is not 4. This is fine, it just means we need to readjust the admin queue doorbells!"
+            );
             // We guessed wrong
             let (sub_tail, comp_head) = unsafe {
                 // Safety: we just mapped the doorbell memory as part of properties.
@@ -723,6 +724,8 @@ impl NVMEController {
         }
 
         debug!("NVME Controller initizalized");
+        debug!("NVME Controller capabilitis: {:#?}", this.capabilities);
+
         Ok(this)
     }
 
@@ -971,9 +974,7 @@ impl NVMEController {
     ) -> Result<(), NVMEControllerError> {
         trace!(
             "allocate_io_queues_with_sizes(count: {}, comp_size: {}, sub_size: {})",
-            count,
-            completion_queue_size,
-            submission_queue_size
+            count, completion_queue_size, submission_queue_size
         );
 
         assert!(completion_queue_size <= self.maximum_queue_entries);
@@ -1073,7 +1074,9 @@ impl NVMEController {
                     if let Some(comp_creation_error) =
                         CompletionQueueCreationStatus::from_bits(status)
                     {
-                        error!("Failed to create completion queue {queue_ident:?}: {comp_creation_error:?}");
+                        error!(
+                            "Failed to create completion queue {queue_ident:?}: {comp_creation_error:?}"
+                        );
                     } else {
                         error!(
                             "Failed to create completion queue {queue_ident:?}: {generic_status:?}"
@@ -1131,7 +1134,9 @@ impl NVMEController {
                     if let Some(sub_creation_error) =
                         CompletionQueueCreationStatus::from_bits(status)
                     {
-                        error!("Failed to create submission queue {queue_ident:?}: {sub_creation_error:?}");
+                        error!(
+                            "Failed to create submission queue {queue_ident:?}: {sub_creation_error:?}"
+                        );
                     } else {
                         error!(
                             "Failed to create submission queue {queue_ident:?}: {generic_status:?}"
@@ -1436,19 +1441,19 @@ impl Into<u64> for QueueBaseAddress {
 mod test {
     use shared::{sync::lockcell::LockCell, todo_warn};
     use testing::{
-        kernel_test, t_assert, t_assert_eq, t_assert_matches, KernelTestError, TestUnwrapExt,
+        KernelTestError, TestUnwrapExt, kernel_test, t_assert, t_assert_eq, t_assert_matches,
     };
     use x86_64::structures::paging::{PageTableFlags, Size4KiB};
 
     use crate::{
         mem::{
-            frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
-            MemError,
+            MemError, frame_allocator::FrameAllocator, page_allocator::PageAllocator,
+            page_table::PageTable,
         },
         pages_required_for,
         pci::{
+            Class, PCI_ACCESS, StorageSubclass,
             nvme::io_commands::{self, LBA},
-            Class, StorageSubclass, PCI_ACCESS,
         },
     };
 
