@@ -1,10 +1,12 @@
 #![cfg_attr(not(test), no_std)]
+#![allow(incomplete_features)] // for generic_const_exprs
 #![feature(
     allocator_api,
     arbitrary_self_types,
     assert_matches,
     box_as_ptr,
     debug_closure_helpers,
+    generic_const_exprs,
     negative_impls,
     try_reserve_kind,
     try_with_capacity,
@@ -29,7 +31,7 @@ pub mod mem_tree;
 /// See [BlockAligned], [Block], [BlockSlice], [blocks_required_for]
 // NOTE: when changed, also change alignment of BlockAligned and Block.
 pub const BLOCK_SIZE: usize = KiB!(4);
-block_size_types!(4096: Block, BlockAligned, BlockSlice);
+block_size_types!(4096: Block, BlockSlice);
 
 /// Calculate the number of BLOCKs required for `bytes` memory.
 ///

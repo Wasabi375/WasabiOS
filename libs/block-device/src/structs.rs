@@ -1,14 +1,10 @@
 use core::{
-    error::Error,
     marker::PhantomData,
     mem::size_of,
     num::NonZeroU64,
-    ops::{Add, AddAssign, Deref, DerefMut, Sub, SubAssign},
-    ptr::NonNull,
+    ops::{Add, AddAssign, Sub, SubAssign},
 };
 
-use alloc::boxed::Box;
-use log::error;
 use nonmaxunsigned::{NonMaxU64, NonMaxU64Le};
 use simple_endian::LittleEndian;
 use static_assertions::const_assert;

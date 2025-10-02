@@ -1,112 +1,126 @@
+//! Library containing Structs and Traits used to Access a BlockDevice
+//!
+//! A block device is a virtual or hardware device that can be read and written
+//! to in blocks of a fixed size.
+
 #![no_std]
-#![allow(unused)] // TODO: TEMP
-//
 #![allow(incomplete_features)] // for generic_const_exprs
 #![feature(arbitrary_self_types, box_as_ptr, generic_const_exprs)]
+// #![warn(missing_docs)]
 
 extern crate alloc;
 
-use core::{
-    error::Error,
-    mem::size_of,
-    num::NonZeroU64,
-    ops::{Add, AddAssign, Deref, DerefMut, Sub, SubAssign},
-    ptr::NonNull,
-};
+use core::{error::Error, mem::size_of, ptr::NonNull};
 
 use alloc::boxed::Box;
 use log::error;
-use nonmaxunsigned::{NonMaxU64, NonMaxU64Le};
 use shared::counts_required_for;
-use simple_endian::LittleEndian;
 
 mod structs;
 pub use structs::*;
 
+#[cfg(test)]
+mod test_block_types {
+    use super::block_size_types;
+
+    use core::alloc::Layout;
+
+    block_size_types!(4096: Block, BlockSlice);
+
+    #[test]
+    fn size_of() {
+        assert_eq!(4096, core::mem::size_of::<Block<[u8; 16]>>());
+    }
+
+    #[test]
+    fn layout() {
+        let layout = Layout::new::<Block<[u8; 16]>>();
+        assert_eq!(4096, layout.size(), "size");
+        assert_eq!(4096, layout.align(), "align");
+    }
+}
+
+/// Create the types to describe a block containg a generic type, and a u8 slice that is block aligned
+/// and covers an entire block.
 #[macro_export]
 macro_rules! block_size_types {
-    ($size:literal: $vis:vis $block:ident, $aligned:ident, $slice:ident) => {
-        /// Align `T` on block boundaries
-        ///
-        /// See [$block]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        #[repr(C, align($size))]
-        pub struct $aligned<T>(pub T);
-
+    ($size:literal: $block:ident,  $slice:ident) => {
         /// Type alias for `BlockAligned<[u8; $size]>`
         ///
         /// see [$aligned], [$block]
-        pub type $slice = $aligned<[u8; $size]>;
+        #[allow(unused)]
+        pub type $slice = $block<[u8; $size]>;
 
         /// Align `T` on block boundaries and ensure it is padded to fill the entire block
         ///
         /// See [BLOCK_SIZE], [BlockAligned], [BlockSlice], [blocks_required_for]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         #[repr(C, align($size))]
-        pub struct $block<T> {
-            pub data: $aligned<T>,
-            _pad: $aligned<()>,
+        #[allow(unused)]
+        pub struct $block<T>
+        where
+            [(); $size - core::mem::size_of::<T>()]:,
+        {
+            pub data: T,
+            _pad: [u8; 4096 - core::mem::size_of::<T>()],
         }
-        static_assertions::const_assert_eq!(size_of::<$block<[u8; $size]>>(), $size);
+        static_assertions::const_assert_eq!(core::mem::size_of::<$block<[u8; $size]>>(), $size);
 
-        impl<T> $block<T> {
+        impl<T> $block<T>
+        where
+            [(); $size - core::mem::size_of::<T>()]:,
+        {
+            /// Create a new block aligned `T`
+            #[allow(unused)]
             pub const fn new(data: T) -> Self {
                 Self {
-                    data: $aligned(data),
-                    _pad: $aligned(()),
+                    data: data,
+                    _pad: [0; { $size - core::mem::size_of::<T>() }],
                 }
             }
 
+            /// Extract the inner value
+            #[allow(unused)]
             pub fn into_inner(self) -> T {
-                self.data.0
+                self.data
             }
 
+            /// Creates a ptr to a slice covering the entire block.
+            ///
+            /// The size of the slice is greater or equal than the size of `T`
+            /// and will always cover exactly 1 or multiple blocks.
+            #[allow(unused)]
             pub fn block_data(&self) -> core::ptr::NonNull<$slice> {
-                assert!(size_of::<Self>() == $size);
+                assert!(core::mem::size_of::<Self>() == $size);
 
+                // TODO using this pointer to read or write past $size is invalid
                 core::ptr::NonNull::from(self).cast()
             }
-
-            pub fn multiblock_data(&self) -> core::ptr::NonNull<[u8]> {
-                assert!(size_of::<Self>() % $size == 0);
-
-                core::ptr::NonNull::slice_from_raw_parts(
-                    core::ptr::NonNull::from(self).cast(),
-                    size_of::<Self>(),
-                )
-            }
         }
 
-        impl $block<$slice> {
+        impl $slice {
             /// A zero filled block
-            pub const ZERO: $block<$slice> = $block::new($aligned([0; $size]));
+            #[allow(unused)]
+            pub const ZERO: $slice = $block::new([0u8; $size]);
         }
 
-        impl<T> core::ops::Deref for $block<T> {
+        impl<T> core::ops::Deref for $block<T>
+        where
+            [(); $size - core::mem::size_of::<T>()]:,
+        {
             type Target = T;
 
             fn deref(&self) -> &Self::Target {
-                self.data.deref()
+                &self.data
             }
         }
 
-        impl<T> core::ops::DerefMut for $block<T> {
+        impl<T> core::ops::DerefMut for $block<T>
+        where
+            [(); $size - core::mem::size_of::<T>()]:,
+        {
             fn deref_mut(&mut self) -> &mut Self::Target {
-                self.data.deref_mut()
-            }
-        }
-
-        impl<T> core::ops::Deref for $aligned<T> {
-            type Target = T;
-
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
-        impl<T> core::ops::DerefMut for $aligned<T> {
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.0
+                &mut self.data
             }
         }
     };
@@ -312,7 +326,7 @@ pub mod test {
     #[error("Test Block device should never be accessed")]
     pub struct TestBlockDeviceError;
 
-    block_size_types!(4096: TBlock, TBlockAligned, TBlockSlice);
+    block_size_types!(4096: TBlock, TBlockSlice);
 
     impl BlockDevice for TestBlockDevice {
         type BlockDeviceError = TestBlockDeviceError;
@@ -327,63 +341,63 @@ pub mod test {
 
         fn read_block(
             &self,
-            lba: crate::LBA,
+            _lba: crate::LBA,
         ) -> Result<Box<Self::BlockSlice>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn read_blocks_contig(
             &self,
-            start: crate::LBA,
-            block_count: u64,
+            _start: crate::LBA,
+            _block_count: u64,
         ) -> Result<Box<[u8]>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn write_block(
             &mut self,
-            lba: crate::LBA,
-            data: core::ptr::NonNull<TBlockSlice>,
+            _lba: crate::LBA,
+            _data: core::ptr::NonNull<TBlockSlice>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn write_blocks_contig(
             &mut self,
-            start: crate::LBA,
+            _start: crate::LBA,
             // TODO can I use NonNull<[BlockSlice]> instead?
-            data: core::ptr::NonNull<[u8]>,
+            _data: core::ptr::NonNull<[u8]>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn read_block_atomic(
             &self,
-            lba: crate::LBA,
+            _lba: crate::LBA,
         ) -> Result<Box<TBlockSlice>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn write_block_atomic(
             &mut self,
-            lba: crate::LBA,
-            data: core::ptr::NonNull<TBlockSlice>,
+            _lba: crate::LBA,
+            _data: core::ptr::NonNull<TBlockSlice>,
         ) -> Result<(), Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn compare_exchange_block(
             &mut self,
-            lba: crate::LBA,
-            current: core::ptr::NonNull<TBlockSlice>,
-            new: core::ptr::NonNull<TBlockSlice>,
+            _lba: crate::LBA,
+            _current: core::ptr::NonNull<TBlockSlice>,
+            _new: core::ptr::NonNull<TBlockSlice>,
         ) -> Result<Result<(), Box<TBlockSlice>>, Self::BlockDeviceError> {
             Err(TestBlockDeviceError)
         }
 
         fn read_blocks<I>(
             &self,
-            blocks: I,
+            _blocks: I,
         ) -> Result<Box<[u8]>, BlockDeviceOrMemError<Self::BlockDeviceError>>
         where
             I: Iterator<Item = BlockGroup> + Clone,
@@ -393,8 +407,8 @@ pub mod test {
 
         fn write_blocks<I>(
             &mut self,
-            blocks: I,
-            data: WriteData,
+            _blocks: I,
+            _data: WriteData,
         ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
         where
             I: Iterator<Item = BlockGroup> + Clone,
