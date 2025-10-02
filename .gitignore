@@ -12,4 +12,5 @@ latest/
 wasabi-fs/fuse/test_fs.img
 *.wfs
 
+test_nvme_data.txt
 
