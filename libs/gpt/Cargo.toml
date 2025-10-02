@@ -1,0 +1,12 @@
+[package]
+name = "gpt"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared.workspace = true
+block-device.workspace = true
+
+log.workspace = true
+thiserror.workspace = true
+crc32fast.workspace = true

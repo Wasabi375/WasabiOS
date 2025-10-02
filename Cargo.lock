@@ -168,7 +168,7 @@ dependencies = [
  "anyhow",
  "bootloader-boot-config",
  "fatfs",
- "gpt",
+ "gpt 3.1.0",
  "llvm-tools",
  "serde_json",
  "tempfile",
@@ -351,9 +351,9 @@ checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
 name = "crc32fast"
-version = "1.4.2"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a97769d94ddab943e4510d138150169a2758b5ef3eb191a9ee688de3e23ef7b3"
+checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
@@ -719,6 +719,17 @@ name = "gimli"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
+
+[[package]]
+name = "gpt"
+version = "0.1.0"
+dependencies = [
+ "block-device",
+ "crc32fast",
+ "log",
+ "shared",
+ "thiserror",
+]
 
 [[package]]
 name = "gpt"
