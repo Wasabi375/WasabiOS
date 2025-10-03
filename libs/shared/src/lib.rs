@@ -1,6 +1,7 @@
 //! Implementation shared by all kernel packages
 #![no_std]
 #![feature(
+    allocator_api,
     box_into_inner,
     const_ops,
     const_trait_impl,
