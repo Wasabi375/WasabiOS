@@ -7,13 +7,10 @@ use crate::fs_structs::{
     DirectoryEntry as FsDirectoryEntry, DirectoryHead, DirectoryPart, FileNode as FsFileNode,
     FileType, Perm, Timestamp,
 };
+use crate::fs_structs::{BlockList as FsBlockList, FileId};
 use crate::{BLOCK_SIZE, Block, blocks_required_for};
-use crate::{
-    fs_structs::{BlockList as FsBlockList, DevicePointer, FileId},
-    interface::BlockDevice,
-};
 use alloc::{boxed::Box, vec::Vec};
-use block_device::{BlockGroup, LBA};
+use block_device::{BlockDevice, BlockGroup, DevicePointer, LBA};
 use shared::counts_required_for;
 use shared::iter::IterExt;
 use shared::math::IntoUSize;

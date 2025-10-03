@@ -14,7 +14,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use block_device::LBA;
+use block_device::{BlockDevice, LBA, ReadBlockDeviceError, WriteData};
 use hashbrown::HashMap;
 use log::{debug, error, trace, warn};
 use shared::{
@@ -38,7 +38,6 @@ use crate::{
         BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileType, FreeBlockGroups,
         FsStatus, MainHeader, MainTransientHeader, TreeNode,
     },
-    interface::{BlockDevice, BlockDeviceOrMemError, WriteData},
     mem_structs::{self, BlockList, Directory, DirectoryChange, DirectoryEntry, FileNode},
     mem_tree::{MemTree, MemTreeError},
 };
@@ -139,11 +138,11 @@ impl From<hashbrown::TryReserveError> for FsError {
     }
 }
 
-impl<E: Error + Send + Sync + 'static> From<BlockDeviceOrMemError<E>> for FsError {
-    fn from(value: BlockDeviceOrMemError<E>) -> Self {
+impl<E: Error + Send + Sync + 'static> From<ReadBlockDeviceError<E>> for FsError {
+    fn from(value: ReadBlockDeviceError<E>) -> Self {
         match value {
-            BlockDeviceOrMemError::BlockDevice(err) => map_device_error(err),
-            BlockDeviceOrMemError::Allocation => FsError::Oom,
+            ReadBlockDeviceError::BlockDevice(err) => map_device_error(err),
+            ReadBlockDeviceError::Allocation => FsError::Oom,
         }
     }
 }

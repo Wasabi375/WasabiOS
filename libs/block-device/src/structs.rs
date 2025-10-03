@@ -63,6 +63,11 @@ impl LBA {
         self.0.to_native().get()
     }
 
+    /// The zero LBA
+    pub const ZERO: LBA = LBA::new(0).unwrap();
+    /// The one LBA
+    pub const ONE: LBA = LBA::new(1).unwrap();
+
     /// the maximum value that is valid
     pub const MAX: LBA = LBA(NonMaxU64Le::MAX);
 }

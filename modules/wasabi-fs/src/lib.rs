@@ -22,7 +22,6 @@ pub mod block_allocator;
 pub mod existing_fs_check;
 pub mod fs;
 pub mod fs_structs;
-pub mod interface;
 pub mod mem_structs;
 pub mod mem_tree;
 

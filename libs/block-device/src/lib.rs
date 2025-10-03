@@ -10,13 +10,13 @@
 
 extern crate alloc;
 
-use core::{error::Error, mem::size_of, ptr::NonNull};
+use core::{error::Error, mem::size_of};
 
 use alloc::boxed::Box;
 use log::error;
-use shared::counts_required_for;
 
 mod structs;
+use shared::alloc_ext::alloc_buffer;
 pub use structs::*;
 
 #[cfg(test)]
@@ -44,7 +44,7 @@ mod test_block_types {
 /// and covers an entire block.
 #[macro_export]
 macro_rules! block_size_types {
-    ($size:literal: $block:ident,  $slice:ident) => {
+    ($size:literal: $block:ident, $slice:ident) => {
         /// Type alias for `BlockAligned<[u8; $size]>`
         ///
         /// see [$aligned], [$block]
@@ -194,24 +194,67 @@ impl WriteData<'_> {
 
 #[derive(thiserror::Error, Debug)]
 #[allow(missing_docs)]
-pub enum BlockDeviceOrMemError<BDError: Error + Send + Sync + 'static> {
+pub enum ReadBlockDeviceError<BDError: Error + Send + Sync + 'static> {
     #[error("Block device error: {0}")]
     BlockDevice(#[from] BDError),
     #[error("Failed to allocate memory(RAM)")]
     Allocation,
+    #[error("data does not fit in provided buffer. Size {size}, required {expected}")]
+    BufferToSmall { size: usize, expected: usize },
+}
+
+#[derive(thiserror::Error, Debug)]
+#[allow(missing_docs)]
+pub enum WriteBlockDeviceError<BDError: Error + Send + Sync + 'static> {
+    #[error("Block device error: {0}")]
+    BlockDevice(#[from] BDError),
+    #[error("expected to write {expected} bytes but only got {size}")]
+    NotEnoughData { expected: usize, size: usize },
+}
+
+#[derive(thiserror::Error, Debug)]
+#[allow(missing_docs)]
+pub enum ReadPointerError<BDError: Error + Send + Sync + 'static> {
+    #[error("Block device error: {0}")]
+    BlockDevice(#[from] BDError),
+    #[error("Failed to allocate memory(RAM)")]
+    Allocation,
+    #[error(
+        "Tried to read type with a size of {expected} bytes, but block size is only {block_size}"
+    )]
+    NotEnoughData { block_size: usize, expected: usize },
+    #[error("data does not fit in provided buffer. Size {size}, required {expected}")]
+    BufferToSmall { size: usize, expected: usize },
+}
+
+impl<BDError: Error + Send + Sync + 'static> From<ReadBlockDeviceError<BDError>>
+    for ReadPointerError<BDError>
+{
+    fn from(value: ReadBlockDeviceError<BDError>) -> Self {
+        match value {
+            ReadBlockDeviceError::BlockDevice(e) => ReadPointerError::BlockDevice(e),
+            ReadBlockDeviceError::Allocation => ReadPointerError::Allocation,
+            ReadBlockDeviceError::BufferToSmall { size, expected } => {
+                ReadPointerError::BufferToSmall { size, expected }
+            }
+        }
+    }
 }
 
 /// A marker trait describing structs that can be constructed from a [super::Block].
 ///
 /// This implies that it is safe to construct the struct from a byte slice read
 /// from any block device.
-pub trait BlockConstructable<const BLOCK_SIZE: usize> {}
+///
+/// # Safety
+///
+/// This type must be constructable from any bit pattern
+pub unsafe trait BlockConstructable {}
 
 /// A block device
 ///
 /// this represents a virtual or hardware device that can be read and written to
 /// in fixed size blocks.
-// TODO why is data a NonNull and not just a ref?
 pub trait BlockDevice {
     /// A gerneric error returned by the block device
     type BlockDeviceError: Error + Send + Sync + 'static;
@@ -219,29 +262,30 @@ pub trait BlockDevice {
     /// The block size of the device
     const BLOCK_SIZE: usize;
 
-    /// A block aligned array of u8 of size [BLOCK_SIZE]
-    type BlockSlice;
-
     /// Returns the number of blocks in the [BlockDevice]
     fn max_block_count(&self) -> Result<u64, Self::BlockDeviceError>;
 
-    /// Read a block from the device
-    ///
-    /// The resulting slice will always be algined on block boundaries.
-    fn read_block(&self, lba: LBA) -> Result<Box<Self::BlockSlice>, Self::BlockDeviceError>;
+    /// Read a block from the device into `buffer`
+    fn read_block(
+        &self,
+        lba: LBA,
+        buffer: &mut [u8],
+    ) -> Result<(), ReadBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Read multiple contigious blocks from the device
     fn read_blocks_contig(
         &self,
         start: LBA,
         block_count: u64,
-    ) -> Result<Box<[u8]>, Self::BlockDeviceError>;
+        buffer: &mut [u8],
+    ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Read multiple blocks from the device
     fn read_blocks<I>(
         &self,
         blocks: I,
-    ) -> Result<Box<[u8]>, BlockDeviceOrMemError<Self::BlockDeviceError>>
+        buffer: &mut [u8],
+    ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>>
     where
         I: Iterator<Item = BlockGroup> + Clone;
 
@@ -249,30 +293,33 @@ pub trait BlockDevice {
     fn write_block(
         &mut self,
         lba: LBA,
-        data: NonNull<Self::BlockSlice>,
-    ) -> Result<(), Self::BlockDeviceError>;
+        data: &[u8],
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Write multiple blocks to the device
     fn write_blocks_contig(
         &mut self,
         start: LBA,
         // TODO can I use NonNull<[BlockSlice]> instead?
-        data: NonNull<[u8]>,
-    ) -> Result<(), Self::BlockDeviceError>;
+        data: &[u8],
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Write multiple blocks to the device
     fn write_blocks<I>(
         &mut self,
         blocks: I,
         data: WriteData,
-    ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
     where
         I: Iterator<Item = BlockGroup> + Clone;
 
     /// Atomically read a block from the device
     ///
     /// If the device does not support atomic access, this should be implemented using a lock
-    fn read_block_atomic(&self, lba: LBA) -> Result<Box<Self::BlockSlice>, Self::BlockDeviceError>;
+    fn read_block_atomic(
+        &self,
+        lba: LBA,
+    ) -> Result<Box<[u8; Self::BLOCK_SIZE]>, ReadBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Atomically write a block to the device
     ///
@@ -280,30 +327,41 @@ pub trait BlockDevice {
     fn write_block_atomic(
         &mut self,
         lba: LBA,
-        data: NonNull<Self::BlockSlice>,
-    ) -> Result<(), Self::BlockDeviceError>;
+        data: &[u8],
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Atomically compare and exchange a block on the device
     ///
     /// If the device does not support atomic access, this should be implemented using a lock
+    ///
+    /// # Return Value
+    ///
+    /// 1. `Ok(Ok(()))` if the compare exchange succeeded
+    /// 2. `Ok(Err(value_on_device))` if the block did not match `current`
+    /// 3. `Err(Self::BlockDeviceError)` if accessing the device failed
     fn compare_exchange_block(
         &mut self,
         lba: LBA,
-        current: NonNull<Self::BlockSlice>,
-        new: NonNull<Self::BlockSlice>,
-    ) -> Result<Result<(), Box<Self::BlockSlice>>, Self::BlockDeviceError>;
+        current: &[u8],
+        new: &[u8],
+        // TODO custom error
+    ) -> Result<Result<(), Box<[u8]>>, ReadBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Read a [BlockGroup] from the device
-    fn read_block_group(&self, group: BlockGroup) -> Result<Box<[u8]>, Self::BlockDeviceError> {
-        self.read_blocks_contig(group.start, group.count())
+    fn read_block_group(
+        &self,
+        group: BlockGroup,
+        buffer: &mut [u8],
+    ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>> {
+        self.read_blocks_contig(group.start, group.count(), buffer)
     }
 
     /// Write data to a [BlockGroup]
     fn write_block_group(
         &mut self,
         group: BlockGroup,
-        data: NonNull<[u8]>,
-    ) -> Result<(), Self::BlockDeviceError> {
+        data: &[u8],
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>> {
         assert!(data.len() as u64 <= group.count() * Self::BLOCK_SIZE as u64);
         self.write_blocks_contig(group.start, data)
     }
@@ -317,19 +375,33 @@ pub trait BlockDevice {
     /// We assume the pointer points to a `T` on the [BlockDevice] and that the
     /// data on the block device is not corrupted.
     /// There is no real way to guarantee this and this operation is always unsafe.
-    fn read_pointer<T: BlockConstructable<{ Self::BLOCK_SIZE }>>(
+    fn read_pointer<T: BlockConstructable>(
         &self,
         ptr: DevicePointer<T>,
-    ) -> Result<T, Self::BlockDeviceError> {
-        if size_of::<T>() <= Self::BLOCK_SIZE {
-            let data = self.read_block(ptr.lba)?;
-
-            unsafe { Ok(((Box::as_ptr(&data)) as *const T).read()) }
-        } else {
-            let count = counts_required_for!(Self::BLOCK_SIZE, size_of::<T>()) as u64;
-            let data = self.read_blocks_contig(ptr.lba, count)?;
-            unsafe { Ok((data.as_ptr() as *const T).read()) }
+    ) -> Result<T, ReadPointerError<Self::BlockDeviceError>> {
+        if !(size_of::<T>() <= Self::BLOCK_SIZE) {
+            return Err(ReadPointerError::NotEnoughData {
+                expected: size_of::<T>(),
+                block_size: Self::BLOCK_SIZE,
+            });
         }
+
+        let mut data = alloc_buffer(Self::BLOCK_SIZE).map_err(|_| ReadPointerError::Allocation)?;
+
+        self.read_block(ptr.lba, &mut data)?;
+
+        unsafe { Ok(data.as_ptr().cast::<T>().read()) }
+    }
+}
+
+/// A [BlockDevice] with a fixed size
+pub trait SizedBlockDevice: BlockDevice {
+    /// The size in blocks
+    fn size(&self) -> u64;
+
+    /// the address of the last valid block on the device
+    fn last_lba(&self) -> LBA {
+        LBA::new(self.size() - 1).expect("size - 1 can never be max")
     }
 }
 
@@ -340,9 +412,11 @@ pub mod test {
 
     use thiserror::Error;
 
-    use crate::BlockGroup;
+    use crate::{
+        BlockConstructable, BlockGroup, DevicePointer, LBA, ReadPointerError, WriteBlockDeviceError,
+    };
 
-    use super::{BlockDevice, BlockDeviceOrMemError, WriteData};
+    use super::{BlockDevice, ReadBlockDeviceError, WriteData};
 
     /// A test block device that errors on use
     #[derive(Debug, Clone, Copy)]
@@ -360,8 +434,6 @@ pub mod test {
 
         const BLOCK_SIZE: usize = 4096;
 
-        type BlockSlice = TBlockSlice;
-
         fn max_block_count(&self) -> Result<u64, Self::BlockDeviceError> {
             Ok(0)
         }
@@ -369,63 +441,67 @@ pub mod test {
         fn read_block(
             &self,
             _lba: crate::LBA,
-        ) -> Result<Box<Self::BlockSlice>, Self::BlockDeviceError> {
-            Err(TestBlockDeviceError)
+            _buffer: &mut [u8],
+        ) -> Result<(), ReadBlockDeviceError<TestBlockDeviceError>> {
+            Err(TestBlockDeviceError.into())
         }
 
         fn read_blocks_contig(
             &self,
             _start: crate::LBA,
             _block_count: u64,
-        ) -> Result<Box<[u8]>, Self::BlockDeviceError> {
-            Err(TestBlockDeviceError)
+            _buffer: &mut [u8],
+        ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>> {
+            Err(TestBlockDeviceError.into())
         }
 
         fn write_block(
             &mut self,
             _lba: crate::LBA,
-            _data: core::ptr::NonNull<TBlockSlice>,
-        ) -> Result<(), Self::BlockDeviceError> {
-            Err(TestBlockDeviceError)
+            _data: &[u8],
+        ) -> Result<(), WriteBlockDeviceError<TestBlockDeviceError>> {
+            Err(TestBlockDeviceError.into())
         }
 
         fn write_blocks_contig(
             &mut self,
             _start: crate::LBA,
             // TODO can I use NonNull<[BlockSlice]> instead?
-            _data: core::ptr::NonNull<[u8]>,
-        ) -> Result<(), Self::BlockDeviceError> {
-            Err(TestBlockDeviceError)
+            _data: &[u8],
+        ) -> Result<(), WriteBlockDeviceError<TestBlockDeviceError>> {
+            Err(TestBlockDeviceError.into())
         }
 
         fn read_block_atomic(
             &self,
             _lba: crate::LBA,
-        ) -> Result<Box<TBlockSlice>, Self::BlockDeviceError> {
-            Err(TestBlockDeviceError)
+        ) -> Result<Box<[u8; Self::BLOCK_SIZE]>, ReadBlockDeviceError<Self::BlockDeviceError>>
+        {
+            Err(TestBlockDeviceError.into())
         }
 
         fn write_block_atomic(
             &mut self,
             _lba: crate::LBA,
-            _data: core::ptr::NonNull<TBlockSlice>,
-        ) -> Result<(), Self::BlockDeviceError> {
-            Err(TestBlockDeviceError)
+            _data: &[u8],
+        ) -> Result<(), WriteBlockDeviceError<TestBlockDeviceError>> {
+            Err(TestBlockDeviceError.into())
         }
 
         fn compare_exchange_block(
             &mut self,
             _lba: crate::LBA,
-            _current: core::ptr::NonNull<TBlockSlice>,
-            _new: core::ptr::NonNull<TBlockSlice>,
-        ) -> Result<Result<(), Box<TBlockSlice>>, Self::BlockDeviceError> {
-            Err(TestBlockDeviceError)
+            _current: &[u8],
+            _new: &[u8],
+        ) -> Result<Result<(), Box<[u8]>>, ReadBlockDeviceError<TestBlockDeviceError>> {
+            Err(TestBlockDeviceError.into())
         }
 
         fn read_blocks<I>(
             &self,
             _blocks: I,
-        ) -> Result<Box<[u8]>, BlockDeviceOrMemError<Self::BlockDeviceError>>
+            _buffer: &mut [u8],
+        ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>>
         where
             I: Iterator<Item = BlockGroup> + Clone,
         {
@@ -436,11 +512,32 @@ pub mod test {
             &mut self,
             _blocks: I,
             _data: WriteData,
-        ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
+        ) -> Result<(), WriteBlockDeviceError<TestBlockDeviceError>>
         where
             I: Iterator<Item = BlockGroup> + Clone,
         {
             Err(TestBlockDeviceError.into())
         }
+    }
+
+    struct TestField(#[allow(dead_code)] u8);
+    unsafe impl BlockConstructable for TestField {}
+
+    #[test]
+    fn compile_test() {
+        let device = TestBlockDevice;
+
+        let _ = device.read_pointer(DevicePointer::<TestField>::new(LBA::ZERO));
+
+        let _ = read_from_device(&device);
+    }
+
+    fn read_from_device<D: BlockDevice>(
+        device: &D,
+    ) -> Result<TestField, ReadPointerError<D::BlockDeviceError>>
+    where
+        [(); <D as BlockDevice>::BLOCK_SIZE]:,
+    {
+        device.read_pointer(DevicePointer::new(LBA::ZERO))
     }
 }

@@ -1,7 +1,7 @@
-use core::{fmt, marker::PhantomData, mem::size_of, num::NonZeroU64};
+use core::{fmt, mem::size_of, num::NonZeroU64};
 
 use bitflags::bitflags;
-use block_device::{BlockGroup, LBA};
+use block_device::{BlockConstructable, BlockDevice, BlockGroup, DevicePointer, LBA};
 use simple_endian::LittleEndian;
 use static_assertions::const_assert;
 use staticvec::StaticVec;
@@ -11,12 +11,11 @@ use crate::{
     BLOCK_SIZE,
     block_allocator::BlockAllocator,
     fs::{FsError, MAIN_HEADER_BLOCK},
-    interface::BlockDevice,
     mem_structs,
 };
 
 // TODO is this used or can I delete this
-trait BlockLinkedList: Sized + BlockConstructable {
+trait BlockLinkedList: Sized + BlockConstructable<BLOCK_SIZE> {
     type Next: BlockLinkedList<Next = Self::Next>;
 
     /// The pointer to the next part of [Self]
@@ -40,41 +39,6 @@ trait BlockLinkedList: Sized + BlockConstructable {
 
         Ok(())
     }
-}
-
-/// A marker trait describing structs that can be constructed from a [super::Block].
-///
-/// This implies that it is safe to construct the struct from a byte slice read
-/// from any block device.
-pub trait BlockConstructable {}
-
-/// A pointer of type `T` into a [crate::interface::BlockDevice].
-#[derive(Debug, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct DevicePointer<T> {
-    pub lba: LBA,
-    _block_type: PhantomData<T>,
-}
-const_assert!(size_of::<DevicePointer<u8>>() == size_of::<LBA>());
-
-impl<T> Clone for DevicePointer<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for DevicePointer<T> {}
-
-impl<T> DevicePointer<T> {
-    pub fn new(lba: LBA) -> Self {
-        Self {
-            lba,
-            _block_type: PhantomData,
-        }
-    }
-}
-
-impl<T> core::ops::Receiver for DevicePointer<T> {
-    type Target = T;
 }
 
 /// Either a single [BlockGroup] or a [DevicePointer] to a [BlockList]
@@ -117,7 +81,7 @@ pub struct BlockList {
 const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<BlockList>() <= 100);
 
-impl BlockConstructable for BlockList {}
+impl BlockConstructable<BLOCK_SIZE> for BlockList {}
 
 impl BlockLinkedList for BlockList {
     type Next = BlockList;
@@ -138,7 +102,7 @@ pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
 pub struct BlockString(pub DeviceStringHead<BLOCK_STRING_DATA_LENGTH>);
 const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
 
-impl BlockConstructable for BlockString {}
+impl BlockConstructable<BLOCK_SIZE> for BlockString {}
 
 impl BlockLinkedList for BlockString {
     type Next = BlockStringPart;
@@ -185,7 +149,7 @@ pub struct BlockStringPart {
 }
 const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
 
-impl BlockConstructable for BlockStringPart {}
+impl BlockConstructable<BLOCK_SIZE> for BlockStringPart {}
 
 impl BlockLinkedList for BlockStringPart {
     type Next = Self;
@@ -390,7 +354,7 @@ pub struct MainHeader {
 }
 const_assert!(size_of::<MainHeader>() <= BLOCK_SIZE);
 
-impl BlockConstructable for MainHeader {}
+impl BlockConstructable<BLOCK_SIZE> for MainHeader {}
 
 impl MainHeader {
     /// A magic string that must be part of the header
@@ -486,7 +450,7 @@ pub enum TreeNode {
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);
 
-impl BlockConstructable for TreeNode {}
+impl BlockConstructable<BLOCK_SIZE> for TreeNode {}
 
 /// The number of free [BlockGroup]s that fit within a single [FreeBlockGroups]
 pub(crate) const BLOCK_RANGES_COUNT_PER_BLOCK: usize = 250;
@@ -508,7 +472,7 @@ pub struct FreeBlockGroups {
 const_assert!(size_of::<FreeBlockGroups>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<FreeBlockGroups>() <= 100);
 
-impl BlockConstructable for FreeBlockGroups {}
+impl BlockConstructable<BLOCK_SIZE> for FreeBlockGroups {}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -540,7 +504,7 @@ pub struct DirectoryHead {
 const_assert!(size_of::<DirectoryHead>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<DirectoryHead>() <= size_of::<DirectoryEntry>());
 
-impl BlockConstructable for DirectoryHead {}
+impl BlockConstructable<BLOCK_SIZE> for DirectoryHead {}
 
 impl BlockLinkedList for DirectoryHead {
     type Next = DirectoryPart;
@@ -565,7 +529,7 @@ pub struct DirectoryPart {
 const_assert!(size_of::<DirectoryPart>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<DirectoryPart>() <= size_of::<DirectoryEntry>());
 
-impl BlockConstructable for DirectoryPart {}
+impl BlockConstructable<BLOCK_SIZE> for DirectoryPart {}
 
 impl BlockLinkedList for DirectoryPart {
     type Next = Self;

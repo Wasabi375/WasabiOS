@@ -89,14 +89,16 @@ impl BlockDevice for FileDevice {
         Ok(self.max_block_count)
     }
 
-    fn read_block(&self, lba: LBA) -> Result<Box<BlockSlice>, Self::BlockDeviceError> {
-        let mut block = Box::new(BlockAligned([0; BLOCK_SIZE]));
-
+    fn read_block(
+        &self,
+        lba: LBA,
+        buffer: &mut [u8; BLOCK_SIZE],
+    ) -> Result<(), Self::BlockDeviceError> {
         let mut file = self.file.lock().unwrap();
 
-        Self::read_contig_internal(&mut file, lba, &mut block.0)?;
+        Self::read_contig_internal(&mut file, lba, buffer)?;
 
-        Ok(block)
+        Ok(())
     }
 
     fn read_blocks_contig(
@@ -186,11 +188,7 @@ impl BlockDevice for FileDevice {
         Ok(())
     }
 
-    fn write_blocks<I>(
-        &mut self,
-        blocks: I,
-        data: WriteData,
-    ) -> Result<(), BlockDeviceOrMemError<Self::BlockDeviceError>>
+    fn write_blocks<I>(&mut self, blocks: I, data: WriteData) -> Result<(), Self::BlockDeviceError>
     where
         I: Iterator<Item = BlockGroup> + Clone,
     {
@@ -219,8 +217,7 @@ impl BlockDevice for FileDevice {
             {
                 // There is old data at the start and end. If there is just old data at start or
                 // end, the normal first and last checks handle that case
-                let mut block_buffer = Box::try_new(Block::new([0; BLOCK_SIZE]))
-                    .map_err(|_| BlockDeviceOrMemError::Allocation)?;
+                let mut block_buffer = Block::new([0; BLOCK_SIZE]);
 
                 let data_start = data.old_block_start.len();
                 let data_past_end = data_start + data.data.len();
@@ -234,8 +231,7 @@ impl BlockDevice for FileDevice {
             }
 
             if first && data.old_block_start.len() > 0 {
-                let mut first_block_buffer = Box::try_new(Block::new([0; BLOCK_SIZE]))
-                    .map_err(|_| BlockDeviceOrMemError::Allocation)?;
+                let mut first_block_buffer = Block::new([0; BLOCK_SIZE]);
 
                 first_block_buffer.data[..data.old_block_start.len()]
                     .copy_from_slice(data.old_block_start);
@@ -252,8 +248,7 @@ impl BlockDevice for FileDevice {
             }
 
             if last && data.old_block_end.len() > 0 {
-                let mut last_block_buffer = Box::try_new(Block::new([0; BLOCK_SIZE]))
-                    .map_err(|_| BlockDeviceOrMemError::Allocation)?;
+                let mut last_block_buffer = Block::new([0; BLOCK_SIZE]);
 
                 let single_block = block_group.count() == 1;
 

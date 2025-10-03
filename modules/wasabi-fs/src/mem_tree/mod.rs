@@ -1,6 +1,7 @@
 use core::{alloc::AllocError, cell::UnsafeCell, error::Error, ptr::NonNull};
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use block_device::{BlockDevice, DevicePointer};
 use log::{debug, trace};
 use shared::{
     sync::{InterruptState, lockcell::UnsafeTicketLock},
@@ -15,8 +16,7 @@ use crate::{
     Block,
     block_allocator::BlockAllocator,
     fs::{FsError, map_device_error},
-    fs_structs::{DevicePointer, FileId, LEAVE_MAX_FILE_COUNT, NODE_MAX_CHILD_COUNT, TreeNode},
-    interface::BlockDevice,
+    fs_structs::{FileId, LEAVE_MAX_FILE_COUNT, NODE_MAX_CHILD_COUNT, TreeNode},
     mem_structs::FileNode,
 };
 
@@ -1484,7 +1484,11 @@ impl<I: InterruptState> MemTreeLink<I> {
         &mut self,
         device: &D,
         parent_node: Option<NonNull<MemTreeNode<I>>>,
-    ) -> Result<&mut Self, FsError> {
+    ) -> Result<&mut Self, FsError>
+    where
+        [(); <D as BlockDevice>::BLOCK_SIZE]:,
+        [(); size_of::<TreeNode>().next_multiple_of(<D as BlockDevice>::BLOCK_SIZE)]:,
+    {
         if self.node.is_some() {
             return Ok(self);
         }
@@ -1690,7 +1694,7 @@ enum DeleteRebalanceMode {
 mod test_mem_only {
     use alloc::{sync::Arc, vec::Vec};
 
-    use block_device::LBA;
+    use block_device::{LBA, test::TestBlockDevice};
     use shared::sync::lockcell::ReadWriteCell;
     use testing::{
         KernelTestError, TestUnwrapExt, kernel_test, multiprocessor::TestInterruptState, t_assert,
@@ -1699,7 +1703,6 @@ mod test_mem_only {
 
     use crate::{
         fs_structs::{FileId, FileType, Perm, Timestamp},
-        interface::test::TestBlockDevice,
         mem_tree::MemTreeError,
     };
 

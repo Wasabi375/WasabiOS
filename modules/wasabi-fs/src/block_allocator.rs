@@ -10,8 +10,9 @@ use crate::{
     Block,
     fs::FsError,
     fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, DevicePointer, FreeBlockGroups},
-    interface::BlockDevice,
 };
+
+use block_device::BlockDevice;
 
 #[derive(Clone, Debug)]
 pub struct BlockAllocator {
