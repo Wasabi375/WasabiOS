@@ -17,7 +17,7 @@ pub struct CHS {
 impl CHS {
     /// Calculate the lba for the CHS address
     ///
-    /// assumes [HEAD] and [SECTORS] for the head and sector count
+    /// assumes [HEADS] and [SECTORS] for the head and sector count
     pub fn to_lba(&self) -> Option<u64> {
         if self.cylinder > 1023
             || self.head as u32 >= HEADS
@@ -35,7 +35,7 @@ impl CHS {
 
     /// Create a CHS address from an lba
     ///
-    /// assumes [HEAD] and [SECTORS] for the head and sector count
+    /// assumes [HEADS] and [SECTORS] for the head and sector count
     pub fn from_lba(lba: u64) -> Option<Self> {
         let temp = lba / SECTORS as u64;
         let sector: u8 = (lba % SECTORS as u64).try_into().ok()?;

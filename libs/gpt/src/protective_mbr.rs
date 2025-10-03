@@ -1,5 +1,4 @@
 //! Structs representing the protective Master Boot Record(MBR)
-use std::u32;
 
 use log::warn;
 use thiserror::Error;
@@ -7,6 +6,8 @@ use thiserror::Error;
 use crate::chs::CHS;
 
 /// The entire protective MBR stored at `LBA(0)`
+///
+/// See UEFI Spec Table 5.3
 #[repr(C)]
 #[derive(Debug)]
 pub struct ProtectiveMBR {
@@ -69,7 +70,7 @@ pub struct PartitionRecord {
     /// the chs address of the last logical block on the disk
     /// or `0xffffff` on overflow
     pub ending_chs: [u8; 3],
-    /// the LBA of the [super::PartitionHeader], should be at 1
+    /// the LBA of the [super::Header], should be at 1
     pub starting_lba: u32,
     /// should be disk size minus 1 or `0xffff_ffff` on overflow
     pub size_in_lba: u32,
