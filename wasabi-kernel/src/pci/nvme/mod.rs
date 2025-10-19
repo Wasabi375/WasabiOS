@@ -12,6 +12,7 @@ pub mod io_commands;
 pub mod properties;
 pub mod queue;
 
+use ::block_device::LBA;
 pub use generic_command::{
     CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
     GenericCommandStatus,
@@ -42,7 +43,6 @@ use crate::{
 };
 use admin_commands::{CompletionQueueCreationStatus, IdentifyNamespaceData};
 use generic_command::{COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
-use io_commands::LBA;
 use properties::{AdminQueueAttributes, Capabilities, ControllerConfiguration, ControllerStatus};
 use queue::{CommandQueue, PollCompletionError, QueueIdentifier};
 
@@ -1299,7 +1299,7 @@ pub fn experiment_nvme_device() {
                 Class::Storage(StorageSubclass::NonVolatileMemory)
             )
         })
-        .nth(1)
+        .nth(0)
         .cloned()
         .expect("Failed to find test nvme device");
 
@@ -1354,7 +1354,7 @@ pub fn experiment_nvme_device() {
 
     let command = io_commands::create_read_command(
         frames.start,
-        LBA::new(0),
+        LBA::ZERO,
         blocks_to_read.try_into().unwrap(),
     );
     let ident = io_queue.submit(command).unwrap();
@@ -1439,6 +1439,7 @@ impl Into<u64> for QueueBaseAddress {
 
 #[cfg(feature = "test")]
 mod test {
+    use block_device::LBA;
     use shared::{sync::lockcell::LockCell, todo_warn};
     use testing::{
         KernelTestError, TestUnwrapExt, kernel_test, t_assert, t_assert_eq, t_assert_matches,
@@ -1451,10 +1452,7 @@ mod test {
             page_table::PageTable,
         },
         pages_required_for,
-        pci::{
-            Class, PCI_ACCESS, StorageSubclass,
-            nvme::io_commands::{self, LBA},
-        },
+        pci::{Class, PCI_ACCESS, StorageSubclass, nvme::io_commands},
     };
 
     use super::NVMEController;
@@ -1589,7 +1587,7 @@ mod test {
 
         let command = io_commands::create_read_command(
             frames.start,
-            LBA::new(0),
+            LBA::ZERO,
             blocks_to_read.try_into().unwrap(),
         );
         let ident = io_queue.submit(command).unwrap();

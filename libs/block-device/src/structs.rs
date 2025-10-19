@@ -1,4 +1,5 @@
 use core::{
+    fmt::{LowerHex, UpperHex},
     marker::PhantomData,
     mem::size_of,
     num::NonZeroU64,
@@ -122,6 +123,18 @@ impl PartialOrd for LBA {
 impl Ord for LBA {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.get().cmp(&other.get())
+    }
+}
+
+impl LowerHex for LBA {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        LowerHex::fmt(&self.get(), f)
+    }
+}
+
+impl UpperHex for LBA {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        UpperHex::fmt(&self.get(), f)
     }
 }
 

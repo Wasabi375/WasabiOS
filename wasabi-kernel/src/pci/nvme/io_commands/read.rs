@@ -1,12 +1,13 @@
 use bit_field::BitField;
+use block_device::LBA;
 use x86_64::structures::paging::PhysFrame;
 
 use crate::pci::nvme::{
-    generic_command::{PrpOrSgl, CDW0},
     CommonCommand,
+    generic_command::{CDW0, PrpOrSgl},
 };
 
-use super::{CommandOpcode, LBA};
+use super::CommandOpcode;
 
 /// Create the [CommonCommand] data structure for a read command
 ///
@@ -26,7 +27,7 @@ pub fn create_read_command(frame: PhysFrame, slba: LBA, block_count: u16) -> Com
     command.dword2 = 0;
     command.dword3 = 0;
 
-    let slba = slba.value();
+    let slba = slba.get();
     command.dword10 = (slba & 0xffff_ffff) as u32;
     command.dword11 = (slba >> 32) as u32;
 
