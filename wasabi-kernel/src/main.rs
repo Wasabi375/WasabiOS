@@ -13,7 +13,6 @@ extern crate wasabi_kernel;
 use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
-use shared::sync::lockcell::LockCell;
 use wasabi_kernel::{
     KernelConfig, bootloader_config_common,
     cpu::{self},
@@ -51,20 +50,6 @@ fn kernel_main() -> ! {
             .stats()
             .log(level, Some("frames"));
         PageTable::get_for_kernel().lock().stats().log(level);
-    }
-
-    #[cfg(feature = "freeze-heap")]
-    if locals!().is_bsp() {
-        use alloc::boxed::Box;
-        use wasabi_kernel::mem::kernel_heap::{freeze_global_heap, try_unfreeze_global_heap};
-
-        freeze_global_heap().unwrap();
-
-        let foo = core::hint::black_box(Box::new(5));
-        drop(foo);
-
-        info!("unfreeze");
-        try_unfreeze_global_heap().unwrap();
     }
 
     info!("OS Done!\tcpu::halt()");
