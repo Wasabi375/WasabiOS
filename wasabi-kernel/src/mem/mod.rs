@@ -67,18 +67,18 @@ use crate::{
     prelude::LockCell,
 };
 use bootloader_api::{
-    info::{FrameBuffer, MemoryRegionKind},
     BootInfo,
+    info::{FrameBuffer, MemoryRegionKind},
 };
-use page_table::{recursive_index, PageTableMapError, RecursivePageTableExt};
+use page_table::{PageTableMapError, RecursivePageTableExt, recursive_index};
 use thiserror::Error;
 use x86_64::{
+    PhysAddr, VirtAddr,
     registers::{control::Cr3, read_rip},
     structures::paging::{
-        mapper::{MapToError, UnmapError},
         PageTable as X86PageTable, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB, Translate,
+        mapper::{MapToError, UnmapError},
     },
-    PhysAddr, VirtAddr,
 };
 /// Result type with [MemError]
 pub type Result<T> = core::result::Result<T, MemError>;
@@ -122,8 +122,23 @@ pub enum MemError {
     NoFreezeHeapExists,
 }
 
+unsafe impl Send for MemError {}
+unsafe impl Sync for MemError {}
+
 impl From<AllocError> for MemError {
     fn from(_value: AllocError) -> Self {
+        MemError::AllocError
+    }
+}
+
+impl From<alloc::collections::TryReserveError> for MemError {
+    fn from(_value: alloc::collections::TryReserveError) -> Self {
+        MemError::AllocError
+    }
+}
+
+impl From<hashbrown::TryReserveError> for MemError {
+    fn from(_value: hashbrown::TryReserveError) -> Self {
         MemError::AllocError
     }
 }
@@ -349,8 +364,7 @@ fn assert_phys_not_available(addr: PhysAddr, message: &str) {
 mod test {
     use core::mem::size_of;
 
-    use crate::pages_required_for;
-    use testing::{kernel_test, t_assert_eq, KernelTestError};
+    use testing::{KernelTestError, kernel_test, t_assert_eq};
     use x86_64::structures::paging::Size4KiB;
 
     #[kernel_test]

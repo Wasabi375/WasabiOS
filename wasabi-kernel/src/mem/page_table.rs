@@ -13,12 +13,12 @@ use super::stats::PageTableStats;
 
 use thiserror::Error;
 use x86_64::{
+    PhysAddr, VirtAddr,
     structures::paging::{
-        mapper::{FlagUpdateError, MapToError, MapperFlush, UnmapError, UnmappedFrame},
         Mapper, Page, PageSize, PageTable as X86PageTable, PageTableFlags, PageTableIndex,
         PhysFrame, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB,
+        mapper::{FlagUpdateError, MapToError, MapperFlush, UnmapError, UnmappedFrame},
     },
-    PhysAddr, VirtAddr,
 };
 
 /// A Page Table
@@ -156,11 +156,10 @@ impl<T> PageTable<T> {
         S: PageSize,
         T: Mapper<S>,
     {
-        #[allow(unused)]
         self.inner
             .clear(page)
             .map_err(|e| e.into())
-            .inspect(|frame| {
+            .inspect(|#[allow(unused)] frame| {
                 #[cfg(feature = "mem-stats")]
                 match frame {
                     x86_64::structures::paging::mapper::UnmappedFrame::Present {
@@ -462,12 +461,12 @@ mod test {
     use crate::mem::{frame_allocator::FrameAllocator, page_allocator::PageAllocator};
     use shared::sync::lockcell::LockCell;
     use testing::{
-        kernel_test, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt, KernelTestError,
-        TestUnwrapExt,
+        DebugErrResultExt, KernelTestError, TestUnwrapExt, kernel_test, t_assert_eq,
+        t_assert_matches, tfail,
     };
     use x86_64::structures::paging::{
-        mapper::{MappedFrame, TranslateResult, UnmappedFrame},
         Translate,
+        mapper::{MappedFrame, TranslateResult, UnmappedFrame},
     };
 
     use super::*;
