@@ -62,7 +62,7 @@ impl<T, E: Error> TestUnwrapExt<T> for Result<T, E> {
     fn texpect(self, message: &str) -> Result<T, KernelTestError> {
         match self {
             Ok(v) => Ok(v),
-            Err(_err) => tfail!(caller: "{}", message),
+            Err(err) => tfail!(caller: "{}\nCaused by: {}", message, err),
         }
     }
 }
