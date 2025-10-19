@@ -167,6 +167,14 @@ impl BlockGroup {
         }
     }
 
+    /// create a block group with a single block
+    pub fn single(block: LBA) -> Self {
+        Self {
+            start: block,
+            count: NonZeroU64::new(1).expect("1 is not 0").into(),
+        }
+    }
+
     /// the address of the last block in the group
     pub fn end(&self) -> LBA {
         self.start + self.count() - 1
@@ -179,6 +187,7 @@ impl BlockGroup {
 
     /// the number of bytes in the group based on the `block_size`
     pub fn bytes(&self, block_size: usize) -> u64 {
+        // TODO the types here are wired
         self.count() * block_size as u64
     }
 

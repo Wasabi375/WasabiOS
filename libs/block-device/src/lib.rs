@@ -365,7 +365,7 @@ pub trait BlockDevice {
     fn read_blocks_contig(
         &self,
         start: LBA,
-        block_count: u64,
+        block_count: u64, // TODO nvme limits this to u16? should I also limit this here?
         buffer: &mut [u8],
     ) -> Result<(), ReadBlockDeviceError<Self::BlockDeviceError>>;
 
