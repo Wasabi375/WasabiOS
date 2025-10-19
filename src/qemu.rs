@@ -1,24 +1,25 @@
 mod ovmf;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use ovmf::OvmfPaths;
 use std::{
     ffi::{OsStr, OsString},
+    fmt::Display,
     net::Ipv4Addr,
     os::unix::prelude::OsStrExt,
     path::Path,
     process::{ExitStatus, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 use tokio::{
     fs::File,
     io::{
-        stderr, stdout, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
-        BufReader,
+        AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, stderr,
+        stdout,
     },
     process::{Child, Command},
     task::JoinHandle,
@@ -74,6 +75,7 @@ pub struct QemuConfig<'a> {
     pub debug_info: &'a str,
     pub uefi: UefiConfig<'a>,
     pub gdb_port: Option<u16>,
+    pub additional_drives: Vec<QemuDrive<'a>>,
 }
 
 impl<'a> QemuConfig<'a> {
@@ -93,11 +95,10 @@ impl<'a> QemuConfig<'a> {
             debug_info: args.qemu_info.as_str(),
             uefi: (&args.uefi).into(),
             gdb_port,
+            additional_drives: Vec::new(),
         }
     }
-}
 
-impl<'a> QemuConfig<'a> {
     pub fn add_serial(&mut self, serial: &'a str) -> Result<()> {
         if self.serial.len() >= 4 {
             bail!("Qemu only supports 4 serial ports");
@@ -105,6 +106,45 @@ impl<'a> QemuConfig<'a> {
 
         self.serial.push(serial);
         Ok(())
+    }
+
+    pub fn add_drive(&mut self, drive: QemuDrive<'a>) -> Result<()> {
+        if self.additional_drives.iter().any(|d| d.id == drive.id) {
+            bail!("drive id must be unique! \"{}\" is already used.", drive.id);
+        }
+
+        self.additional_drives.push(drive);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct QemuDrive<'a> {
+    pub typ: QemuDriveType,
+    pub file: &'a Path,
+    pub id: &'a str,
+}
+
+impl<'a> QemuDrive<'a> {
+    pub fn nvme(id: &'a str, image_file: &'a Path) -> Self {
+        Self {
+            typ: QemuDriveType::Nvme,
+            file: image_file,
+            id,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum QemuDriveType {
+    Nvme,
+}
+
+impl Display for QemuDriveType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QemuDriveType::Nvme => f.write_str("nvme"),
+        }
     }
 }
 
@@ -186,13 +226,15 @@ pub async fn launch_qemu<'a>(kernel: &Kernel<'a>, qemu: &QemuConfig<'a>) -> Resu
         }
     }
 
-    // TODO temp nvme
-    //  we use this device in integration tests and should find a way to keep it
-    //  for tests. I still want to get rid of this for the normal execution environment
-    cmd.arg("-drive")
-        .arg("file=test_nvme_data.txt,if=none,id=nvm_test,format=raw");
-    cmd.arg("-device")
-        .arg("nvme,serial=deadbeef,drive=nvm_test");
+    for drive in &qemu.additional_drives {
+        cmd.arg("-drive").arg(&format!(
+            "file={},if=none,id={},format=raw",
+            drive.file.display(),
+            drive.id
+        ));
+        cmd.arg("-device")
+            .arg(&format!("{},serial=deadbeef,drive={}", drive.typ, drive.id));
+    }
 
     // Hardware acceleration is messing with logs and gdb
     if qemu.debug_log.is_none() && qemu.gdb_port.is_none() {

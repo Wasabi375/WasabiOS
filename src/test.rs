@@ -1,8 +1,11 @@
 use crate::{
     args::TestArgs,
-    qemu::{execute_with_timeout, launch_qemu, HostArchitecture, Kernel, QemuConfig, QemuProcess},
+    qemu::{
+        HostArchitecture, Kernel, QemuConfig, QemuDrive, QemuProcess, execute_with_timeout,
+        launch_qemu,
+    },
 };
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use log::{debug, trace};
 use std::{
     fmt::{Debug, Display},
@@ -78,6 +81,15 @@ pub async fn test(kernel_path: &Path, mut args: TestArgs) -> Result<()> {
         ..QemuConfig::from_options(&args.qemu)
     };
     // TODO make qemu_log path unique each time we execute qemu during tests
+
+    qemu_config.add_drive(QemuDrive::nvme(
+        "test_nvme",
+        &Path::new("test_data/drive_images/test_nvme_data.txt"),
+    ))?;
+    qemu_config.add_drive(QemuDrive::nvme(
+        "test_byte_pattern",
+        &Path::new("test_data/drive_images/nvme_byte_pattern"),
+    ))?;
 
     let tcp_string = format!("tcp::{},server=on", args.tcp_port);
     qemu_config.add_serial(&tcp_string)?;
@@ -208,7 +220,9 @@ async fn run_combined_tests(
             },
             Err(QemuError::Exit(exit_status)) => {
                 if current_test + 1 == test_count {
-                    todo!("how do we get the test result, if qemu exited before we could read the result");
+                    todo!(
+                        "how do we get the test result, if qemu exited before we could read the result"
+                    );
                 } else {
                     // otherwise restart qemu
                     current_test += 1;
