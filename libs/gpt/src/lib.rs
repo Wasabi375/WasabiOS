@@ -13,6 +13,7 @@ extern crate alloc;
 
 use core::{
     error::Error,
+    fmt::Debug,
     hash::{Hash, Hasher},
     mem::MaybeUninit,
     num::NonZeroU64,
@@ -80,6 +81,9 @@ pub struct Header {
     pub disk_guid: [u8; 16],
 
     pub partition_entry_lba: u64,
+    /// The number of partitions that can be on the disk
+    ///
+    /// This is a capacity and not the number of defined partitions
     pub number_of_partitions: u32,
     pub size_of_partition_entry: u32,
 
@@ -172,12 +176,24 @@ impl PartitionEntry {
     }
 }
 
-#[derive(Debug)]
 pub struct GPT {
+    pub header: Header,
+    pub partitions: Box<[PartitionEntry]>,
     pub warn_invalid_mbr: Option<protective_mbr::InvalidMBRData>,
     pub warn_invalid_primary_header: Option<InvalidHeader>,
-    pub partitions: Box<[PartitionEntry]>,
-    pub header: Header,
+}
+
+impl Debug for GPT {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GPT")
+            .field("header", &self.header)
+            .field("warn_invalid_mbr", &self.warn_invalid_mbr)
+            .field(
+                "warn_invalid_primary_header",
+                &self.warn_invalid_primary_header,
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -244,7 +260,7 @@ pub fn read_gpt<B: BlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::Block
             GPTReadError::InvalidHeaders(primary_err.unwrap_or(err), err)
         })?;
         let mut array_data = alloc_buffer_aligned(
-            partition_array_block_count as usize, // FIXME times size of PartitionEntry?
+            partition_array_block_count as usize * B::BLOCK_SIZE,
             align_of::<PartitionEntry>(),
         )?;
         device.read_block_group(
@@ -263,7 +279,7 @@ pub fn read_gpt<B: BlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::Block
         for to_initialize in partitions.iter_mut() {
             let entry = unsafe {
                 assert!((offset as usize) < array_data.len());
-                assert!(offset as usize + size_of::<PartitionEntry>() < array_data.len());
+                assert!(offset as usize + size_of::<PartitionEntry>() <= array_data.len());
 
                 let data_ptr = array_data.as_ptr().byte_offset(offset);
                 // Safety:
@@ -297,7 +313,8 @@ pub fn read_gpt<B: BlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::Block
         Ok((header, partitions))
     }
 
-    let mut mbr_block = alloc_buffer_aligned(B::BLOCK_SIZE, align_of::<Header>())?;
+    let mut mbr_block = alloc_buffer_aligned(B::BLOCK_SIZE, align_of::<ProtectiveMBR>())?;
+
     device.read_block(LBA::ZERO, &mut mbr_block)?;
     let mbr: &ProtectiveMBR = unsafe {
         let mbr_ptr = mbr_block.as_ptr();

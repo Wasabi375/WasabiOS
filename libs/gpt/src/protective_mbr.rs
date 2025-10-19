@@ -8,7 +8,7 @@ use crate::chs::CHS;
 /// The entire protective MBR stored at `LBA(0)`
 ///
 /// See UEFI Spec Table 5.3
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Debug)]
 pub struct ProtectiveMBR {
     /// unused by UEFI
@@ -28,7 +28,7 @@ pub struct ProtectiveMBR {
 impl ProtectiveMBR {
     pub const SIGNATURE: [u8; 2] = [0x55, 0xAA];
     pub fn verify(&self, disk_size: u64) -> Result<(), InvalidMBRData> {
-        self.partition_record.verify_protective_mbr(disk_size)?;
+        self.partition_record().verify_protective_mbr(disk_size)?;
 
         if self.signature != Self::SIGNATURE {
             return Err(InvalidMBRData);
@@ -48,6 +48,10 @@ impl ProtectiveMBR {
             _empty_partition_records: [PartitionRecord::zero(); 3],
             signature: Self::SIGNATURE,
         }
+    }
+
+    pub fn partition_record(&self) -> PartitionRecord {
+        self.partition_record
     }
 }
 
