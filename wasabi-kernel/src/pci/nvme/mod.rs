@@ -6,6 +6,7 @@
 #![allow(missing_docs)] // TODO temp
 
 pub mod admin_commands;
+pub mod block_device;
 pub mod capabilities;
 mod generic_command;
 pub mod io_commands;
@@ -38,6 +39,7 @@ use crate::{
                 ControllerId, IOCommandSetVector, IOCommandSetVectorIterator,
                 IdentifyControllerData,
             },
+            block_device::NvmeBlockDevice,
             properties::ArbitrationMechanism,
         },
     },
@@ -1402,6 +1404,22 @@ pub fn experiment_nvme_device() {
             pages.size() as usize, // bytes as usize, // TODO temp
         );
     }
+    experiment_gpt(io_queue, nvme_controller.capabilities().clone());
+}
+
+fn experiment_gpt(io_queue: Strong<CommandQueue>, capabilities: ControllerCapabilities) {
+    let block_device = NvmeBlockDevice::<512>::new(
+        capabilities.namespace_size_in_blocks,
+        io_queue,
+        capabilities,
+    );
+    debug!("Starting gpt test");
+
+    let gpt = match gpt::read_gpt(&block_device) {
+        Ok(gpt) => gpt,
+        Err(e) => panic!("{e}"),
+    };
+    info!("gpt found: {gpt:#?}");
 }
 
 fn get_controller_properties_address(pci: &mut PCIAccess, nvme: Device, function: u8) -> PhysAddr {
@@ -1469,9 +1487,11 @@ impl Into<u64> for QueueBaseAddress {
 #[cfg(feature = "test")]
 mod test {
     use block_device::LBA;
+    use gpt::PartitionEntry;
+    use log::warn;
     use shared::{sync::lockcell::LockCell, todo_warn};
     use testing::{
-        KernelTestError, TestUnwrapExt, kernel_test, t_assert, t_assert_eq, t_assert_matches,
+        KernelTestError, TestUnwrapExt, kernel_test, t_assert, t_assert_eq, t_assert_matches, tfail,
     };
     use x86_64::structures::paging::{PageTableFlags, Size4KiB};
 
@@ -1484,8 +1504,10 @@ mod test {
         pci::{
             Class, PCI_ACCESS, StorageSubclass,
             nvme::{
-                NVMEController, io_commands,
-                prp::{Prp, PrpEntry},
+                NVMEController,
+                block_device::test::{TestDrive, create_test_device_with_size},
+                io_commands,
+                prp::Prp,
             },
         },
     };
@@ -1496,7 +1518,7 @@ mod test {
     /// # Safety
     ///
     /// must only be called once until result is dropped
-    unsafe fn create_test_controller() -> Result<NVMEController, KernelTestError> {
+    pub unsafe fn create_test_controller() -> Result<NVMEController, KernelTestError> {
         let mut pci = PCI_ACCESS.lock();
         let mut devices = pci.devices.iter().filter(|dev| {
             matches!(
@@ -1589,7 +1611,10 @@ mod test {
         let bytes = blocks_to_read * capabilities.lba_block_size;
 
         let page_count = pages_required_for!(Size4KiB, bytes);
-        assert_eq!(page_count, 1, "TODO multipage not implemented");
+        assert_eq!(
+            page_count, 1,
+            "TODO multipage not implemented for this test"
+        );
 
         let mut page_alloc = PageAllocator::get_for_kernel().lock();
         let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
@@ -1597,7 +1622,6 @@ mod test {
         let pages = page_alloc
             .allocate_pages::<Size4KiB>(page_count)
             .tunwrap()?;
-        // TODO I don't think I need consecutive frames. PRP lists should support separate frames
         let frames = frame_alloc.alloc_range(page_count).tunwrap()?;
 
         drop(page_alloc);
@@ -1620,7 +1644,7 @@ mod test {
         todo_warn!("Memory leak {page_count} pages and frames for nvme read test");
 
         let command = io_commands::create_read_command(
-            &Prp::Entry(PrpEntry::from(frames.start)),
+            &Prp::Entry(frames.start.into()),
             LBA::ZERO,
             blocks_to_read.try_into().unwrap(),
         );
@@ -1636,6 +1660,49 @@ mod test {
 
         t_assert_eq!(read_data, b"test");
 
+        Ok(())
+    }
+
+    #[kernel_test]
+    pub fn test_read_gpt() -> Result<(), KernelTestError> {
+        let (_controller, device) = unsafe {
+            // Safety: only called once in this test
+            create_test_device_with_size::<512>(TestDrive::Boot)?
+        };
+
+        let gpt = gpt::read_gpt(&device).tunwrap()?;
+
+        if gpt.warn_invalid_mbr.is_some() {
+            warn!("protected mbr on boot drive is invalid");
+        }
+
+        if let Some(invalid_header) = gpt.warn_invalid_primary_header {
+            tfail!("invalid primary gpt header: {invalid_header}");
+        }
+
+        let mut found_unused = false;
+        let mut used_count = 0;
+        let mut efi_found = false;
+        for index in 0..gpt.header.number_of_partitions {
+            let partition: &PartitionEntry = &gpt.partitions.as_ref()[index as usize];
+
+            if found_unused {
+                t_assert!(!partition.is_used());
+                continue;
+            }
+            if !partition.is_used() {
+                found_unused = true;
+                continue;
+            }
+            used_count += 1;
+
+            if partition.is_efi_partition() {
+                t_assert!(!efi_found, "Multiple efi partitions found");
+                efi_found = true;
+            }
+        }
+
+        t_assert!(used_count > 0);
         Ok(())
     }
 }
