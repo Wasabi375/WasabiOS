@@ -2,8 +2,8 @@
 
 use core::ptr::{addr_of, addr_of_mut};
 
-use log::{info, LevelFilter, Log};
-use logger::{dispatch::TargetLogger, LogSetup, RefLogger};
+use log::{LevelFilter, Log, info};
+use logger::{LogSetup, RefLogger, dispatch::TargetLogger};
 use uart_16550::SerialPort;
 
 use crate::{
@@ -31,8 +31,8 @@ pub type DispatchLogger<'a, const N: usize, const L: usize> =
 /// this should not be modified outside of panics and [init].
 /// Accessing the [DispatchLogger] via shared ref is therefor safe.
 #[inline]
-pub fn static_logger(
-) -> Option<&'static DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> {
+pub fn static_logger()
+-> Option<&'static DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> {
     unsafe { &*addr_of_mut!(LOGGER) }.as_ref()
 }
 static mut LOGGER: Option<DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> = None;
@@ -75,9 +75,12 @@ pub unsafe fn init() {
 
     let mut dispatch_logger = DispatchLogger::new()
         .with_level(LevelFilter::Info)
-     // comment to move ; to separate line - easy uncomment of module log levels
+        .with_module_level("wasabi_kernel::pci::nvme", LevelFilter::Debug)
+        .with_module_level("wasabi_kernel::pci::nvme::block_device", LevelFilter::Trace)
+        // comment to move ; to separate line - easy uncomment of module log levels
         ;
     #[cfg(not(feature = "test"))]
+    #[allow(dead_code)]
     {
         dispatch_logger = dispatch_logger
             // .with_module_level("wasabi_kernel", LevelFilter::Trace)

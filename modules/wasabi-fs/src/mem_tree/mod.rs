@@ -357,8 +357,6 @@ impl<I: InterruptState> MemTree<I> {
             return Ok(());
         }
 
-        log::warn!("split mem-tree node");
-
         let half_capacity = files.capacity() / 2;
         let mut right_node_files = files.drain(half_capacity..);
         let left_node_files = files;
