@@ -25,6 +25,7 @@ staticvec.workspace = true
 testing = { workspace = true, optional = true }
 
 block-device.workspace = true
+gpt.workspace = true
 
 bitflags.workspace = true
 bit_field.workspace = true

@@ -2028,6 +2028,7 @@ dependencies = [
  "crossbeam-epoch",
  "derive-where",
  "derive_builder",
+ "gpt 0.1.0",
  "hashbrown",
  "histogram",
  "interrupt-fn-builder",
