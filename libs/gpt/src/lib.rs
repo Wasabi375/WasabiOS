@@ -159,7 +159,7 @@ pub struct PartitionEntry {
     partition_guid: [u8; 16],
     starting_lba: u64,
     /// ending lba of partition (inclusive)
-    endina_lba: u64,
+    ending_lba: u64,
 
     attributes: u64,
 
@@ -167,12 +167,25 @@ pub struct PartitionEntry {
 }
 
 impl PartitionEntry {
+    pub const EFI_GUID: [u8; 16] = [
+        0xc1, 0x2a, 0x73, 0x28, 0xf8, 0x1f, 0x11, 0xd2, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9,
+        0x3b,
+    ];
+
     pub fn calculate_array_crc(entries: &[PartitionEntry]) -> u32 {
         let mut hasher = crc32fast::Hasher::new();
         for entry in entries {
             entry.hash(&mut hasher);
         }
         hasher.finalize()
+    }
+
+    pub fn is_used(&self) -> bool {
+        self.partition_type_guid != [0; 16]
+    }
+
+    pub fn is_efi_partition(&self) -> bool {
+        self.partition_type_guid == Self::EFI_GUID
     }
 }
 
