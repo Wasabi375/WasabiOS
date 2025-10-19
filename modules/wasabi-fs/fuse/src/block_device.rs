@@ -89,8 +89,8 @@ impl BlockDevice for FileDevice {
 
     const BLOCK_SIZE: usize = 4096;
 
-    fn max_block_count(&self) -> Result<u64, Self::BlockDeviceError> {
-        Ok(self.max_block_count)
+    fn size(&self) -> u64 {
+        self.max_block_count
     }
 
     fn read_block(

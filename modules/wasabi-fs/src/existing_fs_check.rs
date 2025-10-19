@@ -49,7 +49,7 @@ pub fn check_for_filesystem<D: BlockDevice>(
         let block = offset / BLOCK_SIZE as u64;
         let offset_in_block = *offset as usize % BLOCK_SIZE;
 
-        if block >= device.max_block_count()? {
+        if block >= device.size() {
             continue;
         }
 
@@ -73,7 +73,7 @@ pub fn check_for_wasabifs<D: BlockDevice>(
     const OFFSET: usize = offset_of!(MainHeader, magic);
     const VERSION_OFFSET: usize = offset_of!(MainHeader, version);
 
-    if BLOCK.get() >= device.max_block_count()? {
+    if BLOCK.get() >= device.size() {
         return Ok(FsFound::None);
     }
 

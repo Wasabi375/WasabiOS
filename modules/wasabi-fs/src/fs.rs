@@ -404,7 +404,7 @@ where
         access: AccessMode,
         mem_tree: MemTree<I>,
     ) -> Result<FileSystem<D, FsDuringCreation, I>, FsError> {
-        let max_block_count = device.max_block_count().map_err(map_device_error)?;
+        let max_block_count = device.size();
         if max_block_count < MIN_BLOCK_COUNT {
             return Err(FsError::BlockDeviceToSmall(
                 max_block_count,
@@ -562,7 +562,7 @@ where
         fs.max_usable_lba = fs.backup_header_lba - 1;
         fs.max_block_count = fs.backup_header_lba.get() + 1;
 
-        let block_device_max_block_count = fs.device.max_block_count().map_err(map_device_error)?;
+        let block_device_max_block_count = fs.device.size();
         if block_device_max_block_count < fs.max_block_count {
             return Err(FsError::BlockDeviceToSmall(
                 block_device_max_block_count,

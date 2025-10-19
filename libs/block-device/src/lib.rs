@@ -343,9 +343,13 @@ pub trait BlockDevice {
     /// The block size of the device
     const BLOCK_SIZE: usize;
 
-    /// Returns the number of blocks in the [BlockDevice]
-    fn max_block_count(&self) -> Result<u64, Self::BlockDeviceError>;
+    /// The size in blocks
+    fn size(&self) -> u64;
 
+    /// the address of the last valid block on the device
+    fn last_lba(&self) -> LBA {
+        LBA::new(self.size() - 1).expect("size - 1 can never be max")
+    }
     /// Read a block from the device into `buffer`
     ///
     /// `buffer` must have a length of exactly `Self::BLOCK_SIZE`
@@ -504,17 +508,6 @@ pub trait BlockDevice {
     }
 }
 
-/// A [BlockDevice] with a fixed size
-pub trait SizedBlockDevice: BlockDevice {
-    /// The size in blocks
-    fn size(&self) -> u64;
-
-    /// the address of the last valid block on the device
-    fn last_lba(&self) -> LBA {
-        LBA::new(self.size() - 1).expect("size - 1 can never be max")
-    }
-}
-
 #[cfg(any(feature = "test", test))]
 #[allow(missing_docs)]
 pub mod test {
@@ -544,8 +537,8 @@ pub mod test {
 
         const BLOCK_SIZE: usize = 4096;
 
-        fn max_block_count(&self) -> Result<u64, Self::BlockDeviceError> {
-            Ok(0)
+        fn size(&self) -> u64 {
+            0
         }
 
         fn read_block(

@@ -19,7 +19,7 @@ use core::{
 };
 
 use alloc::boxed::Box;
-use block_device::{LBA, ReadBlockDeviceError, SizedBlockDevice};
+use block_device::{BlockDevice, LBA, ReadBlockDeviceError};
 use protective_mbr::ProtectiveMBR;
 use shared::{
     alloc_ext::{AllocError, alloc_buffer_aligned},
@@ -191,8 +191,8 @@ impl<BDError: Error + Send + Sync + 'static> From<core::alloc::AllocError>
     }
 }
 
-pub fn read_gpt<B: SizedBlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::BlockDeviceError>> {
-    fn read<B: SizedBlockDevice>(
+pub fn read_gpt<B: BlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::BlockDeviceError>> {
+    fn read<B: BlockDevice>(
         device: &B,
         header_lba: LBA,
         primary_err: Option<InvalidHeader>,
