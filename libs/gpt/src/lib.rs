@@ -20,6 +20,7 @@ use core::{
 
 use alloc::boxed::Box;
 use block_device::{BlockDevice, LBA, ReadBlockDeviceError};
+use log::warn;
 use protective_mbr::ProtectiveMBR;
 use shared::{
     alloc_ext::{AllocError, alloc_buffer_aligned},
@@ -36,7 +37,7 @@ pub mod protective_mbr;
 pub enum InvalidHeader {
     #[error("The signature must match \"EFI PART\"")]
     InvalidSignature,
-    #[error("Expected header to have crc {0} but calculated {1}")]
+    #[error("Expected header to have crc {0:#x} but calculated {1:#x}")]
     InvalidHeaderCrc(u32, u32),
     #[error("Expected my_lba to be {1} but found {0}")]
     InvalidMyLBA(u64, u64),
@@ -46,7 +47,7 @@ pub enum InvalidHeader {
     InvalidPartitionEntrySize(u32),
     #[error("LBA {0} is invalid")]
     InvalidLBA(u64),
-    #[error("Expected entry array to have crc {0} but calculated {1}")]
+    #[error("Expected entry array to have crc {0:#x} but calculated {1:#x}")]
     InvalidEntryArrayCrc(u32, u32),
 }
 
@@ -73,6 +74,9 @@ pub struct Header {
     pub my_lba: u64,
     pub alternate_lba: u64,
 
+    pub first_usable_lba: u64,
+    pub last_usable_lba: u64,
+
     pub disk_guid: [u8; 16],
 
     pub partition_entry_lba: u64,
@@ -92,9 +96,12 @@ impl Header {
         hasher.write(&self.signature);
         hasher.write_u32(self.revision);
         hasher.write_u32(self.header_size);
+        hasher.write_u32(0); // the CRC must be written as 0
         hasher.write_u32(self.reserved);
         hasher.write_u64(self.my_lba);
         hasher.write_u64(self.alternate_lba);
+        hasher.write_u64(self.first_usable_lba);
+        hasher.write_u64(self.last_usable_lba);
         hasher.write(&self.disk_guid);
         hasher.write_u64(self.partition_entry_lba);
         hasher.write_u32(self.number_of_partitions);
@@ -165,6 +172,7 @@ impl PartitionEntry {
     }
 }
 
+#[derive(Debug)]
 pub struct GPT {
     pub warn_invalid_mbr: Option<protective_mbr::InvalidMBRData>,
     pub warn_invalid_primary_header: Option<InvalidHeader>,
@@ -236,7 +244,7 @@ pub fn read_gpt<B: BlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::Block
             GPTReadError::InvalidHeaders(primary_err.unwrap_or(err), err)
         })?;
         let mut array_data = alloc_buffer_aligned(
-            partition_array_block_count as usize,
+            partition_array_block_count as usize, // FIXME times size of PartitionEntry?
             align_of::<PartitionEntry>(),
         )?;
         device.read_block_group(
@@ -308,6 +316,7 @@ pub fn read_gpt<B: BlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::Block
             header,
         }),
         Err(GPTReadError::InvalidHeaders(warn_invalid_primary_header, _)) => {
+            warn!("invalid primary header. Checking backup header");
             let (backup_header, partitions) =
                 read(device, device.last_lba(), Some(warn_invalid_primary_header))?;
             Ok(GPT {
