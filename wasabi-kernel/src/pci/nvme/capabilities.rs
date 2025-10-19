@@ -21,9 +21,12 @@ pub struct ControllerCapabilities {
     pub optional_admin_commands: OptionalAdminCommands,
 
     pub lba_block_size: u64,
-    pub namespace_size_blocks: u64,
+    pub namespace_size_in_blocks: u64,
     pub namespace_capacity_blocks: u64,
     pub namespace_features: NamespaceFeatures,
+
+    pub atomic_write_unit_normal: u16,
+    pub atomic_write_unit_power_fail: u16,
 }
 
 bitflags! {

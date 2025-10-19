@@ -3,8 +3,8 @@ use shared_derive::U8Enum;
 use x86_64::structures::paging::PhysFrame;
 
 use crate::pci::nvme::{
-    generic_command::{PrpOrSgl, CDW0},
     CommonCommand,
+    generic_command::{CDW0, PrpOrSgl},
 };
 
 use super::CommandOpcode;
@@ -70,7 +70,7 @@ pub fn create_set_features_command(
     command.dword11 = dword11;
 
     if let Some(data_frame) = data_frame {
-        command.data_ptr.prp_entry_1 = data_frame.start_address();
+        command.data_ptr.prp_entry_1 = data_frame.into();
     }
 
     command

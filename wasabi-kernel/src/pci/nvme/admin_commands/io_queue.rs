@@ -1,12 +1,12 @@
 use bit_field::BitField;
 use bitflags::bitflags;
 use shared_derive::U8Enum;
-use x86_64::PhysAddr;
+use x86_64::structures::paging::PhysFrame;
 
 use crate::pci::nvme::{
-    admin_commands::CommandOpcode,
-    generic_command::{PrpOrSgl, CDW0},
     CommonCommand, QueueIdentifier,
+    admin_commands::CommandOpcode,
+    generic_command::{CDW0, PrpOrSgl},
 };
 
 #[allow(unused_imports)]
@@ -15,12 +15,11 @@ use log::trace;
 pub fn create_io_completion_queue(
     queue_ident: QueueIdentifier,
     queue_size: u16,
-    phys_start: PhysAddr,
+    queue_frame: PhysFrame,
 ) -> CommonCommand {
     trace!(
         "create io completion queue command, ident: {:?}, size: {}",
-        queue_ident,
-        queue_size
+        queue_ident, queue_size
     );
 
     let mut dword0 = CDW0::zero();
@@ -31,7 +30,7 @@ pub fn create_io_completion_queue(
 
     command.dword0 = dword0;
 
-    command.data_ptr.prp_entry_1 = phys_start;
+    command.data_ptr.prp_entry_1 = queue_frame.into();
 
     let mut dword10: u32 = 0;
     dword10.set_bits(0..=15, queue_ident.as_u16() as u32);
@@ -55,12 +54,11 @@ pub fn create_io_completion_queue(
 pub fn create_io_submission_queue(
     queue_ident: QueueIdentifier,
     queue_size: u16,
-    phys_start: PhysAddr,
+    queue_frame: PhysFrame,
 ) -> CommonCommand {
     trace!(
         "create io submission queue command, ident: {:?}, size: {}",
-        queue_ident,
-        queue_size
+        queue_ident, queue_size
     );
 
     let mut dword0 = CDW0::zero();
@@ -71,7 +69,7 @@ pub fn create_io_submission_queue(
 
     command.dword0 = dword0;
 
-    command.data_ptr.prp_entry_1 = phys_start;
+    command.data_ptr.prp_entry_1 = queue_frame.into();
 
     let mut dword10: u32 = 0;
     dword10.set_bits(0..=15, queue_ident.as_u16() as u32);

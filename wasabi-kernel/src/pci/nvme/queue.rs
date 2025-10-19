@@ -9,20 +9,17 @@ use alloc::{collections::VecDeque, vec::Vec};
 use derive_where::derive_where;
 use shared::{math::WrappingValue, sync::lockcell::LockCell};
 use thiserror::Error;
-use volatile::{access::WriteOnly, Volatile};
-use x86_64::{
-    structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
-    PhysAddr,
-};
+use volatile::{Volatile, access::WriteOnly};
+use x86_64::structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB};
 
 use crate::mem::{
-    frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
-    ptr::UntypedPtr, MemError,
+    MemError, frame_allocator::FrameAllocator, page_allocator::PageAllocator,
+    page_table::PageTable, ptr::UntypedPtr,
 };
 
 use super::{
-    CommandIdentifier, CommonCommand, CommonCompletionEntry, NVMEControllerError,
-    COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE,
+    COMPLETION_COMMAND_ENTRY_SIZE, CommandIdentifier, CommonCommand, CommonCompletionEntry,
+    NVMEControllerError, SUBMISSION_COMMAND_ENTRY_SIZE,
 };
 
 #[allow(unused_imports)]
@@ -64,15 +61,18 @@ impl Add<u16> for QueueIdentifier {
 /// [NVMEController::allocate_io_queues].
 /// The [NVMEController] must ensure that the queue on the nvme device is disabled
 /// before this is dropped.
+/// This is automatically done by the [NVMEController] assuming that no [Strong] references
+/// to the queue exist.
 ///
 /// [NVMEController]: super::NVMEController
 /// [NVMEController::allocate_io_queues]: super::NVMEController::allocate_io_queues
+/// [Strong]: shared::alloc_ext::single_arc::Strong
 #[derive_where(Debug)]
 pub struct CommandQueue {
     id: QueueIdentifier,
 
     pub(super) submission_queue_size: u16,
-    pub(super) submission_queue_paddr: PhysAddr,
+    pub(super) submission_queue_frame: PhysFrame,
     pub(super) submission_queue_ptr: UntypedPtr,
 
     /// dorbell that is written to to inform the controller that
@@ -103,7 +103,7 @@ pub struct CommandQueue {
     submission_queue_tail_local: WrappingValue<u16>,
 
     pub(super) completion_queue_size: u16,
-    pub(super) completion_queue_paddr: PhysAddr,
+    pub(super) completion_queue_frame: PhysFrame,
     pub(super) completion_queue_ptr: UntypedPtr,
 
     /// dorbell that is written to to inform the controller that
@@ -141,6 +141,9 @@ pub struct CommandQueue {
     /// TODO the value of 0xffff should never be used
     next_command_identifier: u16,
 }
+
+unsafe impl Send for CommandQueue {}
+unsafe impl Sync for CommandQueue {}
 
 impl CommandQueue {
     /// calculates the submission and completion doorbells for a [CommandQueue]
@@ -236,12 +239,10 @@ impl CommandQueue {
             return Err(NVMEControllerError::InvalidQueueSize(completion_queue_size));
         }
 
-        let sub_frame = frame_allocator.alloc()?;
+        let submission_queue_frame = frame_allocator.alloc()?;
         let sub_page = page_allocator.allocate_page_4k()?;
-        let submission_queue_paddr = sub_frame.start_address();
-        let comp_frame = frame_allocator.alloc()?;
+        let completion_queue_frame = frame_allocator.alloc()?;
         let comp_page = page_allocator.allocate_page_4k()?;
-        let completion_queue_paddr = comp_frame.start_address();
 
         let queue_pt_flags = PageTableFlags::PRESENT
             | PageTableFlags::WRITABLE
@@ -254,12 +255,22 @@ impl CommandQueue {
         unsafe {
             // Safety: we just allocated page and frame
             page_table
-                .map_kernel(sub_page, sub_frame, queue_pt_flags, frame_allocator)
+                .map_kernel(
+                    sub_page,
+                    submission_queue_frame,
+                    queue_pt_flags,
+                    frame_allocator,
+                )
                 .map_err(MemError::from)?
                 .flush();
             // Safety: we just allocated page and frame
             page_table
-                .map_kernel(comp_page, comp_frame, queue_pt_flags, frame_allocator)
+                .map_kernel(
+                    comp_page,
+                    completion_queue_frame,
+                    queue_pt_flags,
+                    frame_allocator,
+                )
                 .map_err(MemError::from)?
                 .flush();
 
@@ -278,10 +289,10 @@ impl CommandQueue {
         Ok(Self {
             id: queue_id,
             submission_queue_size,
-            submission_queue_paddr,
+            submission_queue_frame,
             submission_queue_ptr,
             completion_queue_size,
-            completion_queue_paddr,
+            completion_queue_frame,
             completion_queue_ptr,
             submission_queue_tail_doorbell: sub_tail_doorbell,
             submission_queue_tail: 0,
@@ -597,6 +608,7 @@ impl CommandQueue {
         }
     }
 
+    // TODO do I want submit/wait_for _all? They allocate unnecessary Vecs
     #[inline]
     pub fn submit_all<I: IntoIterator<Item = CommonCommand>>(
         &mut self,
@@ -639,16 +651,12 @@ impl Drop for CommandQueue {
         assert!(sub_memory_size <= Size4KiB::SIZE);
         let sub_page = Page::<Size4KiB>::from_start_address(self.submission_queue_ptr.into())
             .expect("submission_queue_vaddr should be a page start");
-        let sub_frame = PhysFrame::<Size4KiB>::from_start_address(self.submission_queue_paddr)
-            .expect("submission_queue_paddr should be a frame start");
 
         let comp_memory_size =
             self.completion_queue_size as u64 * COMPLETION_COMMAND_ENTRY_SIZE as u64;
         assert!(comp_memory_size <= Size4KiB::SIZE);
         let comp_page = Page::<Size4KiB>::from_start_address(self.completion_queue_ptr.into())
             .expect("completion_queue_vaddr should be a page start");
-        let comp_frame = PhysFrame::<Size4KiB>::from_start_address(self.completion_queue_paddr)
-            .expect("completion_queue_paddr should be a frame start");
 
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();
         let mut page_allocator = PageAllocator::get_for_kernel().lock();
@@ -671,8 +679,8 @@ impl Drop for CommandQueue {
             //
             // The queue won't write to the comp_frame, because of the safety guarantees of
             // [Self::allocate].
-            frame_allocator.free(sub_frame);
-            frame_allocator.free(comp_frame);
+            frame_allocator.free(self.submission_queue_frame);
+            frame_allocator.free(self.completion_queue_frame);
 
             // Safety: pages are no longer used, because we hold the only references
             // directly into the queue

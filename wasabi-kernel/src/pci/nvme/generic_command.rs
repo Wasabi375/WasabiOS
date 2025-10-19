@@ -7,9 +7,8 @@ use bit_field::BitField;
 use shared_derive::U8Enum;
 use static_assertions::const_assert_eq;
 use thiserror::Error;
-use x86_64::PhysAddr;
 
-use super::queue::QueueIdentifier;
+use super::{prp::PrpEntry, queue::QueueIdentifier};
 
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
@@ -125,17 +124,17 @@ pub enum PrpOrSgl {
 }
 
 #[repr(packed)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DataPtr {
-    pub(super) prp_entry_1: PhysAddr,
-    pub(super) prp_entry_2: PhysAddr,
+    pub(super) prp_entry_1: PrpEntry,
+    pub(super) prp_entry_2: PrpEntry,
 }
 
 impl Default for DataPtr {
     fn default() -> Self {
         DataPtr {
-            prp_entry_1: PhysAddr::zero(),
-            prp_entry_2: PhysAddr::zero(),
+            prp_entry_1: PrpEntry::zero(),
+            prp_entry_2: PrpEntry::zero(),
         }
     }
 }

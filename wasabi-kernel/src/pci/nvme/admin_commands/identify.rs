@@ -4,13 +4,13 @@ use bit_field::BitField;
 use bitflags::bitflags;
 use shared_derive::U8Enum;
 use x86_64::{
-    structures::paging::{Page, PhysFrame, Size4KiB},
     VirtAddr,
+    structures::paging::{Page, PhysFrame, Size4KiB},
 };
 
 use crate::pci::nvme::{
-    generic_command::{PrpOrSgl, CDW0},
     CommonCommand,
+    generic_command::{CDW0, PrpOrSgl},
 };
 
 use super::CommandOpcode;
@@ -76,7 +76,7 @@ pub fn create_identify_command(cns: ControllerOrNamespace, data_frame: PhysFrame
     }
     command.dword10 = dword10;
 
-    command.data_ptr.prp_entry_1 = data_frame.start_address();
+    command.data_ptr.prp_entry_1 = data_frame.into();
     command
 }
 
@@ -129,6 +129,10 @@ pub struct IdentifyControllerData {
     pub unimplemented1: [u8; 264],
 
     pub fuses: u16,
+    pub format_nvm_attr: u8,
+    pub volatile_write_cache: u8,
+    pub atomic_write_unit_normal: u16,
+    pub atomic_write_unit_power_fail: u16,
 }
 
 bitflags! {

@@ -10,6 +10,7 @@ pub mod capabilities;
 mod generic_command;
 pub mod io_commands;
 pub mod properties;
+pub mod prp;
 pub mod queue;
 
 use ::block_device::LBA;
@@ -17,6 +18,7 @@ pub use generic_command::{
     CommandIdentifier, CommandStatusCode, CommonCommand, CommonCompletionEntry,
     GenericCommandStatus,
 };
+use prp::Prp;
 
 use super::{Class, PCIAccess, StorageSubclass};
 use crate::{
@@ -39,7 +41,6 @@ use crate::{
             properties::ArbitrationMechanism,
         },
     },
-    utils::log_hex_dump,
 };
 use admin_commands::{CompletionQueueCreationStatus, IdentifyNamespaceData};
 use generic_command::{COMPLETION_COMMAND_ENTRY_SIZE, SUBMISSION_COMMAND_ENTRY_SIZE};
@@ -313,11 +314,11 @@ impl NVMEController {
             this.write_aqa(aqa);
 
             let mut asq = this.read_asq();
-            asq.paddr = this.admin_queue.submission_queue_paddr;
+            asq.paddr = this.admin_queue.submission_queue_frame.start_address();
             this.write_asq(asq);
 
             let mut acq = this.read_acq();
-            acq.paddr = this.admin_queue.completion_queue_paddr;
+            acq.paddr = this.admin_queue.completion_queue_frame.start_address();
             this.write_acq(acq);
         }
 
@@ -406,6 +407,9 @@ impl NVMEController {
             this.capabilities.optional_admin_commands = OptionalAdminCommands::from_bits_truncate(
                 identify_data.optional_admin_command_support,
             );
+            this.capabilities.atomic_write_unit_normal = identify_data.atomic_write_unit_normal;
+            this.capabilities.atomic_write_unit_power_fail =
+                identify_data.atomic_write_unit_power_fail;
 
             let (frame, _pt_flags, flush) = page_table.unmap(page).map_err(MemError::from)?;
             flush.flush();
@@ -655,12 +659,25 @@ impl NVMEController {
             };
 
             this.capabilities.lba_block_size = identify_data.active_lba_format().lba_data_size();
-            this.capabilities.namespace_size_blocks = identify_data.namespace_size;
+            this.capabilities.namespace_size_in_blocks = identify_data.namespace_size;
             this.capabilities.namespace_capacity_blocks = identify_data.namespace_capacity;
             this.capabilities.namespace_features = identify_data.features;
 
+            debug!("lba format count: {}", identify_data.lba_formats().len());
+            for format in identify_data.lba_formats() {
+                debug!(
+                    "Format:\nblock size: {}\nmeta size: {}\nPerf: {:?}",
+                    format.lba_data_size(),
+                    format.metadata_size,
+                    format.relative_perf()
+                );
+            }
+            // I don't want to deal with different lba formats right now. Especially dealling
+            // with metadata seems like something anoying. The qemu default seems to be a 512 bytes
+            // block size without metadata which seems to match what is in my machine
+
             if identify_data.active_lba_format().metadata_size != 0 {
-                warn!(
+                error!(
                     "Metadata size is not 0: {}",
                     identify_data.active_lba_format().metadata_size
                 );
@@ -1037,7 +1054,7 @@ impl NVMEController {
             admin_commands::create_io_completion_queue(
                 queue.id(),
                 queue.completion_queue_size,
-                queue.completion_queue_paddr,
+                queue.completion_queue_frame,
             )
         });
         let idents = match self.admin_queue.submit_all(create_comp_queue_commands) {
@@ -1097,7 +1114,7 @@ impl NVMEController {
             admin_commands::create_io_submission_queue(
                 queue.id(),
                 queue.submission_queue_size,
-                queue.submission_queue_paddr,
+                queue.submission_queue_frame,
             )
         });
         let idents = match self.admin_queue.submit_all(create_sub_queue_commands) {
@@ -1321,12 +1338,9 @@ pub fn experiment_nvme_device() {
 
     let capabilities = nvme_controller.capabilities();
 
-    let blocks_to_read = min(4, capabilities.namespace_size_blocks);
-
+    let blocks_to_read = 4;
     let bytes = blocks_to_read * capabilities.lba_block_size;
-
     let page_count = pages_required_for!(Size4KiB, bytes);
-    assert_eq!(page_count, 1, "TODO multipage not implemented");
 
     let pages;
     let frames;
@@ -1341,19 +1355,34 @@ pub fn experiment_nvme_device() {
         let mut page_table = PageTable::get_for_kernel().lock();
         for (page, frame) in pages.iter().zip(frames) {
             unsafe {
-                let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
+                let flags =
+                    PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
                 page_table
                     .map_kernel(page, frame, flags, frame_alloc.as_mut())
                     .unwrap()
                     .flush();
             }
         }
+        warn!(
+            "page_count: {}, size: {}, start_addr: {:p}",
+            page_count,
+            pages.size(),
+            pages.start_addr()
+        );
+        unsafe {
+            core::ptr::write_bytes(
+                pages.start_addr().as_mut_ptr::<u8>(),
+                0xff,
+                pages.size() as usize,
+            );
+            core::sync::atomic::fence(Ordering::SeqCst);
+        }
     }
 
     todo_warn!("Memory leak {page_count} pages for nvme read experiment");
 
     let command = io_commands::create_read_command(
-        frames.start,
+        &Prp::Entry(frames.start.into()),
         LBA::ZERO,
         blocks_to_read.try_into().unwrap(),
     );
@@ -1365,12 +1394,12 @@ pub fn experiment_nvme_device() {
     io_result.status().assert_success();
 
     unsafe {
-        log_hex_dump(
+        crate::utils::log_hex_dump(
             "NVME read first few blocks",
             log::Level::Info,
             module_path!(),
             UntypedPtr::new(pages.start_addr()).unwrap(),
-            bytes as usize,
+            pages.size() as usize, // bytes as usize, // TODO temp
         );
     }
 }
@@ -1452,10 +1481,14 @@ mod test {
             page_table::PageTable,
         },
         pages_required_for,
-        pci::{Class, PCI_ACCESS, StorageSubclass, nvme::io_commands},
+        pci::{
+            Class, PCI_ACCESS, StorageSubclass,
+            nvme::{
+                NVMEController, io_commands,
+                prp::{Prp, PrpEntry},
+            },
+        },
     };
-
-    use super::NVMEController;
 
     /// NOTE: device 0 is the boot device and should not be used
     /// for tests if possible.
@@ -1488,7 +1521,8 @@ mod test {
                 Class::Storage(StorageSubclass::NonVolatileMemory)
             )
         });
-        t_assert_matches!(devices.next(), Some(_),);
+        t_assert_matches!(devices.next(), Some(_));
+        t_assert_matches!(devices.next(), Some(_));
         t_assert_matches!(devices.next(), Some(_));
         t_assert_matches!(devices.next(), None);
         Ok(())
@@ -1586,7 +1620,7 @@ mod test {
         todo_warn!("Memory leak {page_count} pages and frames for nvme read test");
 
         let command = io_commands::create_read_command(
-            frames.start,
+            &Prp::Entry(PrpEntry::from(frames.start)),
             LBA::ZERO,
             blocks_to_read.try_into().unwrap(),
         );
