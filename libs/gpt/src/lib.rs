@@ -239,7 +239,7 @@ pub fn read_gpt<B: SizedBlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::
             partition_array_block_count as usize,
             align_of::<PartitionEntry>(),
         )?;
-        let size = device.read_block_group(
+        device.read_block_group(
             block_device::BlockGroup::with_count(
                 array_start,
                 NonZeroU64::new(partition_array_block_count)
@@ -247,7 +247,6 @@ pub fn read_gpt<B: SizedBlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::
             ),
             &mut array_data,
         )?;
-        assert_eq!(size, partition_array_block_count as usize * B::BLOCK_SIZE);
 
         let mut partitions: Box<[MaybeUninit<PartitionEntry>]> =
             Box::try_new_uninit_slice(header.number_of_partitions as usize)?;
