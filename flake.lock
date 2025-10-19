@@ -2,12 +2,12 @@
   "nodes": {
     "nixpkgs": {
       "locked": {
-        "lastModified": 1747676747,
-        "narHash": "sha256-LXkWBVqilgx7Pohwqu/ABxDVw+Cmi5/Mj2S2mpUH0Fw=",
-        "rev": "72841a4a8761d1aed92ef6169a636872c986c76d",
-        "revCount": 718112,
+        "lastModified": 1762756533,
+        "narHash": "sha256-HiRDeUOD1VLklHeOmaKDzf+8Hb7vSWPVFcWwaTrpm+U=",
+        "rev": "c2448301fb856e351aab33e64c33a3fc8bcf637d",
+        "revCount": 812676,
         "type": "tarball",
-        "url": "https://api.flakehub.com/f/pinned/NixOS/nixpkgs/0.2411.718112%2Brev-72841a4a8761d1aed92ef6169a636872c986c76d/0196eed4-afc5-7adf-84bd-d3331f09ffe7/source.tar.gz"
+        "url": "https://api.flakehub.com/f/pinned/NixOS/nixpkgs/0.2505.812676%2Brev-c2448301fb856e351aab33e64c33a3fc8bcf637d/019a6eda-4e11-77e5-814d-f04a26ed5acb/source.tar.gz"
       },
       "original": {
         "type": "tarball",
@@ -27,11 +27,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1747795013,
-        "narHash": "sha256-c7i0xJ+xFhgjO9SWHYu5dF/7lq63RPDvwKAdjc6VCE4=",
+        "lastModified": 1762915112,
+        "narHash": "sha256-d9j1g8nKmYDHy+/bIOPQTh9IwjRliqaTM0QLHMV92Ic=",
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "6b1cf12374361859242a562e1933a7930649131a",
+        "rev": "aa1e85921cfa04de7b6914982a94621fbec5cc02",
         "type": "github"
       },
       "original": {

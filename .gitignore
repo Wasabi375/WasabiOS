@@ -12,5 +12,5 @@ latest/
 wasabi-fs/fuse/test_fs.img
 *.wfs
 
-test_nvme_data.txt
-
+test_data/*
+!test_data/gen_test_data.py

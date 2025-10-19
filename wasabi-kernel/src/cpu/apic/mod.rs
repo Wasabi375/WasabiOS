@@ -6,8 +6,8 @@ use crate::{
     cpu::{cpuid::cpuid, interrupts::register_interrupt_handler},
     locals,
     mem::{
-        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
-        ptr::UntypedPtr, MemError,
+        MemError, frame_allocator::FrameAllocator, page_allocator::PageAllocator,
+        page_table::PageTable, ptr::UntypedPtr,
     },
     prelude::TicketLock,
 };
@@ -15,21 +15,21 @@ use bit_field::BitField;
 use shared::{sync::lockcell::LockCell, todo_warn};
 use thiserror::Error;
 use volatile::{
-    access::{ReadOnly, ReadWrite},
     Volatile,
+    access::{ReadOnly, ReadWrite},
 };
 use x86_64::{
+    PhysAddr,
     instructions::port::Port,
     registers::model_specific::Msr,
     structures::{
         idt::InterruptStackFrame,
         paging::{PageTableFlags, PhysFrame, Size4KiB},
     },
-    PhysAddr,
 };
 
 use self::{
-    ipi::{Ipi, IPI_STATUS_BIT},
+    ipi::{IPI_STATUS_BIT, Ipi},
     timer::{Timer, TimerData},
 };
 
@@ -240,7 +240,7 @@ impl Apic {
     }
 
     /// get access to the apic timer
-    pub fn timer(&mut self) -> Timer {
+    pub fn timer(&mut self) -> Timer<'_> {
         Timer { apic: self }
     }
 

@@ -1270,7 +1270,7 @@ where
     /// }
     /// ```
     #[inline(always)]
-    pub fn iter(&self) -> StaticVecIterConst<T, N> {
+    pub fn iter(&self) -> StaticVecIterConst<'_, T, N> {
         let start_ptr = self.as_ptr();
         unsafe {
             // `start_ptr` will never be null, so this is a safe assumption to give the optimizer.
@@ -1299,7 +1299,7 @@ where
     /// assert_eq!(v, [3, 2, 1, 0]);
     /// ```
     #[inline(always)]
-    pub fn iter_mut(&mut self) -> StaticVecIterMut<T, N> {
+    pub fn iter_mut(&mut self) -> StaticVecIterMut<'_, T, N> {
         let start_ptr = self.as_mut_ptr();
         unsafe {
             // `start_ptr` will never be null, so this is a safe assumption to give the optimizer.
@@ -1944,7 +1944,7 @@ where
     /// assert_eq!(v2, [6, 5, 4]);
     /// ```
     #[inline]
-    pub fn drain_iter<R: RangeBounds<usize>>(&mut self, range: R) -> StaticVecDrain<T, N, L> {
+    pub fn drain_iter<R: RangeBounds<usize>>(&mut self, range: R) -> StaticVecDrain<'_, T, N, L> {
         // Borrowed this part from normal Vec's implementation.
         let length = self.length;
         let start = match range.start_bound() {

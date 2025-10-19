@@ -6,7 +6,7 @@
 //! This is based on UEFI Specifiaction Version 2.10(released Auguast 2022),
 //! although I assume that any 2.x version works
 #![allow(incomplete_features)]
-#![feature(generic_const_exprs, allocator_api, slice_as_array)]
+#![feature(generic_const_exprs, allocator_api)]
 #![no_std]
 
 extern crate alloc;

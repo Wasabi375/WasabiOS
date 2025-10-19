@@ -54,7 +54,7 @@ impl<'a> TargetLogger<'a> {
         }
     }
 
-    pub fn new_primary_boxed(name: &'a str, logger: Box<(dyn TryLog + Sync)>) -> Self {
+    pub fn new_primary_boxed(name: &'a str, logger: Box<dyn TryLog + Sync>) -> Self {
         let logger = RefOrBox::Boxed(logger);
         Self {
             name,
@@ -65,7 +65,7 @@ impl<'a> TargetLogger<'a> {
         }
     }
 
-    pub fn new_secondary_boxed(name: &'a str, logger: Box<(dyn TryLog + Sync)>) -> Self {
+    pub fn new_secondary_boxed(name: &'a str, logger: Box<dyn TryLog + Sync>) -> Self {
         let logger = RefOrBox::Boxed(logger);
         Self {
             name,

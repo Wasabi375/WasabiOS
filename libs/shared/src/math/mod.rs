@@ -34,8 +34,7 @@ pub trait Number:
 }
 
 /// A helper trait to generate constants for [Number]s.
-#[const_trait]
-pub trait NumberConstants {
+pub const trait NumberConstants {
     /// Creates a [Number] of `value`.
     ///
     /// This can be used instead of literals

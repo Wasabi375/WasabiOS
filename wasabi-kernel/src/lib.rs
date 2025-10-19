@@ -10,16 +10,12 @@
     box_into_inner,
     debug_closure_helpers,
     extern_types,
-    let_chains,
-    maybe_uninit_slice,
     maybe_uninit_array_assume_init,
+    maybe_uninit_slice,
     never_type,
     pointer_is_aligned_to,
     ptr_alignment_type,
-    result_flattening,
-    stmt_expr_attributes,
-    strict_overflow_ops,
-    new_zeroed_alloc
+    stmt_expr_attributes
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![allow(rustdoc::private_intra_doc_links)]
