@@ -7,12 +7,14 @@ use shared::sync::lockcell::LockCell;
 use x86_64::structures::paging::mapper::MapToError;
 use x86_64::structures::paging::{PageTableFlags, PhysFrame, RecursivePageTable};
 use x86_64::{
-    structures::paging::{mapper::UnmappedFrame, Mapper, Page, PageSize, Size4KiB},
     VirtAddr,
+    structures::paging::{Mapper, Page, PageSize, Size4KiB, mapper::UnmappedFrame},
 };
 
+use crate::pages_required_for;
+
 use super::page_table::{PageTable, PageTableMapError};
-use super::{frame_allocator::FrameAllocator, page_table::PageTableKernelFlags, MemError};
+use super::{MemError, frame_allocator::FrameAllocator, page_table::PageTableKernelFlags};
 
 /// a number of consecutive pages in virtual memory.
 ///
@@ -49,6 +51,34 @@ impl<S: PageSize> Pages<S> {
             count: self.count,
             index: 0,
         }
+    }
+
+    /// Gets the pages that contain a reference as well as the offset into the page
+    /// at which that reference begins
+    pub fn from_ref<T: ?Sized>(value: impl AsRef<T>) -> (Self, u64) {
+        let as_ref = value.as_ref();
+        let start_ptr = VirtAddr::from_ptr(as_ref);
+        let length = size_of_val(as_ref) as u64;
+
+        let aligned_page_count = pages_required_for!(S, length);
+
+        let start_page = Page::containing_address(start_ptr);
+
+        let offset = start_ptr - start_page.start_address();
+
+        let page_count = if offset == 0 {
+            aligned_page_count
+        } else {
+            aligned_page_count + 1
+        };
+
+        (
+            Self {
+                first_page: start_page,
+                count: page_count,
+            },
+            offset,
+        )
     }
 }
 
@@ -184,35 +214,32 @@ impl<S: PageSize> DerefMut for GuardedPages<S> {
 pub struct PagesIter<S: PageSize> {
     first_page: Page<S>,
     count: u64,
-    // TODO this is technically a bug because count might not fit into a i64
-    index: i64,
+    index: u64,
 }
 
 impl<S: PageSize> Iterator for PagesIter<S> {
     type Item = Page<S>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.count as i64 {
+        if self.index >= self.count {
             None
         } else {
-            let res = Some(self.first_page + self.index as u64);
+            let res = self.first_page + self.index as u64;
             self.index += 1;
-            res
+            Some(res)
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = self.count - self.index;
+        let size: usize = size
+            .try_into()
+            .expect("size should always fit within usize");
+        (size, Some(size))
     }
 }
 
-impl<S: PageSize> DoubleEndedIterator for PagesIter<S> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if self.index < 0 {
-            None
-        } else {
-            let res = Some(self.first_page + self.index as u64);
-            self.index -= 1;
-            res
-        }
-    }
-}
+impl<S: PageSize> ExactSizeIterator for PagesIter<S> {}
 
 impl<S: PageSize> PartialOrd for PagesIter<S> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
@@ -229,15 +256,47 @@ impl<S: PageSize> PartialOrd for PagesIter<S> {
 mod test {
     use shared::sync::lockcell::LockCell;
     use testing::{
-        kernel_test, t_assert, t_assert_eq, t_assert_matches, tfail, DebugErrResultExt,
-        KernelTestError, TestUnwrapExt,
+        DebugErrResultExt, KernelTestError, TestUnwrapExt, kernel_test, t_assert, t_assert_eq,
+        t_assert_matches, tfail,
     };
-    use x86_64::structures::paging::{
-        mapper::{MappedFrame, TranslateResult},
-        PageSize, PageTableFlags, Size4KiB, Translate,
+    use x86_64::{
+        VirtAddr,
+        structures::paging::{
+            Page, PageSize, PageTableFlags, Size4KiB, Translate,
+            mapper::{MappedFrame, TranslateResult},
+        },
     };
 
     use crate::mem::{page_allocator::PageAllocator, page_table::PageTable, ptr::UntypedPtr};
+
+    use super::Pages;
+
+    #[kernel_test]
+    fn page_iter_size_hint() -> Result<(), KernelTestError> {
+        let pages = Pages::<Size4KiB> {
+            first_page: Page::containing_address(VirtAddr::zero()),
+            count: 20,
+        };
+
+        let mut iter = pages.iter();
+
+        let mut len = 20;
+
+        loop {
+            t_assert_eq!(len, iter.len());
+            t_assert_eq!((len, Some(len)), iter.size_hint());
+
+            if iter.next().is_none() {
+                t_assert_eq!(0, iter.len());
+                t_assert_eq!((0, Some(0)), iter.size_hint());
+
+                break;
+            }
+
+            len -= 1;
+        }
+        Ok(())
+    }
 
     #[kernel_test]
     fn alloc_guarded_page() -> Result<(), KernelTestError> {
