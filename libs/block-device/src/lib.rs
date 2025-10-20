@@ -85,16 +85,23 @@ macro_rules! block_size_types {
                 self.data
             }
 
-            /// Creates a ptr to a slice covering the entire block.
+            /// Returns a u8 slice that covers the entire block.
             ///
-            /// The size of the slice is greater or equal than the size of `T`
-            /// and will always cover exactly 1 or multiple blocks.
+            /// This will include the value at offset 0 followed by
+            /// some padding.
+            /// The bytes stored in the padding are undefined, however
+            /// the [Self::new] will create a block with the padding set to `0x0`.
             #[allow(unused)]
-            pub fn block_data(&self) -> core::ptr::NonNull<$slice> {
+            pub fn block_data(&self) -> &[u8] {
                 assert!(core::mem::size_of::<Self>() == $size);
 
-                // TODO using this pointer to read or write past $size is invalid
-                core::ptr::NonNull::from(self).cast()
+                let ptr = self as *const _ as *const u8;
+
+                unsafe {
+                    // Safety:
+                    // self owns exactly $size bytes of data
+                    core::slice::from_raw_parts(ptr, $size)
+                }
             }
         }
 
