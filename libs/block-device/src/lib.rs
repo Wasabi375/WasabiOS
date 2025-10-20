@@ -282,6 +282,8 @@ pub enum WriteBlockDeviceError<BDError: Error + Send + Sync + 'static> {
     BlockDevice(#[from] BDError),
     #[error("expected to write {expected} bytes but only got {size}")]
     NotEnoughData { expected: usize, size: usize },
+    #[error("Failed to allocate memory(RAM)")]
+    Allocation,
 }
 
 #[derive(thiserror::Error, Debug)]

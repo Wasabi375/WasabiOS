@@ -7,6 +7,7 @@ edition.workspace = true
 wfs.workspace = true
 shared.workspace = true
 host-shared.workspace = true
+block-device.workspace = true
 
 fuser = { version = "0.15.0", git = "https://github.com/Wasabi375/fuser.git" }
 libc = "0.2.161"

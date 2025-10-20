@@ -5,6 +5,7 @@ use wfs::{fs::FsError, mem_tree::MemTreeError};
 // NOTE ENOSPC: no space on device
 //  ENOMEM: no memory left on RAM
 pub fn fs_error_no(err: FsError) -> c_int {
+    log::warn!("{err} converted to errno!");
     match err {
         FsError::BlockDevice(_) => EIO,
         FsError::BlockDeviceToSmall(_, _) => EINVAL,
@@ -28,5 +29,6 @@ pub fn fs_error_no(err: FsError) -> c_int {
         FsError::FileTypeMismatch { .. } => EINVAL,
         FsError::ReadZeroBytes => EINVAL,
         FsError::MalformedFs(_) => EIO,
+        FsError::OomOnError => ENOMEM,
     }
 }
