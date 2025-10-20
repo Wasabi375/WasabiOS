@@ -62,7 +62,7 @@ macro_rules! block_size_types {
         {
             /// The data stored within the block
             pub data: T,
-            _pad: [u8; 4096 - core::mem::size_of::<T>()],
+            _pad: [u8; $size - core::mem::size_of::<T>()],
         }
         static_assertions::const_assert_eq!(core::mem::size_of::<$block<[u8; $size]>>(), $size);
 
