@@ -1,7 +1,7 @@
 use core::{cmp::max, num::NonZeroU64};
 
 use alloc::{boxed::Box, vec::Vec};
-use block_device::{BlockGroup, LBA};
+use block_device::{BlockGroup, DevicePointer, LBA, ReadPointerError};
 use log::{error, info, trace};
 use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
@@ -9,7 +9,7 @@ use staticvec::StaticVec;
 use crate::{
     Block,
     fs::FsError,
-    fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, DevicePointer, FreeBlockGroups},
+    fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, FreeBlockGroups},
 };
 
 use block_device::BlockDevice;
@@ -163,7 +163,7 @@ impl BlockAllocator {
     pub fn load<D: BlockDevice>(
         device: &D,
         free_blocks: DevicePointer<FreeBlockGroups>,
-    ) -> Result<Self, D::BlockDeviceError> {
+    ) -> Result<Self, ReadPointerError<D::BlockDeviceError>> {
         let on_disk = Some(free_blocks);
         let mut free = Vec::new();
         let mut self_on_disk = Vec::new();

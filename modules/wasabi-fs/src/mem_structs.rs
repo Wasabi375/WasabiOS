@@ -480,6 +480,7 @@ pub struct FileNode<I> {
     pub created_at: Timestamp,
     pub modified_at: Timestamp,
 
+    /// Contains a list of all blocks used for the [FileNode] data
     #[derive_where(skip)]
     pub block_data: ReadWriteCell<BlockListAccess, I>,
     /// The number of blocks used by the FileNode

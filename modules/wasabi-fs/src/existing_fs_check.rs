@@ -1,6 +1,7 @@
 use core::mem::offset_of;
 
-use block_device::{BlockDevice, LBA};
+use block_device::{BlockDevice, LBA, ReadBlockDeviceError};
+use shared::alloc_ext::alloc_buffer;
 
 use crate::{BLOCK_SIZE, fs::MAIN_HEADER_BLOCK, fs_structs::MainHeader};
 
@@ -35,10 +36,14 @@ const FS_MAGICS: &[(FsFound, u64, &[u8])] = {
 /// This is not 100% guranteed to detect existing filesystems and can only check
 /// for some of them.
 /// See [FsFound] for a list of checked filesystems.
-pub fn check_for_filesystem<D: BlockDevice>(device: &D) -> Result<FsFound, D::BlockDeviceError> {
+pub fn check_for_filesystem<D: BlockDevice>(
+    device: &D,
+) -> Result<FsFound, ReadBlockDeviceError<D::BlockDeviceError>> {
     if let FsFound::WasabiFs { version } = check_for_wasabifs(device)? {
         return Ok(FsFound::WasabiFs { version });
     };
+
+    let mut buffer = alloc_buffer(D::BLOCK_SIZE).map_err(|_| ReadBlockDeviceError::Allocation)?;
 
     for (fs, offset, magic) in FS_MAGICS {
         let block = offset / BLOCK_SIZE as u64;
@@ -48,10 +53,12 @@ pub fn check_for_filesystem<D: BlockDevice>(device: &D) -> Result<FsFound, D::Bl
             continue;
         }
 
-        let block = device
-            .read_block(LBA::new(block).expect("blocks for magic offsets should be valid"))?;
+        device.read_block(
+            LBA::new(block).expect("blocks for magic offsets should be valid"),
+            &mut buffer,
+        )?;
 
-        if &block[offset_in_block..offset_in_block + magic.len()] == *magic {
+        if &buffer[offset_in_block..offset_in_block + magic.len()] == *magic {
             return Ok(*fs);
         }
     }
@@ -59,7 +66,9 @@ pub fn check_for_filesystem<D: BlockDevice>(device: &D) -> Result<FsFound, D::Bl
     Ok(FsFound::None)
 }
 
-pub fn check_for_wasabifs<D: BlockDevice>(device: &D) -> Result<FsFound, D::BlockDeviceError> {
+pub fn check_for_wasabifs<D: BlockDevice>(
+    device: &D,
+) -> Result<FsFound, ReadBlockDeviceError<D::BlockDeviceError>> {
     const BLOCK: LBA = MAIN_HEADER_BLOCK;
     const OFFSET: usize = offset_of!(MainHeader, magic);
     const VERSION_OFFSET: usize = offset_of!(MainHeader, version);
@@ -68,7 +77,8 @@ pub fn check_for_wasabifs<D: BlockDevice>(device: &D) -> Result<FsFound, D::Bloc
         return Ok(FsFound::None);
     }
 
-    let block = device.read_block(BLOCK)?;
+    let mut block = alloc_buffer(D::BLOCK_SIZE).map_err(|_| ReadBlockDeviceError::Allocation)?;
+    device.read_block(BLOCK, &mut block)?;
 
     if block[OFFSET..OFFSET + MainHeader::MAGIC.len()] != MainHeader::MAGIC {
         return Ok(FsFound::None);

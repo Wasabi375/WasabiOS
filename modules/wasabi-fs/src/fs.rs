@@ -7,18 +7,19 @@ use core::{
 };
 
 use alloc::{
-    alloc::AllocError,
     borrow::Cow,
     boxed::Box,
     string::{FromUtf8Error, String},
     sync::Arc,
     vec::Vec,
 };
-use block_device::{BlockDevice, LBA, ReadBlockDeviceError, WriteData};
+use block_device::{
+    BlockDevice, CompareExchangeError, DevicePointer, LBA, ReadBlockDeviceError, WriteData,
+};
 use hashbrown::HashMap;
 use log::{debug, error, trace, warn};
 use shared::{
-    alloc_ext::owned_slice::OwnedSlice,
+    alloc_ext::{AllocError, alloc_buffer, owned_slice::OwnedSlice},
     counts_required_for,
     sync::{
         InterruptState,
@@ -29,14 +30,14 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    BLOCK_SIZE, Block, BlockSlice, FS_VERSION,
+    BLOCK_SIZE, Block, BlockArray, FS_VERSION,
     block_allocator::BlockAllocator,
     blocks_required_for,
     existing_fs_check::{FsFound, check_for_filesystem},
     fs_structs::{
         self, BLOCK_STRING_DATA_LENGTH, BLOCK_STRING_PART_DATA_LENGTH, BlockString,
-        BlockStringPart, DevicePointer, DeviceStringHead, FileId, FileType, FreeBlockGroups,
-        FsStatus, MainHeader, MainTransientHeader, TreeNode,
+        BlockStringPart, DeviceStringHead, FileId, FileType, FreeBlockGroups, FsStatus, MainHeader,
+        MainTransientHeader, TreeNode,
     },
     mem_structs::{self, BlockList, Directory, DirectoryChange, DirectoryEntry, FileNode},
     mem_tree::{MemTree, MemTreeError},
@@ -54,6 +55,8 @@ const INITALLY_USED_BLOCKS: &[LBA] = &[MAIN_HEADER_BLOCK];
 /// the block_allocator.
 // TODO figure out new min
 const MIN_BLOCK_COUNT: u64 = 4;
+
+const RETRY_COMPARE_EXCHANGE_COUNT: u32 = 10;
 
 #[derive(Error, Debug)]
 #[allow(missing_docs)]
@@ -82,6 +85,8 @@ pub enum FsError {
     StringToLong,
     #[error("Out of Memory")]
     Oom,
+    #[error("Out of Memory when storing inner error")]
+    OomOnError,
     #[error("MemTree operation failed: {0}")]
     MemTreeError(MemTreeError),
     #[error("The requested file({0:?}) does not exist")]
@@ -105,6 +110,12 @@ impl From<MemTreeError> for FsError {
             MemTreeError::BlockDevice(err) => FsError::BlockDevice(err),
             err => FsError::MemTreeError(err),
         }
+    }
+}
+
+impl From<core::alloc::AllocError> for FsError {
+    fn from(_value: core::alloc::AllocError) -> Self {
+        FsError::Oom
     }
 }
 
@@ -148,7 +159,11 @@ impl<E: Error + Send + Sync + 'static> From<ReadBlockDeviceError<E>> for FsError
 }
 
 pub fn map_device_error<E: Error + Send + Sync + 'static>(e: E) -> FsError {
-    FsError::BlockDevice(Box::new(e))
+    let error = match Box::try_new(e) {
+        Ok(error) => error,
+        Err(_alloc_error) => return FsError::OomOnError,
+    };
+    FsError::BlockDevice(error)
 }
 
 #[derive(Error, Debug)]
@@ -359,19 +374,24 @@ where
             open_header.transient.unwrap().mount_count - 1,
             closed_transient.mount_count
         );
-        match self
-            .device
-            .compare_exchange_block(
+
+        let mut current_block: [u8; BLOCK_SIZE] = open_header.into_block_array();
+
+        for _ in 0..RETRY_COMPARE_EXCHANGE_COUNT {
+            match self.device.compare_exchange_block(
                 MAIN_HEADER_BLOCK,
-                open_header.block_data(),
+                &mut current_block,
                 closed_header.block_data(),
-            )
-            .map_err(map_device_error)
-        {
-            Ok(Ok(())) => Ok(self.device),
-            Ok(Err(_)) => Err((self, FsError::CompareExchangeFailedToOften)), // TODO loop a few times
-            Err(e) => Err((self, e)),
+            ) {
+                Ok(()) => return Ok(self.device),
+                Err(CompareExchangeError::OutdatedData) => {
+                    continue;
+                }
+                Err(e) => return Err((self, map_device_error(e))),
+            }
         }
+
+        Err((self, FsError::CompareExchangeFailedToOften))
     }
 
     /// Creates a [FileSystem] that is not fully initialized
@@ -622,14 +642,19 @@ where
             new_header
         };
 
-        let block = new_header;
-        match fs
-            .device
-            .compare_exchange_block(MAIN_HEADER_BLOCK, header.block_data(), block.block_data())
-            .map_err(map_device_error)?
-        {
+        let mut header = header;
+        match fs.device.compare_exchange_block(
+            MAIN_HEADER_BLOCK,
+            header.block_data_mut(),
+            new_header.block_data(),
+        ) {
             Ok(()) => {}
-            Err(_) => return Err(FsError::CompareExchangeFailedToOften), // TODO loop a few times
+            Err(CompareExchangeError::OutdatedData) => {
+                return Err(FsError::CompareExchangeFailedToOften);
+            } // TODO loop a few times
+            Err(CompareExchangeError::BlockDevice(err)) => {
+                return Err(map_device_error(err));
+            }
         }
 
         fs.block_allocator =
@@ -644,19 +669,17 @@ where
     }
 
     /// Reads the [MainHeader] from [MAIN_HEADER_BLOCK]
-    fn header(&self) -> Result<Box<Block<MainHeader>>, FsError> {
-        let data = self
-            .device
-            .read_block(MAIN_HEADER_BLOCK)
+    fn header(&self) -> Result<Block<MainHeader>, FsError> {
+        let mut header = Block::uninit();
+
+        self.device
+            .read_block(MAIN_HEADER_BLOCK, header.block_data_mut())
             .map_err(map_device_error)?;
 
-        let data: Box<Block<MainHeader>> = unsafe {
-            // Safety: Block<MainHeader> is exactly 1 block in size and can be copy constructed.
-            // We just read 1 block, which _should_ contain the header
-            transmute(data)
-        };
-
-        Ok(data)
+        Ok(unsafe {
+            // Safety: read_block initializes the header block
+            header.assume_init()
+        })
     }
 
     fn write_header(&mut self) -> Result<(), FsError> {
@@ -713,10 +736,6 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
 
     pub fn header_data(&self) -> &HeaderData {
         &self.header_data
-    }
-
-    pub fn read_header(&self) -> Result<Box<Block<MainHeader>>, FsError> {
-        self.header()
     }
 
     pub fn read_string_head<const N: usize>(
@@ -814,8 +833,8 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
 
         metadata.resolve_block_data(&self.device)?;
 
-        let block_data = metadata.block_data.read();
-        let block_list = block_data.get_list().iter_partial(offset, size);
+        let block_list = metadata.block_data.read();
+        let block_list = block_list.get_list().iter_partial(offset, size);
 
         let offset_in_first_block = block_list
             .clone()
@@ -823,7 +842,9 @@ impl<D: BlockDevice, S, I: InterruptState> FileSystem<D, S, I> {
             .expect("There should be a block for this file")
             .offset;
 
-        let data = self.device.read_blocks(block_list.map(|g| g.group))?;
+        let mut data = alloc_buffer((size as usize).next_multiple_of(BLOCK_SIZE))?;
+        self.device
+            .read_blocks(block_list.map(|g| g.group), &mut data)?;
 
         let start = offset_in_first_block as usize;
         let end = (offset_in_first_block + size) as usize;
@@ -1202,8 +1223,8 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
         let groups = block_list.iter_partial(offset, data.len() as u64);
 
-        let old_start_block: Option<Box<BlockSlice>>;
-        let old_end_block: Option<Box<BlockSlice>>;
+        let old_start_block: Option<Box<BlockArray>>;
+        let old_end_block: Option<Box<BlockArray>>;
 
         let mut old_block_start: &[u8] = &[];
         let old_block_end: &[u8];
@@ -1217,11 +1238,13 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
                 .expect("There should be at least 1 group");
 
             assert_eq!(offset_in_first_block, first_group.offset);
-            old_start_block = Some(
-                self.device
-                    .read_block(first_group.group.start)
-                    .map_err(map_device_error)?,
-            );
+            let mut block = Box::try_new(BlockArray::ZERO)?;
+
+            self.device
+                .read_block(first_group.group.start, block.as_mut_slice())
+                .map_err(map_device_error)?;
+
+            old_start_block = Some(block);
             old_block_start = &old_start_block.as_ref().unwrap()[0..offset_in_first_block as usize];
         }
         let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
@@ -1231,11 +1254,12 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
                 .last()
                 .expect("There should be at least 1 group");
             let last_block = last_group.group.end();
-            old_end_block = Some(
-                self.device
-                    .read_block(last_block)
-                    .map_err(map_device_error)?,
-            );
+
+            let mut block = Box::try_new(BlockArray::ZERO)?;
+            self.device
+                .read_block(last_block, block.as_mut_slice())
+                .map_err(map_device_error)?;
+            old_end_block = Some(block);
 
             let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
 

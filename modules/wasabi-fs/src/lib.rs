@@ -30,7 +30,7 @@ pub mod mem_tree;
 /// See [BlockAligned], [Block], [BlockSlice], [blocks_required_for]
 // NOTE: when changed, also change alignment of BlockAligned and Block.
 pub const BLOCK_SIZE: usize = KiB!(4);
-block_size_types!(4096: Block, BlockSlice);
+block_size_types!(4096: Block, BlockArray);
 
 /// Calculate the number of BLOCKs required for `bytes` memory.
 ///

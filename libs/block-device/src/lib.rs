@@ -10,7 +10,10 @@
 
 extern crate alloc;
 
-use core::{error::Error, mem::size_of};
+use core::{
+    error::Error,
+    mem::{MaybeUninit, size_of},
+};
 
 use log::error;
 
@@ -85,6 +88,15 @@ macro_rules! block_size_types {
                 self.data
             }
 
+            /// Extract into byte array
+            #[allow(unused)]
+            pub fn into_block_array(self) -> [u8; $size] {
+                assert!(core::mem::size_of::<Self>() == $size);
+                // Safety:
+                //  &self is valid for $size bytes and u8 has can have any aligment
+                unsafe { *(&self as *const _ as *const u8 as *const [u8; $size]) }
+            }
+
             /// Returns a u8 slice that covers the entire block.
             ///
             /// This will include the value at offset 0 followed by
@@ -104,11 +116,67 @@ macro_rules! block_size_types {
                 }
             }
         }
+        impl<T> $block<T>
+        where
+            T: $crate::BlockConstructable,
+            [(); $size - core::mem::size_of::<T>()]:,
+        {
+            /// Returns a u8 slice that covers the entire block.
+            ///
+            /// This will include the value at offset 0 followed by
+            /// some padding.
+            /// The bytes stored in the padding are undefined, however
+            /// the [Self::new] will create a block with the padding set to `0x0`.
+            #[allow(unused)]
+            pub fn block_data_mut(&mut self) -> &mut [u8] {
+                assert!(core::mem::size_of::<Self>() == $size);
+
+                let ptr = self as *mut _ as *mut u8;
+
+                unsafe {
+                    // Safety:
+                    // self owns exactly $size bytes of data
+                    core::slice::from_raw_parts_mut(ptr, $size)
+                }
+            }
+        }
 
         impl $slice {
             /// A zero filled block
             #[allow(unused)]
             pub const ZERO: $slice = $block::new([0u8; $size]);
+        }
+
+        impl<T> $block<core::mem::MaybeUninit<T>>
+        where
+            [(); $size - core::mem::size_of::<T>()]:,
+            [(); $size - core::mem::size_of::<core::mem::MaybeUninit<T>>()]:,
+        {
+            /// Cerate a zerored uninit block
+            #[allow(unused)]
+            pub fn uninit() -> Self {
+                Self::new(core::mem::MaybeUninit::zeroed())
+            }
+
+            /// Converts block into an initialized block
+            ///
+            /// #Safety
+            ///
+            /// value must be initialized, see [core::mem::MaybeUninit::assume_init]
+            #[allow(unused)]
+            pub unsafe fn assume_init(self) -> $block<T> {
+                $block {
+                    // Safety: by function definition
+                    data: unsafe { self.data.assume_init() },
+                    // Safety: self._pad and result._pad have the same size and aligment,
+                    // based on the fact that `MaybeUnit<T>` and `T` have the exact same memory
+                    // layout. Therefor the layout of `block` is the same, meaning the padding
+                    // also shares the exact same memory layout
+                    _pad: unsafe {
+                        *(&self._pad as *const u8 as *const [u8; $size - core::mem::size_of::<T>()])
+                    },
+                }
+            }
         }
 
         impl<T> core::ops::Deref for $block<T>
@@ -236,8 +304,6 @@ pub enum CompareExchangeError<BDError: Error + Send + Sync + 'static> {
     BlockDevice(#[from] BDError),
     #[error("compare exchange failed, because the data is outdated")]
     OutdatedData,
-    #[error("all argument buffers must be exactly of block size")]
-    InvalidBufferSize,
 }
 
 impl<BDError: Error + Send + Sync + 'static> From<ReadBlockDeviceError<BDError>>
@@ -258,8 +324,10 @@ impl<BDError: Error + Send + Sync + 'static> From<ReadBlockDeviceError<BDError>>
 ///
 /// # Safety
 ///
-/// This type must be constructable from any bit pattern
+/// This type must be constructable from any bit pattern and not implement Drop
 pub unsafe trait BlockConstructable {}
+
+unsafe impl<T> BlockConstructable for MaybeUninit<T> where T: BlockConstructable {}
 
 /// A block device
 ///
@@ -559,6 +627,7 @@ pub mod test {
         }
     }
 
+    #[allow(unused)]
     struct TestField(#[allow(dead_code)] u8);
     unsafe impl BlockConstructable for TestField {}
 
@@ -571,6 +640,7 @@ pub mod test {
         let _ = read_from_device(&device);
     }
 
+    #[allow(unused)]
     fn read_from_device<D: BlockDevice>(
         device: &D,
     ) -> Result<TestField, ReadPointerError<D::BlockDeviceError>>

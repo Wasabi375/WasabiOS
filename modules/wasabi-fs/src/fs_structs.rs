@@ -9,36 +9,17 @@ use uuid::Uuid;
 
 use crate::{
     BLOCK_SIZE,
-    block_allocator::BlockAllocator,
     fs::{FsError, MAIN_HEADER_BLOCK},
     mem_structs,
 };
 
 // TODO is this used or can I delete this
-trait BlockLinkedList: Sized + BlockConstructable<BLOCK_SIZE> {
+trait BlockLinkedList: Sized + BlockConstructable {
     type Next: BlockLinkedList<Next = Self::Next>;
 
     /// The pointer to the next part of [Self]
     #[allow(unused)]
     fn next(&self) -> Option<DevicePointer<Self::Next>>;
-
-    /// Free all blocks within self
-    #[allow(unused)]
-    fn free<D: BlockDevice>(
-        self: DevicePointer<Self>,
-        device: &D,
-        block_allocator: &mut BlockAllocator,
-    ) -> Result<(), D::BlockDeviceError> {
-        let on_device_data = device.read_pointer(self)?;
-
-        if let Some(next) = BlockLinkedList::next(&on_device_data) {
-            next.free(device, block_allocator)?;
-        }
-
-        block_allocator.free_block(self.lba);
-
-        Ok(())
-    }
 }
 
 /// Either a single [BlockGroup] or a [DevicePointer] to a [BlockList]
@@ -81,7 +62,7 @@ pub struct BlockList {
 const_assert!(size_of::<BlockList>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<BlockList>() <= 100);
 
-impl BlockConstructable<BLOCK_SIZE> for BlockList {}
+unsafe impl BlockConstructable for BlockList {}
 
 impl BlockLinkedList for BlockList {
     type Next = BlockList;
@@ -102,7 +83,7 @@ pub(crate) const BLOCK_STRING_DATA_LENGTH: usize =
 pub struct BlockString(pub DeviceStringHead<BLOCK_STRING_DATA_LENGTH>);
 const_assert!(size_of::<BlockString>() == BLOCK_SIZE);
 
-impl BlockConstructable<BLOCK_SIZE> for BlockString {}
+unsafe impl BlockConstructable for BlockString {}
 
 impl BlockLinkedList for BlockString {
     type Next = BlockStringPart;
@@ -149,7 +130,7 @@ pub struct BlockStringPart {
 }
 const_assert!(size_of::<BlockStringPart>() == BLOCK_SIZE);
 
-impl BlockConstructable<BLOCK_SIZE> for BlockStringPart {}
+unsafe impl BlockConstructable for BlockStringPart {}
 
 impl BlockLinkedList for BlockStringPart {
     type Next = Self;
@@ -354,7 +335,7 @@ pub struct MainHeader {
 }
 const_assert!(size_of::<MainHeader>() <= BLOCK_SIZE);
 
-impl BlockConstructable<BLOCK_SIZE> for MainHeader {}
+unsafe impl BlockConstructable for MainHeader {}
 
 impl MainHeader {
     /// A magic string that must be part of the header
@@ -450,7 +431,7 @@ pub enum TreeNode {
 }
 const_assert!(size_of::<TreeNode>() <= BLOCK_SIZE);
 
-impl BlockConstructable<BLOCK_SIZE> for TreeNode {}
+unsafe impl BlockConstructable for TreeNode {}
 
 /// The number of free [BlockGroup]s that fit within a single [FreeBlockGroups]
 pub(crate) const BLOCK_RANGES_COUNT_PER_BLOCK: usize = 250;
@@ -472,7 +453,7 @@ pub struct FreeBlockGroups {
 const_assert!(size_of::<FreeBlockGroups>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<FreeBlockGroups>() <= 100);
 
-impl BlockConstructable<BLOCK_SIZE> for FreeBlockGroups {}
+unsafe impl BlockConstructable for FreeBlockGroups {}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,7 +485,7 @@ pub struct DirectoryHead {
 const_assert!(size_of::<DirectoryHead>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<DirectoryHead>() <= size_of::<DirectoryEntry>());
 
-impl BlockConstructable<BLOCK_SIZE> for DirectoryHead {}
+unsafe impl BlockConstructable for DirectoryHead {}
 
 impl BlockLinkedList for DirectoryHead {
     type Next = DirectoryPart;
@@ -529,7 +510,7 @@ pub struct DirectoryPart {
 const_assert!(size_of::<DirectoryPart>() <= BLOCK_SIZE);
 const_assert!(BLOCK_SIZE - size_of::<DirectoryPart>() <= size_of::<DirectoryEntry>());
 
-impl BlockConstructable<BLOCK_SIZE> for DirectoryPart {}
+unsafe impl BlockConstructable for DirectoryPart {}
 
 impl BlockLinkedList for DirectoryPart {
     type Next = Self;

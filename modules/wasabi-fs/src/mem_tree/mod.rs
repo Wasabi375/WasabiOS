@@ -1484,11 +1484,7 @@ impl<I: InterruptState> MemTreeLink<I> {
         &mut self,
         device: &D,
         parent_node: Option<NonNull<MemTreeNode<I>>>,
-    ) -> Result<&mut Self, FsError>
-    where
-        [(); <D as BlockDevice>::BLOCK_SIZE]:,
-        [(); size_of::<TreeNode>().next_multiple_of(<D as BlockDevice>::BLOCK_SIZE)]:,
-    {
+    ) -> Result<&mut Self, FsError> {
         if self.node.is_some() {
             return Ok(self);
         }

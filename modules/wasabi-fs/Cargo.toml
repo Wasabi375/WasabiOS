@@ -5,7 +5,7 @@ edition.workspace = true
 
 
 [features] 
-test = ["dep:testing", "test-tree-branching"]
+test = ["dep:testing", "test-tree-branching", "block-device/test" ]
 test-tree-branching = [] # Tree branching is based on fixed values for unit tests
 
 [dependencies]
@@ -32,3 +32,4 @@ uuid.workspace = true
 [dev-dependencies]
 testing = { workspace = true, optional = false }
 host-shared = { workspace = true, features = [ "test" ] }
+block-device = { workspace = true, features = [ "test" ] }
