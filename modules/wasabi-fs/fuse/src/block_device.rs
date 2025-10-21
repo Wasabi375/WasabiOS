@@ -112,21 +112,21 @@ impl BlockDevice for FileDevice {
         start: LBA,
         block_count: u64,
         buffer: &mut [u8],
-    ) -> Result<usize, ReadBlockDeviceError<std::io::Error>> {
+    ) -> Result<(), ReadBlockDeviceError<std::io::Error>> {
         assert_eq!(buffer.len(), BLOCK_SIZE * block_count as usize);
 
         let mut file = self.file.lock().unwrap();
 
         Self::read_contig_internal(&mut file, start, buffer)?;
 
-        Ok(BLOCK_SIZE * block_count as usize)
+        Ok(())
     }
 
     fn read_blocks<I>(
         &self,
         blocks: I,
         buffer: &mut [u8],
-    ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>>
+    ) -> Result<(), ReadBlockDeviceError<Self::BlockDeviceError>>
     where
         I: Iterator<Item = BlockGroup> + Clone,
     {
@@ -150,7 +150,7 @@ impl BlockDevice for FileDevice {
 
         assert_eq!(cursor, total_bytes_to_read);
 
-        Ok(buffer.len())
+        Ok(())
     }
 
     fn write_block(

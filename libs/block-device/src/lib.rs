@@ -363,7 +363,7 @@ pub trait BlockDevice {
         start: LBA,
         block_count: u64,
         buffer: &mut [u8],
-    ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>>;
+    ) -> Result<(), ReadBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Read multiple blocks from the device
     ///
@@ -373,7 +373,7 @@ pub trait BlockDevice {
         &self,
         blocks: I,
         buffer: &mut [u8],
-    ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>>
+    ) -> Result<(), ReadBlockDeviceError<Self::BlockDeviceError>>
     where
         I: Iterator<Item = BlockGroup> + Clone;
 
@@ -456,7 +456,7 @@ pub trait BlockDevice {
         &self,
         group: BlockGroup,
         buffer: &mut [u8],
-    ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>> {
+    ) -> Result<(), ReadBlockDeviceError<Self::BlockDeviceError>> {
         self.read_blocks_contig(group.start, group.count(), buffer)
     }
 
@@ -561,7 +561,7 @@ pub mod test {
             _start: crate::LBA,
             _block_count: u64,
             _buffer: &mut [u8],
-        ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>> {
+        ) -> Result<(), ReadBlockDeviceError<Self::BlockDeviceError>> {
             Err(TestBlockDeviceError.into())
         }
 
@@ -610,7 +610,7 @@ pub mod test {
             &self,
             _blocks: I,
             _buffer: &mut [u8],
-        ) -> Result<usize, ReadBlockDeviceError<Self::BlockDeviceError>>
+        ) -> Result<(), ReadBlockDeviceError<TestBlockDeviceError>>
         where
             I: Iterator<Item = BlockGroup> + Clone,
         {
