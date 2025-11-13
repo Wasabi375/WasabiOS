@@ -271,11 +271,11 @@ fn interrupt_handler(interrupt_vector: u8, int_stack_frame: InterruptStackFrame)
 mod test {
     use core::hint::black_box;
 
-    use testing::{description::TestExitState, kernel_test, KernelTestError};
+    use testing::{KernelTestError, description::TestExitState, kernel_test};
 
     /// This test was added to proteced against a too small stack for
     /// the page fault handler
-    #[kernel_test(i, expected_exit: TestExitState::Panic)] // FIXME panic in panic
+    #[kernel_test(expected_exit: TestExitState::Panic)]
     fn test_page_fault_panic() -> Result<(), KernelTestError> {
         let fake_ptr = 0 as *const u64;
         unsafe {
