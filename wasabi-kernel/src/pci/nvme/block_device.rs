@@ -1,6 +1,5 @@
 //! NVME [BlockDevice]
 //!
-#![allow(dead_code, unused_variables)]
 
 use core::iter::once;
 
@@ -315,12 +314,12 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
         match prp_entries.as_slice() {
             [] => todo!("this should be some kind of error"),
             [single_entry] => Ok(Prp::Entry(*single_entry)),
-            [first, second] => Ok(Prp::DoubleEntry(*first, *second)), // TODO is this actually correct?
+            [first, second] => Ok(Prp::DoubleEntry(*first, *second)),
             entries => {
                 let prp_list = unsafe {
                     let mut prp_allocator = self.prp_page_allocator.lock();
                     // Safety: prp_page_allocator fullfills safety for prp list
-                    PrpList::new(&prp_entries, || prp_allocator.allocate())
+                    PrpList::new(entries, || prp_allocator.allocate())
                         .map_err(NvmeBlockError::from)?
                 };
                 Ok(Prp::List(prp_list))
@@ -329,6 +328,7 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
     }
 }
 
+#[expect(unused_variables)]
 impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
     type BlockDeviceError = NvmeBlockError;
 
@@ -618,7 +618,7 @@ pub mod test {
 
     #[kernel_test]
     fn test_create_nvme_block_device() -> Result<(), KernelTestError> {
-        let (_controller, device) = unsafe {
+        let (_controller, _device) = unsafe {
             // Safety: only called once in this test
             create_test_device(TestDrive::Test)?
         };

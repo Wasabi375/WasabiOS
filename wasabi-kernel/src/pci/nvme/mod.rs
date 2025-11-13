@@ -3,7 +3,7 @@
 //! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //TODO move this module out of pci?
 
-#![allow(missing_docs)] // TODO temp
+#![allow(missing_docs)] // FIXME temp
 
 pub mod admin_commands;
 pub mod block_device;
@@ -101,9 +101,10 @@ impl From<PageTableMapError> for NVMEControllerError {
 
 /// Provides communication with an NVME Storage Controller
 #[derive_where(Debug)]
-#[allow(dead_code)]
 pub struct NVMEController {
+    #[expect(dead_code)]
     pci_dev: Device,
+    #[expect(dead_code)]
     controller_base_paddr: PhysAddr,
     controller_page: Page<Size4KiB>,
     controller_base_ptr: UntypedPtr,
@@ -112,7 +113,9 @@ pub struct NVMEController {
     doorbell_stride: isize,
     admin_queue: CommandQueue,
 
+    /// the Controller id as reported by the nvme device
     controller_id: Option<ControllerId>,
+    /// the command sets supported by the controller
     io_command_sets: IOCommandSetVector,
 
     max_number_completions_queues: u16,
@@ -399,7 +402,7 @@ impl NVMEController {
             // Safety: we mapped this page earlier
             let identify_data: &IdentifyControllerData = unsafe { &*page.start_address().as_ptr() };
             controller_id = identify_data.controller_id;
-            trace!("NVMe controller id: {:?}", controller_id);
+            debug!("NVMe controller id: {:?}", controller_id);
 
             if cap.command_sets_supported.get_bit(0) {
                 // TODO get info about NVM IO command set. Do I need to do something here?
@@ -665,9 +668,9 @@ impl NVMEController {
             this.capabilities.namespace_capacity_blocks = identify_data.namespace_capacity;
             this.capabilities.namespace_features = identify_data.features;
 
-            debug!("lba format count: {}", identify_data.lba_formats().len());
+            trace!("lba format count: {}", identify_data.lba_formats().len());
             for format in identify_data.lba_formats() {
-                debug!(
+                trace!(
                     "Format:\nblock size: {}\nmeta size: {}\nPerf: {:?}",
                     format.lba_data_size(),
                     format.metadata_size,
@@ -1398,10 +1401,10 @@ pub fn experiment_nvme_device() {
     unsafe {
         crate::utils::log_hex_dump(
             "NVME read first few blocks",
-            log::Level::Info,
+            log::Level::Trace,
             module_path!(),
             UntypedPtr::new(pages.start_addr()).unwrap(),
-            pages.size() as usize, // bytes as usize, // TODO temp
+            bytes as usize,
         );
     }
     experiment_gpt(io_queue, nvme_controller.capabilities().clone());
