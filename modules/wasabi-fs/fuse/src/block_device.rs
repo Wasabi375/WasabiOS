@@ -196,8 +196,8 @@ impl BlockDevice for FileDevice {
 
     fn write_blocks_old<I>(
         &mut self,
-        blocks: I,
-        data: WriteData,
+        _blocks: I,
+        _data: WriteData,
     ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
     where
         I: Iterator<Item = BlockGroup> + Clone,
@@ -250,6 +250,48 @@ impl BlockDevice for FileDevice {
         file.seek(SeekFrom::Start(lba.get() * BLOCK_SIZE as u64))?;
         if file.write(new)? != BLOCK_SIZE {
             return Err(Self::BlockDeviceError::other(FileDevicError::IncompleteWrite).into());
+        }
+
+        Ok(())
+    }
+
+    fn write_blocks<I>(
+        &mut self,
+        blocks: I,
+        mut data: &[u8],
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
+    where
+        I: Iterator<Item = BlockGroup>,
+    {
+        assert_eq!(data.len() % BLOCK_SIZE, 0);
+
+        for block in blocks {
+            let to_write = data
+                .split_off(..block.bytes(BLOCK_SIZE) as usize)
+                .expect("data buffer is not long enough for all blocks");
+
+            self.write_blocks_contig(block.start, to_write.into())?;
+        }
+
+        Ok(())
+    }
+
+    fn write_partial_block(
+        &mut self,
+        lba: LBA,
+        data: &[u8],
+        offset: u64,
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>> {
+        assert!(data.len() + offset as usize <= BLOCK_SIZE);
+
+        let mut file = self.file.lock().unwrap();
+
+        file.seek(SeekFrom::Start((lba.get() * BLOCK_SIZE as u64) + offset))?;
+
+        if file.write(data)? != data.len() {
+            return Err(WriteBlockDeviceError::BlockDevice(
+                Self::BlockDeviceError::other(FileDevicError::IncompleteWrite),
+            ));
         }
 
         Ok(())
