@@ -25,7 +25,6 @@ type FileNode = wfs::mem_structs::FileNode<StdInterruptState>;
 use libc::{EINVAL, EIO, ENOENT, ENOSYS};
 
 pub mod errno;
-pub mod fake;
 
 macro_rules! handle_fs_err {
     ($expr:expr, $reply:expr) => {
