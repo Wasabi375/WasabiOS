@@ -8,7 +8,7 @@ use block_device::{
     BlockDevice, BlockGroup, LBA, ReadBlockDeviceError, WriteBlockDeviceError, WriteData,
 };
 use log::{debug, error, trace};
-use shared::{MiB, alloc_ext::Strong, sync::lockcell::LockCell};
+use shared::{MiB, alloc_ext::Strong, counts_required_for, sync::lockcell::LockCell};
 use staticvec::StaticVec;
 use thiserror::Error;
 use x86_64::structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB};
@@ -83,7 +83,7 @@ pub struct NvmeBlockDevice<const BLOCK_SIZE: usize = 4096> {
 
     lba_count_conversion_shift: u32,
 
-    prp_page_allocator: TicketLock<PrpPageAllocator>,
+    prp_page_allocator: TicketLock<MappingsAllocator>,
 }
 
 impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
@@ -142,7 +142,7 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
 
             io_queue: TicketLock::new(io_queue),
             controller_cap,
-            prp_page_allocator: TicketLock::new(PrpPageAllocator::empty()),
+            prp_page_allocator: TicketLock::new(MappingsAllocator::empty()),
         };
 
         this.map_lba(this.start_lba)
@@ -171,6 +171,46 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
             .expect("overflow block count during conversion from block-device to nvme space")
     }
 
+    fn free_prp(&self, idents: &mut StaticVec<(CommandIdentifier, Prp), 64>) {
+        let mut prp_allocator = self.prp_page_allocator.lock();
+        for (_, prp) in idents.drain(..) {
+            for (page, frame) in prp.mappings().iter().cloned() {
+                let free_result = unsafe {
+                    // Safety: mapping is no longer used
+                    prp_allocator.free(page, frame)
+                };
+                if let Err(free_err) = free_result {
+                    error!(
+                        "failed to free memory mapping for prp list, leaking memory: {free_err}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn flush_io_queue(
+        &self,
+        io_queue: &mut CommandQueue,
+        idents: &mut StaticVec<(CommandIdentifier, Prp), 64>,
+    ) -> Result<(), ReadBlockDeviceError<NvmeBlockError>> {
+        io_queue.flush();
+
+        for (ident, _) in idents.iter() {
+            let status = io_queue
+                .wait_for(*ident)
+                .map_err(NvmeBlockError::from)?
+                .status();
+
+            if status.is_err() {
+                return Err(NvmeBlockError::CommandCompletionStatus(status).into());
+            }
+        }
+
+        self.free_prp(idents);
+
+        Ok(())
+    }
+
     fn read_blocks_internal<I>(
         &self,
         blocks: I,
@@ -179,49 +219,6 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
     where
         I: Iterator<Item = BlockGroup> + Clone,
     {
-        fn free_prp<const BLOCK_SIZE: usize>(
-            this: &NvmeBlockDevice<BLOCK_SIZE>,
-            idents: &mut StaticVec<(CommandIdentifier, Prp), 64>,
-        ) {
-            let mut prp_allocator = this.prp_page_allocator.lock();
-            for (_, prp) in idents.drain(..) {
-                for (page, frame) in prp.mappings().iter().cloned() {
-                    let free_result = unsafe {
-                        // Safety: mapping is no longer used
-                        prp_allocator.free(page, frame)
-                    };
-                    if let Err(free_err) = free_result {
-                        error!(
-                            "failed to free memory mapping for prp list, leaking memory: {free_err}"
-                        );
-                    }
-                }
-            }
-        }
-
-        fn flush_io_queue<const BLOCK_SIZE: usize>(
-            this: &NvmeBlockDevice<BLOCK_SIZE>,
-            io_queue: &mut CommandQueue,
-            idents: &mut StaticVec<(CommandIdentifier, Prp), 64>,
-        ) -> Result<(), ReadBlockDeviceError<NvmeBlockError>> {
-            io_queue.flush();
-
-            for (ident, _) in idents.iter() {
-                let status = io_queue
-                    .wait_for(*ident)
-                    .map_err(NvmeBlockError::from)?
-                    .status();
-
-                if status.is_err() {
-                    return Err(NvmeBlockError::CommandCompletionStatus(status).into());
-                }
-            }
-
-            free_prp(this, idents);
-
-            Ok(())
-        }
-
         let mut remaining_buffer = buffer;
         let block_group_and_buf = blocks.map(|group| {
             let bytes = group.bytes(self.controller_cap.lba_block_size as usize) as usize;
@@ -268,15 +265,42 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
                 read_idents.push((read_ident, prp));
 
                 if read_idents.is_full() || io_queue.is_full_for_submission() {
-                    flush_io_queue(self, &mut io_queue, &mut read_idents)?;
+                    self.flush_io_queue(&mut io_queue, &mut read_idents)?;
                 }
             }
-            flush_io_queue(self, &mut io_queue, &mut read_idents)?;
+            self.flush_io_queue(&mut io_queue, &mut read_idents)?;
             Ok::<(), ReadBlockDeviceError<NvmeBlockError>>(())
         };
         let inner_result = inner();
 
-        free_prp(self, &mut read_idents);
+        self.free_prp(&mut read_idents);
+
+        match inner_result {
+            Ok(()) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    #[expect(unused_mut, unused_variables)]
+    fn write_blocks_internal<I>(
+        &self,
+        blocks: I,
+        data: WriteData,
+    ) -> Result<(), WriteBlockDeviceError<NvmeBlockError>>
+    where
+        I: Iterator<Item = BlockGroup> + Clone,
+    {
+        let mut write_idents: StaticVec<(CommandIdentifier, Prp), 64> = StaticVec::new();
+        let mut io_queue = self.io_queue.lock();
+
+        let inner = || {
+            todo!();
+            #[expect(unreachable_code)]
+            Ok::<(), WriteBlockDeviceError<NvmeBlockError>>(())
+        };
+        let inner_result = inner();
+
+        // TODO free allocations
 
         match inner_result {
             Ok(()) => Ok(()),
@@ -338,6 +362,7 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
         self.block_count
     }
 
+    #[inline]
     fn read_block(
         &self,
         lba: LBA,
@@ -346,6 +371,7 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
         self.read_blocks_contig(lba, 1, buffer)
     }
 
+    #[inline]
     fn read_blocks_contig(
         &self,
         start: LBA,
@@ -383,23 +409,39 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
         self.read_blocks_internal(blocks, buffer)
     }
 
+    #[inline]
     fn write_block(
         &mut self,
         lba: LBA,
         data: &[u8],
     ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>> {
-        todo!()
+        assert_eq!(data.len(), Self::BLOCK_SIZE);
+        self.write_blocks_contig(lba, data)
     }
 
+    #[inline]
     fn write_blocks_contig(
         &mut self,
         start: LBA,
         data: &[u8],
     ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>> {
-        todo!()
+        let start = self.map_lba(start);
+        let block_count =
+            counts_required_for!(self.controller_cap.lba_block_size, data.len() as u64);
+        assert_eq!(
+            block_count * self.controller_cap.lba_block_size,
+            data.len() as u64
+        );
+        self.write_blocks_internal(
+            once(BlockGroup::with_count(
+                start,
+                block_count.try_into().expect("Count must not be 0"),
+            )),
+            WriteData::blocks(data, Self::BLOCK_SIZE),
+        )
     }
 
-    fn write_blocks<I>(
+    fn write_blocks_old<I>(
         &mut self,
         blocks: I,
         data: WriteData,
@@ -407,7 +449,15 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
     where
         I: Iterator<Item = BlockGroup> + Clone,
     {
-        todo!()
+        let blocks = blocks.map(|group| {
+            BlockGroup::with_count(
+                self.map_lba(group.start),
+                self.map_block_count(group.count())
+                    .try_into()
+                    .expect("count was not 0 so mapping it should return non 0"),
+            )
+        });
+        self.write_blocks_internal(blocks, data)
     }
 
     fn read_block_atomic(
@@ -436,21 +486,21 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
     }
 }
 
-struct PrpPageAllocator {
+struct MappingsAllocator {
     free_mappings: Vec<(Page<Size4KiB>, PhysFrame<Size4KiB>)>,
 }
 
-impl PrpPageAllocator {
+impl MappingsAllocator {
     fn empty() -> Self {
         Self {
             free_mappings: Vec::new(),
         }
     }
 
-    /// allocates a new prp page
+    /// allocates a new single page mapping
     ///
     /// this means a [Page] that is mapped to a [PhysFrame] so that it can be used
-    /// for a [PrpList](super::prp::PrpList)
+    /// for a [PrpList](super::prp::PrpList) or other temp read/write data
     fn allocate(&mut self) -> Result<(Page<Size4KiB>, PhysFrame<Size4KiB>), MemError> {
         if let Some(mapping) = self.free_mappings.pop() {
             Ok(mapping)
@@ -537,7 +587,7 @@ impl PrpPageAllocator {
     }
 }
 
-impl Drop for PrpPageAllocator {
+impl Drop for MappingsAllocator {
     fn drop(&mut self) {
         for (page, frame) in self.free_mappings.drain(..) {
             unsafe {

@@ -198,7 +198,7 @@ impl BlockDevice for FileDevice {
         Ok(())
     }
 
-    fn write_blocks<I>(
+    fn write_blocks_old<I>(
         &mut self,
         blocks: I,
         data: WriteData,

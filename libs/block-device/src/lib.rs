@@ -222,7 +222,17 @@ pub struct WriteData<'a> {
     pub old_block_end: &'a [u8],
 }
 
-impl WriteData<'_> {
+impl<'a> WriteData<'a> {
+    /// Create a [WriteData] for a buffer that is exactly `n` blocks in size
+    pub fn blocks(data: &'a [u8], block_size: usize) -> Self {
+        assert!(data.len().is_multiple_of(block_size));
+        Self {
+            data,
+            old_block_start: &[],
+            old_block_end: &[],
+        }
+    }
+
     /// The total length of the data
     ///
     /// This should be a multiple of the block-size of the target [BlockDevice]
@@ -400,7 +410,8 @@ pub trait BlockDevice {
     ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Write multiple blocks to the device
-    fn write_blocks<I>(
+    #[deprecated]
+    fn write_blocks_old<I>(
         &mut self,
         blocks: I,
         data: WriteData,
@@ -610,7 +621,7 @@ pub mod test {
             Err(TestBlockDeviceError.into())
         }
 
-        fn write_blocks<I>(
+        fn write_blocks_old<I>(
             &mut self,
             _blocks: I,
             _data: WriteData,

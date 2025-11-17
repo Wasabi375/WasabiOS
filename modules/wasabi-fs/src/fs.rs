@@ -1280,7 +1280,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         };
 
         self.device
-            .write_blocks(groups.map(|g| g.group), write_data)
+            .write_blocks_old(groups.map(|g| g.group), write_data)
             .map_err(map_device_error)
     }
 }
