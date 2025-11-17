@@ -237,6 +237,7 @@ impl BlockList {
         self.as_slice().iter().cloned()
     }
 
+    /// Iterate over [PartialBlockGroup]s
     pub fn iter_partial(
         &self,
         byte_offset: u64,
@@ -394,6 +395,10 @@ impl From<LBA> for BlockListAccess {
     }
 }
 
+/// Iterator over [PartialBlockGroup]s.
+///
+/// Only the first item will have an `offset` and only the last
+/// item will not have a `len` other than `BLOCK_SIZE`
 #[derive(Debug, Clone)]
 pub struct BlockListPartialIter<I> {
     /// The underlying group iterator
@@ -404,6 +409,7 @@ pub struct BlockListPartialIter<I> {
     remaining_bytes: u64,
 }
 
+/// A [BlockGroup] with an additional byte offset and length
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PartialBlockGroup {
     /// BlockGroup
@@ -431,7 +437,9 @@ where
                 let blocks_to_skip = self.skip_bytes / BLOCK_SIZE as u64;
                 let offset = self.skip_bytes % BLOCK_SIZE as u64;
 
-                current_group = current_group.subgroup(blocks_to_skip);
+                current_group = current_group
+                    .subgroup(blocks_to_skip)
+                    .expect("offset does not cover all blocks");
 
                 self.skip_bytes = 0;
                 offset
@@ -440,7 +448,9 @@ where
             };
 
             let len = if self.remaining_bytes < current_group.bytes(BLOCK_SIZE) {
-                current_group = current_group.shorten(blocks_required_for!(self.remaining_bytes));
+                current_group = current_group
+                    .with_new_length(blocks_required_for!(self.remaining_bytes))
+                    .expect("blocks_required_for should never be 0");
                 self.remaining_bytes
             } else {
                 current_group.bytes(BLOCK_SIZE)

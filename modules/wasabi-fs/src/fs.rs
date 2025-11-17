@@ -13,14 +13,13 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use block_device::{
-    BlockDevice, CompareExchangeError, DevicePointer, LBA, ReadBlockDeviceError, WriteData,
-};
+use block_device::{BlockDevice, CompareExchangeError, DevicePointer, LBA, ReadBlockDeviceError};
 use hashbrown::HashMap;
 use log::{debug, error, trace, warn};
 use shared::{
     alloc_ext::{AllocError, alloc_buffer, owned_slice::OwnedSlice},
     counts_required_for,
+    iter::{IterExt, PositionInfo},
     sync::{
         InterruptState,
         lockcell::{RWLockCell, ReadWriteCell},
@@ -30,7 +29,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    BLOCK_SIZE, Block, BlockArray, FS_VERSION,
+    BLOCK_SIZE, Block, FS_VERSION,
     block_allocator::BlockAllocator,
     blocks_required_for,
     existing_fs_check::{FsFound, check_for_filesystem},
@@ -1181,22 +1180,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             file_node.block_data = ReadWriteCell::new(block_list.into());
         }
 
-        let keep_last_block_data = if write_len > file_node.size {
-            let file_node = file_node.to_mut();
-            file_node.size = write_len;
-            false
-        } else if write_len == file_node.size {
-            false
-        } else {
-            true
-        };
-
-        self.write_blocks_partial(
-            &file_node.block_data.read().get_list(),
-            offset,
-            data,
-            keep_last_block_data,
-        )?;
+        self.write_blocks_partial(&file_node.block_data.read().get_list(), offset, data)?;
 
         if let Cow::Owned(file_node) = file_node {
             let file_node = Arc::try_new(file_node)?;
@@ -1207,12 +1191,15 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         Ok(())
     }
 
+    /// write `data` to the `block_list` starting after `offset`
+    ///
+    /// * if `offset` is greater than [BLOCK_SIZE] the blocks "covered" by
+    ///     `offset` are left unchanged.
     fn write_blocks_partial(
         &mut self,
         block_list: &BlockList,
         offset: u64,
         data: &[u8],
-        keep_last_block_data: bool,
     ) -> Result<(), FsError> {
         // this should round down, because the offset might start inside of the first block
         let offset_block_skip = offset / BLOCK_SIZE as u64;
@@ -1221,67 +1208,86 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 
         assert!(block_list.iter().map(|g| g.count()).sum::<u64>() >= required_block_count);
 
-        let groups = block_list.iter_partial(offset, data.len() as u64);
+        let mut partial_first_block = None;
+        let mut partial_last_block = None;
 
-        let old_start_block: Option<Box<BlockArray>>;
-        let old_end_block: Option<Box<BlockArray>>;
+        let groups = block_list
+            .iter_partial(offset, data.len() as u64)
+            .with_positions()
+            .filter_map(
+                |PositionInfo {
+                     first,
+                     last,
+                     item: group,
+                     ..
+                 }| {
+                    if first && group.offset != 0 {
+                        // partial read for the first block is required
+                        partial_first_block = Some(group);
 
-        let mut old_block_start: &[u8] = &[];
-        let old_block_end: &[u8];
+                        let mut remaining = group.group.subgroup(1);
 
-        assert!(offset_in_first_block < BLOCK_SIZE as u64);
+                        if last {
+                            if group.group.count() == 1 {
+                                assert!(remaining.is_none());
+                                // writing only a single block, therefore write_partial_block
+                                // handles both partial data at start and end
+                            } else {
+                                // first group contains first and last block (2 different blocks)
+                                // partial_last_block also points to the first group
+                                partial_last_block = Some(group);
+                                remaining = remaining.and_then(|g| g.remove_end(1));
+                            }
+                        }
+                        remaining
+                    } else if last && group.len != BLOCK_SIZE as u64 {
+                        partial_last_block = Some(group);
+                        group.group.remove_end(1)
+                    } else {
+                        assert_eq!(group.offset, 0);
+                        assert_eq!(group.len, BLOCK_SIZE as u64);
+                        Some(group.group)
+                    }
+                },
+            );
+        let offset = offset as usize;
 
-        if offset_in_first_block > 0 {
-            let first_group = groups
-                .clone()
-                .next()
-                .expect("There should be at least 1 group");
-
-            assert_eq!(offset_in_first_block, first_group.offset);
-            let mut block = Box::try_new(BlockArray::ZERO)?;
-
-            self.device
-                .read_block(first_group.group.start, block.as_mut_slice())
-                .map_err(map_device_error)?;
-
-            old_start_block = Some(block);
-            old_block_start = &old_start_block.as_ref().unwrap()[0..offset_in_first_block as usize];
-        }
-        let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
-        if keep_last_block_data && last_block_end != 0 {
-            let last_group = groups
-                .clone()
-                .last()
-                .expect("There should be at least 1 group");
-            let last_block = last_group.group.end();
-
-            let mut block = Box::try_new(BlockArray::ZERO)?;
-            self.device
-                .read_block(last_block, block.as_mut_slice())
-                .map_err(map_device_error)?;
-            old_end_block = Some(block);
-
-            let last_block_end = (offset_in_first_block + data.len() as u64) % BLOCK_SIZE as u64;
-
-            assert_eq!(last_block_end, last_group.len);
-
-            old_block_end = &old_end_block.as_ref().unwrap()[last_block_end as usize..];
-        } else if last_block_end != 0 {
-            old_block_end = &Block::ZERO.as_slice()[last_block_end as usize..];
-        } else {
-            assert_eq!(last_block_end, 0);
-            old_block_end = [0u8; 0].as_slice();
-        }
-
-        let write_data = WriteData {
-            data,
-            old_block_start,
-            old_block_end,
-        };
+        let full_block_data_len = ((data.len() - offset) / BLOCK_SIZE) * BLOCK_SIZE;
+        let full_block_data: &[u8] = &data[offset..][..full_block_data_len];
 
         self.device
-            .write_blocks_old(groups.map(|g| g.group), write_data)
-            .map_err(map_device_error)
+            .write_blocks(groups, full_block_data)
+            .map_err(map_device_error)?;
+
+        if let Some(first_block_group) = partial_first_block {
+            // if the first block is also the last block, then group.len is the correct length
+            // otherwise we take n bytes, where n is the remaining bytes within a block after the
+            // offset
+            let partial_block_length = min(
+                BLOCK_SIZE - first_block_group.offset as usize,
+                first_block_group.len as usize,
+            );
+            self.device
+                .write_partial_block(
+                    first_block_group.group.start,
+                    &data[..partial_block_length],
+                    first_block_group.offset,
+                )
+                .map_err(map_device_error)?;
+        }
+        if let Some(last_block_group) = partial_last_block {
+            let length_plus_offset = (last_block_group.len + last_block_group.offset) as usize;
+            let last_block_data_len =
+                length_plus_offset - (BLOCK_SIZE * (last_block_group.group.count() as usize - 1));
+            let last_block_data = &data[data.len() - last_block_data_len..];
+            assert_eq!(last_block_data.len(), last_block_data_len);
+
+            self.device
+                .write_partial_block(last_block_group.group.end(), last_block_data, 0)
+                .map_err(map_device_error)?;
+        }
+
+        Ok(())
     }
 }
 

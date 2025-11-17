@@ -410,6 +410,25 @@ pub trait BlockDevice {
     ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>;
 
     /// Write multiple blocks to the device
+    fn write_blocks<I>(
+        &mut self,
+        blocks: I,
+        data: &[u8],
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
+    where
+        I: Iterator<Item = BlockGroup>;
+
+    /// Writes `data` to the block starting at `offset`
+    ///
+    /// This leaves the block unchanged for the region before `offset` and after `data`
+    fn write_partial_block(
+        &mut self,
+        lba: LBA,
+        data: &[u8],
+        offset: u64,
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>;
+
+    /// Write multiple blocks to the device
     #[deprecated]
     fn write_blocks_old<I>(
         &mut self,
@@ -621,6 +640,7 @@ pub mod test {
             Err(TestBlockDeviceError.into())
         }
 
+        #[deprecated]
         fn write_blocks_old<I>(
             &mut self,
             _blocks: I,
@@ -629,6 +649,26 @@ pub mod test {
         where
             I: Iterator<Item = BlockGroup> + Clone,
         {
+            Err(TestBlockDeviceError.into())
+        }
+
+        fn write_blocks<I>(
+            &mut self,
+            _blocks: I,
+            _data: &[u8],
+        ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
+        where
+            I: Iterator<Item = BlockGroup>,
+        {
+            Err(TestBlockDeviceError.into())
+        }
+
+        fn write_partial_block(
+            &mut self,
+            _lba: LBA,
+            _data: &[u8],
+            _offset: u64,
+        ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>> {
             Err(TestBlockDeviceError.into())
         }
     }
@@ -649,10 +689,7 @@ pub mod test {
     #[allow(unused)]
     fn read_from_device<D: BlockDevice>(
         device: &D,
-    ) -> Result<TestField, ReadPointerError<D::BlockDeviceError>>
-    where
-        [(); <D as BlockDevice>::BLOCK_SIZE]:,
-    {
+    ) -> Result<TestField, ReadPointerError<D::BlockDeviceError>> {
         device.read_pointer(DevicePointer::new(LBA::ZERO))
     }
 }

@@ -11,12 +11,8 @@ use block_device::{
     WriteBlockDeviceError, WriteData,
 };
 use log::warn;
-use shared::{
-    alloc_ext::alloc_buffer,
-    iter::{IterExt, PositionInfo},
-};
 use thiserror::Error;
-use wfs::{BLOCK_SIZE, blocks_required_for};
+use wfs::BLOCK_SIZE;
 
 pub struct FileDevice {
     max_block_count: u64,
@@ -206,97 +202,7 @@ impl BlockDevice for FileDevice {
     where
         I: Iterator<Item = BlockGroup> + Clone,
     {
-        assert!(data.is_valid_for(BLOCK_SIZE));
-
-        assert_eq!(
-            blocks_required_for!(data.total_len()),
-            blocks.clone().map(|b| b.count()).sum(),
-            "data.total_len() should fit into exactly the number of blocks specified"
-        );
-
-        let mut unwritten = data.data;
-
-        let mut block_buffer =
-            alloc_buffer(BLOCK_SIZE).map_err(|_| WriteBlockDeviceError::Allocation)?;
-
-        for PositionInfo {
-            index: _,
-            first,
-            last,
-            item: mut block_group,
-        } in blocks.with_positions()
-        {
-            if first
-                && last
-                && block_group.count() == 1
-                && data.old_block_start.len() > 0
-                && data.old_block_end.len() > 0
-            {
-                // There is old data at the start and end. If there is just old data at start or
-                // end, the normal first and last checks handle that case
-
-                let data_start = data.old_block_start.len();
-                let data_past_end = data_start + data.data.len();
-
-                block_buffer[..data_start].copy_from_slice(data.old_block_start);
-                block_buffer[data_start..data_past_end].copy_from_slice(data.data);
-                block_buffer[data_past_end..].copy_from_slice(data.old_block_end);
-
-                self.write_block(block_group.start, block_buffer.as_mut())?;
-                break;
-            }
-
-            if first && data.old_block_start.len() > 0 {
-                block_buffer[..data.old_block_start.len()].copy_from_slice(data.old_block_start);
-
-                let first_block_data_len = BLOCK_SIZE - data.old_block_start.len();
-                let to_write = unwritten
-                    .split_off(..first_block_data_len)
-                    .expect("total_length should be enough for first block");
-                block_buffer[data.old_block_start.len()..].copy_from_slice(to_write);
-
-                self.write_block(block_group.start, block_buffer.as_mut())?;
-
-                block_group = block_group.subgroup(1);
-            }
-
-            if last && data.old_block_end.len() > 0 {
-                let single_block = block_group.count() == 1;
-
-                let last_block_lba = block_group.end();
-                let last_block_data_offset = if !single_block {
-                    block_group = block_group.remove_end(1);
-                    block_group.bytes(BLOCK_SIZE) as usize
-                } else {
-                    0
-                };
-
-                let last_block_to_write_slice = &unwritten
-                    .split_off(last_block_data_offset..)
-                    .expect("There should be enough data for the last block");
-
-                block_buffer[..last_block_to_write_slice.len()]
-                    .copy_from_slice(last_block_to_write_slice);
-
-                self.write_block(last_block_lba, block_buffer.as_mut())?;
-
-                if single_block {
-                    break;
-                }
-            }
-
-            let to_write: &[u8] = unwritten
-                .split_off(..block_group.bytes(BLOCK_SIZE) as usize)
-                .expect("There should be enough data left, because we checked at function start and special handle first and last blocks");
-
-            assert_eq!(to_write.len() % BLOCK_SIZE, 0);
-
-            self.write_blocks_contig(block_group.start, to_write.into())?;
-        }
-
-        assert!(unwritten.is_empty());
-
-        Ok(())
+        todo!("deprecated");
     }
 
     fn read_block_atomic(

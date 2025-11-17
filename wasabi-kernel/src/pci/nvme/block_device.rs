@@ -285,10 +285,10 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
     fn write_blocks_internal<I>(
         &self,
         blocks: I,
-        data: WriteData,
+        data: &[u8],
     ) -> Result<(), WriteBlockDeviceError<NvmeBlockError>>
     where
-        I: Iterator<Item = BlockGroup> + Clone,
+        I: Iterator<Item = BlockGroup>,
     {
         let mut write_idents: StaticVec<(CommandIdentifier, Prp), 64> = StaticVec::new();
         let mut io_queue = self.io_queue.lock();
@@ -437,7 +437,7 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
                 start,
                 block_count.try_into().expect("Count must not be 0"),
             )),
-            WriteData::blocks(data, Self::BLOCK_SIZE),
+            data,
         )
     }
 
@@ -449,6 +449,17 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
     where
         I: Iterator<Item = BlockGroup> + Clone,
     {
+        todo!()
+    }
+
+    fn write_blocks<I>(
+        &mut self,
+        blocks: I,
+        data: &[u8],
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
+    where
+        I: Iterator<Item = BlockGroup>,
+    {
         let blocks = blocks.map(|group| {
             BlockGroup::with_count(
                 self.map_lba(group.start),
@@ -458,6 +469,15 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
             )
         });
         self.write_blocks_internal(blocks, data)
+    }
+
+    fn write_partial_block(
+        &mut self,
+        lba: LBA,
+        data: &[u8],
+        offset: u64,
+    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>> {
+        todo!()
     }
 
     fn read_block_atomic(

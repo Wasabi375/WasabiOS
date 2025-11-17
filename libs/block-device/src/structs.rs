@@ -197,20 +197,31 @@ impl BlockGroup {
     }
 
     /// greate a new group at a given offset (in blocks)
-    pub fn subgroup(&self, block_offset: u64) -> Self {
-        assert!(self.count() > block_offset);
-        BlockGroup::new(self.start + block_offset, self.end())
+    ///
+    /// returns `None` if the group would be empty
+    pub fn subgroup(&self, block_offset: u64) -> Option<Self> {
+        if self.count() > block_offset {
+            Some(BlockGroup::new(self.start + block_offset, self.end()))
+        } else {
+            None
+        }
     }
 
     /// Create a new group with the last n blocks removed
-    pub fn remove_end(&self, blocks_to_remove: u64) -> Self {
-        assert!(self.count() > blocks_to_remove);
-        BlockGroup::new(self.start, self.end() - blocks_to_remove)
+    ///
+    /// returns `None` if the group would be empty
+    pub fn remove_end(&self, blocks_to_remove: u64) -> Option<Self> {
+        if self.count() > blocks_to_remove {
+            Some(BlockGroup::new(self.start, self.end() - blocks_to_remove))
+        } else {
+            None
+        }
     }
 
     /// Create a new group with the same start, but the new length
-    pub fn shorten(&self, new_length: u64) -> Self {
-        assert!(new_length <= self.count());
+    ///
+    /// returns `None` if `new_length` is zero.
+    pub fn with_new_length(&self, new_length: u64) -> Option<Self> {
         self.remove_end(self.count() - new_length)
     }
 }
