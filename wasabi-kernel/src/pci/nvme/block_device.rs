@@ -4,9 +4,7 @@
 use core::iter::once;
 
 use alloc::vec::Vec;
-use block_device::{
-    BlockDevice, BlockGroup, LBA, ReadBlockDeviceError, WriteBlockDeviceError, WriteData,
-};
+use block_device::{BlockDevice, BlockGroup, LBA, ReadBlockDeviceError, WriteBlockDeviceError};
 use log::{debug, error, trace};
 use shared::{MiB, alloc_ext::Strong, counts_required_for, sync::lockcell::LockCell};
 use staticvec::StaticVec;
@@ -439,17 +437,6 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
             )),
             data,
         )
-    }
-
-    fn write_blocks_old<I>(
-        &mut self,
-        blocks: I,
-        data: WriteData,
-    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
-    where
-        I: Iterator<Item = BlockGroup> + Clone,
-    {
-        todo!()
     }
 
     fn write_blocks<I>(

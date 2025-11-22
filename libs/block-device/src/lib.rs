@@ -15,8 +15,6 @@ use core::{
     mem::{MaybeUninit, size_of},
 };
 
-use log::error;
-
 mod structs;
 use shared::alloc_ext::alloc_buffer_aligned;
 pub use structs::*;
@@ -201,81 +199,6 @@ macro_rules! block_size_types {
     };
 }
 
-/// Helper struct containing data that should be written to a [BlockDevice]
-///
-/// Assuming [Self::data] is written to an existing range of blocks, then [Self::old_block_start]
-/// contains the start of the first block that is partially overritten. [Self::old_block_end]
-/// similarly contains the end of the last block that is partially overritten.
-///
-/// The combined size of all 3 fields should be a multiple of the block-size of the
-/// [BlockDevice] the data is written to.
-///
-/// After the write the blocks overritten should contain [Self::old_block_start] followed
-/// by [Self::data] and end with [Self::old_block_end].
-pub struct WriteData<'a> {
-    /// The data to write to the device
-    pub data: &'a [u8],
-
-    /// The old data in the first written block, until the start of [Self::data]
-    pub old_block_start: &'a [u8],
-    /// The old data in the last block, after [Self::data]
-    pub old_block_end: &'a [u8],
-}
-
-impl<'a> WriteData<'a> {
-    /// Create a [WriteData] for a buffer that is exactly `n` blocks in size
-    pub fn blocks(data: &'a [u8], block_size: usize) -> Self {
-        assert!(data.len().is_multiple_of(block_size));
-        Self {
-            data,
-            old_block_start: &[],
-            old_block_end: &[],
-        }
-    }
-
-    /// The total length of the data
-    ///
-    /// This should be a multiple of the block-size of the target [BlockDevice]
-    pub fn total_len(&self) -> usize {
-        self.data.len() + self.old_block_start.len() + self.old_block_end.len()
-    }
-
-    /// Check that `self` is valid and can be written to a [BlockDevice] with the given
-    /// `block_size`.
-    // TODO is_valid check should really be done in a "constructor"
-    pub fn is_valid_for(&self, block_size: usize) -> bool {
-        if self.old_block_start.len() >= block_size {
-            error!(
-                "WriteData.old_block_start({}) must be less than block_size({}). Otherwise WriteData should start at a later block",
-                self.old_block_start.len(),
-                block_size
-            );
-            return false;
-        }
-
-        if self.old_block_end.len() >= block_size {
-            error!(
-                "WriteData.old_block_end({}) must be less than block_size({}). Otherwise WriteData should end at a earlier block",
-                self.old_block_end.len(),
-                block_size
-            );
-            return false;
-        }
-
-        if self.total_len() % block_size != 0 {
-            error!(
-                "WriteData.total_len() ({}) should be a mutliple of block_size({})",
-                self.total_len(),
-                block_size
-            );
-
-            return false;
-        }
-
-        true
-    }
-}
-
 #[derive(thiserror::Error, Debug)]
 #[allow(missing_docs)]
 pub enum ReadBlockDeviceError<BDError: Error + Send + Sync + 'static> {
@@ -428,16 +351,6 @@ pub trait BlockDevice {
         offset: u64,
     ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>;
 
-    /// Write multiple blocks to the device
-    #[deprecated]
-    fn write_blocks_old<I>(
-        &mut self,
-        blocks: I,
-        data: WriteData,
-    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
-    where
-        I: Iterator<Item = BlockGroup> + Clone;
-
     /// Atomically read a block from the device
     ///
     /// `buffer` must have a length of exactly `Self::BLOCK_SIZE`
@@ -549,7 +462,7 @@ pub mod test {
         WriteBlockDeviceError,
     };
 
-    use super::{BlockDevice, ReadBlockDeviceError, WriteData};
+    use super::{BlockDevice, ReadBlockDeviceError};
 
     /// A test block device that errors on use
     #[derive(Debug, Clone, Copy)]
@@ -634,18 +547,6 @@ pub mod test {
             _blocks: I,
             _buffer: &mut [u8],
         ) -> Result<(), ReadBlockDeviceError<TestBlockDeviceError>>
-        where
-            I: Iterator<Item = BlockGroup> + Clone,
-        {
-            Err(TestBlockDeviceError.into())
-        }
-
-        #[deprecated]
-        fn write_blocks_old<I>(
-            &mut self,
-            _blocks: I,
-            _data: WriteData,
-        ) -> Result<(), WriteBlockDeviceError<TestBlockDeviceError>>
         where
             I: Iterator<Item = BlockGroup> + Clone,
         {

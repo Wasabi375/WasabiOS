@@ -7,8 +7,7 @@ use std::{
 };
 
 use block_device::{
-    BlockDevice, BlockGroup, CompareExchangeError, LBA, ReadBlockDeviceError,
-    WriteBlockDeviceError, WriteData,
+    BlockDevice, BlockGroup, CompareExchangeError, LBA, ReadBlockDeviceError, WriteBlockDeviceError,
 };
 use log::warn;
 use thiserror::Error;
@@ -192,17 +191,6 @@ impl BlockDevice for FileDevice {
         }
 
         Ok(())
-    }
-
-    fn write_blocks_old<I>(
-        &mut self,
-        _blocks: I,
-        _data: WriteData,
-    ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>>
-    where
-        I: Iterator<Item = BlockGroup> + Clone,
-    {
-        todo!("deprecated");
     }
 
     fn read_block_atomic(
