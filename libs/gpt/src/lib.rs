@@ -28,6 +28,7 @@ use shared::{
     counts_required_for,
 };
 use thiserror::Error;
+use uuid::{Uuid, uuid};
 
 pub mod chs;
 
@@ -148,29 +149,30 @@ impl Header {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 #[repr(C)]
 #[allow(missing_docs)]
 /// A partition entry for a GPT
 ///
 /// See UEFI spec 5.3.3
 pub struct PartitionEntry {
-    partition_type_guid: [u8; 16],
-    partition_guid: [u8; 16],
-    starting_lba: u64,
+    /// Raw byte representation of the guid
+    pub raw_type_guid: [u8; 16],
+    pub raw_guid: [u8; 16],
+    pub starting_lba: u64,
     /// ending lba of partition (inclusive)
-    ending_lba: u64,
+    pub ending_lba: u64,
 
-    attributes: u64,
+    pub attributes: u64,
 
-    partition_name: [u8; 72],
+    /// I think this is utf-16 formated
+    ///
+    /// null termintated
+    pub partition_name: [u8; 72],
 }
 
 impl PartitionEntry {
-    pub const EFI_GUID: [u8; 16] = [
-        0xc1, 0x2a, 0x73, 0x28, 0xf8, 0x1f, 0x11, 0xd2, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9,
-        0x3b,
-    ];
+    pub const EFI_GUID: Uuid = uuid!("C12A7328-F81F-11D2-BA4B-00A0C93EC93B");
 
     pub fn calculate_array_crc(entries: &[PartitionEntry]) -> u32 {
         let mut hasher = crc32fast::Hasher::new();
@@ -180,12 +182,20 @@ impl PartitionEntry {
         hasher.finalize()
     }
 
+    pub fn guid(&self) -> Uuid {
+        Uuid::from_bytes_le(self.raw_guid)
+    }
+
+    pub fn type_guid(&self) -> Uuid {
+        Uuid::from_bytes_le(self.raw_type_guid)
+    }
+
     pub fn is_used(&self) -> bool {
-        self.partition_type_guid != [0; 16]
+        self.raw_type_guid != [0; 16]
     }
 
     pub fn is_efi_partition(&self) -> bool {
-        self.partition_type_guid == Self::EFI_GUID
+        self.type_guid() == Self::EFI_GUID
     }
 }
 
@@ -194,6 +204,12 @@ pub struct GPT {
     pub partitions: Box<[PartitionEntry]>,
     pub warn_invalid_mbr: Option<protective_mbr::InvalidMBRData>,
     pub warn_invalid_primary_header: Option<InvalidHeader>,
+}
+
+impl GPT {
+    pub fn iter_partitions(&self) -> impl Iterator<Item = &PartitionEntry> {
+        self.partitions.iter().take_while(|entry| entry.is_used())
+    }
 }
 
 impl Debug for GPT {

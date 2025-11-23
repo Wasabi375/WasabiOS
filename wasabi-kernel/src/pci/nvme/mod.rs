@@ -1423,6 +1423,21 @@ fn experiment_gpt(io_queue: Strong<CommandQueue>, capabilities: ControllerCapabi
         Err(e) => panic!("{e}"),
     };
     info!("gpt found: {gpt:#?}");
+    info!("{} partitions found", gpt.iter_partitions().count());
+
+    for partition in gpt.iter_partitions() {
+        debug!(
+            "Partition:\nname: {:?}\ntype: {}({})\nguid: {}\nlba-range: {}-{}",
+            partition.partition_name,
+            partition.type_guid(),
+            Some("efi")
+                .take_if(|_| partition.is_efi_partition())
+                .unwrap_or(""),
+            partition.guid(),
+            partition.starting_lba,
+            partition.ending_lba,
+        )
+    }
 }
 
 fn get_controller_properties_address(pci: &mut PCIAccess, nvme: Device, function: u8) -> PhysAddr {

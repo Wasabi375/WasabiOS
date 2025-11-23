@@ -10,3 +10,4 @@ block-device.workspace = true
 log.workspace = true
 thiserror.workspace = true
 crc32fast.workspace = true
+uuid.workspace = true

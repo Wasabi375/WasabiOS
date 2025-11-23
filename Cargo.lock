@@ -730,6 +730,7 @@ dependencies = [
  "log",
  "shared",
  "thiserror",
+ "uuid",
 ]
 
 [[package]]
