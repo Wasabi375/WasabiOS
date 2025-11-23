@@ -97,6 +97,7 @@ static_assertions = "1.1"
 syn = { version = "2.0.90", features = ["full", "extra-traits"] }
 thiserror = { version = "2.0.4",  default-features = false }
 uuid = { version = "1.11.0", default-features = false }
+volatile = "0.6"
 walkdir = "2.5"
 
 # TODO use upstream version once merged and released

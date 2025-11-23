@@ -3,7 +3,7 @@
 use bit_field::BitField;
 use log::trace;
 use shared_derive::U8Enum;
-use volatile::{access::ReadWrite, Volatile};
+use volatile::{VolatilePtr, access::ReadWrite};
 
 use crate::cpu::interrupts::InterruptVector;
 
@@ -141,8 +141,8 @@ impl Ipi {
 
     pub(super) fn send(
         &self,
-        mut icr_low: Volatile<&mut u32, ReadWrite>,
-        mut icr_high: Volatile<&mut u32, ReadWrite>,
+        icr_low: VolatilePtr<u32, ReadWrite>,
+        icr_high: VolatilePtr<u32, ReadWrite>,
     ) {
         // PERF: this should be fast enough that spin_loop or a failing option seems excessive
         loop {
@@ -165,7 +165,7 @@ impl Ipi {
 
 #[cfg(feature = "test")]
 mod test {
-    use testing::{kernel_test, t_assert_eq, KernelTestError};
+    use testing::{KernelTestError, kernel_test, t_assert_eq};
 
     use super::*;
 

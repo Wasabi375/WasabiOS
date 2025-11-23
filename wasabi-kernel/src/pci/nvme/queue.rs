@@ -9,7 +9,7 @@ use alloc::{collections::VecDeque, vec::Vec};
 use derive_where::derive_where;
 use shared::{math::WrappingValue, sync::lockcell::LockCell};
 use thiserror::Error;
-use volatile::{Volatile, access::WriteOnly};
+use volatile::{VolatileRef, access::WriteOnly};
 use x86_64::structures::paging::{Mapper, Page, PageSize, PageTableFlags, PhysFrame, Size4KiB};
 
 use crate::mem::{
@@ -78,7 +78,7 @@ pub struct CommandQueue {
     /// dorbell that is written to to inform the controller that
     /// new command entries have been submited
     #[derive_where(skip)]
-    pub(super) submission_queue_tail_doorbell: Volatile<&'static mut u32, WriteOnly>,
+    pub(super) submission_queue_tail_doorbell: VolatileRef<'static, u32, WriteOnly>,
     /// The last submission entry index we notified the controller about.
     ///
     /// This diferes from [CommandQueue::submission_queue_tail_local]
@@ -110,7 +110,7 @@ pub struct CommandQueue {
     /// completion entries have been read, freeing the slots
     /// for the controller to fill with new completion entries
     #[derive_where(skip)]
-    pub(super) completion_queue_head_doorbell: Volatile<&'static mut u32, WriteOnly>,
+    pub(super) completion_queue_head_doorbell: VolatileRef<'static, u32, WriteOnly>,
 
     /// the next entry to read from this completion queue.
     ///
@@ -166,8 +166,8 @@ impl CommandQueue {
         stride: isize,
         queue_index: QueueIdentifier,
     ) -> (
-        Volatile<&'static mut u32, WriteOnly>,
-        Volatile<&'static mut u32, WriteOnly>,
+        VolatileRef<'static, u32, WriteOnly>,
+        VolatileRef<'static, u32, WriteOnly>,
     ) {
         assert!(stride >= 4);
 
@@ -179,8 +179,8 @@ impl CommandQueue {
         unsafe {
             // Safety: see outer function
             (
-                submission.as_volatile_mut().write_only(),
-                completion.as_volatile_mut().write_only(),
+                submission.as_volatile_ref_mut().write_only(),
+                completion.as_volatile_ref_mut().write_only(),
             )
         }
     }
@@ -373,6 +373,7 @@ impl CommandQueue {
         );
 
         self.submission_queue_tail_doorbell
+            .as_mut_ptr()
             .write(self.submission_queue_tail_local.value() as u32);
         self.submission_queue_tail = self.submission_queue_tail_local.value();
     }
@@ -435,6 +436,7 @@ impl CommandQueue {
             // we found at least 1 entry, so inform the controller that about the
             // read entries
             self.completion_queue_head_doorbell
+                .as_mut_ptr()
                 .write(self.completion_queue_head.value() as u32);
         }
 
@@ -476,7 +478,7 @@ impl CommandQueue {
             .add(COMPLETION_COMMAND_ENTRY_SIZE * self.completion_queue_head.value() as usize);
         let possible_completion: CommonCompletionEntry = unsafe {
             // Safety: completion queue is properly mapped for read access
-            slot_ptr.as_volatile().read()
+            slot_ptr.as_volatile_ptr().read()
         };
 
         if possible_completion.status_and_phase.phase() != self.completion_expected_phase {
@@ -492,7 +494,7 @@ impl CommandQueue {
 
         let completion: CommonCompletionEntry = unsafe {
             // Safety: completion queue is properly mapped for read access
-            slot_ptr.as_volatile().read()
+            slot_ptr.as_volatile_ptr().read()
         };
         assert_eq!(
             completion.status_and_phase.phase(),

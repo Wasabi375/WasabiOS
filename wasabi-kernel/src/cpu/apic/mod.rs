@@ -15,7 +15,7 @@ use bit_field::BitField;
 use shared::{sync::lockcell::LockCell, todo_warn};
 use thiserror::Error;
 use volatile::{
-    Volatile,
+    VolatilePtr,
     access::{ReadOnly, ReadWrite},
 };
 use x86_64::{
@@ -183,59 +183,72 @@ impl Apic {
 
         register_interrupt_handler(InterruptVector::Spurious, spurious_int_handler)?;
         apic.offset_mut(Offset::SpuriousInterruptVector)
-            .update(|siv| {
+            .update(|mut siv| {
                 siv.set_bit(8, true);
                 siv.set_bits(0..=7, InterruptVector::Spurious as u8 as u32);
+                siv
             });
 
         Ok(apic)
     }
 
-    /// calculate [Volatile] for the given [Offset]
-    fn offset(&self, offset: Offset) -> Volatile<&u32, ReadOnly> {
+    /// calculate [VolatilePtr] for the given [Offset]
+    fn offset<'a>(&'a self, offset: Offset) -> VolatilePtr<'a, u32, ReadOnly> {
         unsafe {
             // saftey: offset is within allocation
             let base_ptr = self.base.offset(offset as isize);
             // safety: we have read access to apic, so we can read it's registers
-            base_ptr.as_volatile()
+            base_ptr.as_volatile_ptr()
         }
     }
 
-    /// calculate [Volatile] low and high for the given [Offset]
+    /// calculate [VolatilePtr] low and high for the given [Offset]
     #[allow(dead_code)]
-    fn offset64(&self, offset: Offset) -> (Volatile<&u32, ReadOnly>, Volatile<&u32, ReadOnly>) {
+    fn offset64<'a>(
+        &'a self,
+        offset: Offset,
+    ) -> (
+        VolatilePtr<'a, u32, ReadOnly>,
+        VolatilePtr<'a, u32, ReadOnly>,
+    ) {
         unsafe {
             // Saftey: offsets within allocaton
             let vaddr_low = self.base.offset(offset as isize);
             let vaddr_high = vaddr_low.offset(0x10);
 
             // safety: we have read access to apic, so we can read it's registers
-            (vaddr_low.as_volatile(), vaddr_high.as_volatile())
+            (vaddr_low.as_volatile_ptr(), vaddr_high.as_volatile_ptr())
         }
     }
 
-    /// calculate mutable [Volatile] for the given [Offset]
-    fn offset_mut(&mut self, offset: Offset) -> Volatile<&mut u32, ReadWrite> {
+    /// calculate mutable [VolatilePtr] for the given [Offset]
+    fn offset_mut<'a>(&'a mut self, offset: Offset) -> VolatilePtr<'a, u32, ReadWrite> {
         unsafe {
             // saftey: offset is within allocation
             let vaddr = self.base.offset(offset as isize);
             // safety: we have mut access to apic, so we can read and write it's registers
-            vaddr.as_volatile_mut()
+            vaddr.as_volatile_ptr_mut()
         }
     }
 
-    /// calculate mutable [Volatile] low and high for the given [Offset]
-    fn offset64_mut(
-        &self,
+    /// calculate mutable [VolatilePtr] low and high for the given [Offset]
+    fn offset64_mut<'a>(
+        &'a self,
         offset: Offset,
-    ) -> (Volatile<&mut u32, ReadWrite>, Volatile<&mut u32, ReadWrite>) {
+    ) -> (
+        VolatilePtr<'a, u32, ReadWrite>,
+        VolatilePtr<'a, u32, ReadWrite>,
+    ) {
         unsafe {
             // Saftey: offsets within allocaton
             let vaddr_low = self.base.offset(offset as isize);
             let vaddr_high = vaddr_low.offset(0x10);
 
             // safety: we have mut access to apic, so we can read and write it's registers
-            (vaddr_low.as_volatile_mut(), vaddr_high.as_volatile_mut())
+            (
+                vaddr_low.as_volatile_ptr_mut(),
+                vaddr_high.as_volatile_ptr_mut(),
+            )
         }
     }
 

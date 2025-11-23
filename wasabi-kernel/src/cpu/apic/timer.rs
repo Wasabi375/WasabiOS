@@ -8,7 +8,7 @@ use crate::{
     time::calibration_tick,
 };
 
-use super::{cpuid, Apic, Offset};
+use super::{Apic, Offset, cpuid};
 
 use core::ops::RangeInclusive;
 
@@ -219,9 +219,10 @@ impl Timer<'_> {
 
         self.apic
             .offset_mut(Offset::TimerLocalVectorTableEntry)
-            .update(|vte| {
+            .update(|mut vte| {
                 vte.set_bit(Timer::MASK_BIT, false);
                 vte.set_bits(Timer::VECTOR_BITS, vector as u8 as u32);
+                vte
             });
 
         old_vector
@@ -232,9 +233,10 @@ impl Timer<'_> {
         log::trace!("disable timer handler");
         self.apic
             .offset_mut(Offset::TimerLocalVectorTableEntry)
-            .update(|vte| {
+            .update(|mut vte| {
                 vte.set_bit(Timer::MASK_BIT, true);
                 vte.set_bits(Timer::VECTOR_BITS, 0);
+                vte
             });
         self.apic.timer.interrupt_vector.take()
     }
@@ -250,13 +252,15 @@ impl Timer<'_> {
                     log::warn!("start timer without vector!");
                 }
                 apic.offset_mut(Offset::TimerDivideConfiguration)
-                    .update(|div| {
+                    .update(|mut div| {
                         div.set_bits(Timer::DIVIDER_BITS, config.divider.into());
+                        div
                     });
                 apic.offset_mut(Offset::TimerLocalVectorTableEntry)
-                    .update(|tlvte| {
+                    .update(|mut tlvte| {
                         tlvte.set_bit(Timer::MASK_BIT, !has_vector);
                         tlvte.set_bits(Timer::MODE_BITS, mode.vector_table_entry_bits());
+                        tlvte
                     });
                 assert_eq!(
                     apic.offset(Offset::TimerLocalVectorTableEntry)
@@ -380,9 +384,7 @@ impl Timer<'_> {
 
         trace!(
             "timer {}, counted {} ticks in {} seconds",
-            timer,
-            elapsed_ticks,
-            elapsed_seconds
+            timer, elapsed_ticks, elapsed_seconds
         );
 
         // rate in mhz

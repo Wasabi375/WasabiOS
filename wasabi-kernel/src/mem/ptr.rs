@@ -11,7 +11,7 @@ use core::{
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use shared::math::IntoU64;
-use volatile::{Volatile, access::ReadOnly};
+use volatile::{VolatilePtr, VolatileRef, access::ReadOnly};
 use x86_64::{
     VirtAddr, align_down, align_up,
     structures::paging::{Page, PageSize},
@@ -132,18 +132,32 @@ impl UntypedPtr {
         unsafe { &mut *self.as_ptr() }
     }
 
-    /// returns a [Volatile] that provides access to this ptr
+    /// returns a [VolatilePtr] that provides access to this ptr
     ///
     /// Safety: Pointer must be a valid *mut* reference
-    pub unsafe fn as_volatile<'a, T>(self) -> Volatile<&'a T, ReadOnly> {
-        unsafe { Volatile::new_read_only(self.as_ref()) }
+    pub unsafe fn as_volatile_ptr<'a, T>(self) -> VolatilePtr<'a, T, ReadOnly> {
+        unsafe { VolatilePtr::new_read_only(self.cast()) }
     }
 
-    /// returns a [Volatile] that provides access to this ptr
+    /// returns a [VolatilePtr] that provides access to this ptr
     ///
     /// Safety: Pointer must be a valid *mut* reference
-    pub unsafe fn as_volatile_mut<'a, T>(self) -> Volatile<&'a mut T> {
-        unsafe { Volatile::new(self.as_mut()) }
+    pub unsafe fn as_volatile_ptr_mut<'a, T>(self) -> VolatilePtr<'a, T> {
+        unsafe { VolatilePtr::new(self.cast()) }
+    }
+
+    /// returns a [VolatileRef] that provides access to this ptr
+    ///
+    /// Safety: Pointer must be a valid *mut* reference
+    pub unsafe fn as_volatile_ref<'a, T>(self) -> VolatileRef<'a, T, ReadOnly> {
+        unsafe { VolatileRef::new_read_only(self.cast()) }
+    }
+
+    /// returns a [VolatilePtr] that provides access to this ptr
+    ///
+    /// Safety: Pointer must be a valid *mut* reference
+    pub unsafe fn as_volatile_ref_mut<'a, T>(self) -> VolatileRef<'a, T> {
+        unsafe { VolatileRef::new(self.cast()) }
     }
 
     /// Calls `memset`.

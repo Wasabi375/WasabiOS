@@ -800,16 +800,18 @@ impl NVMEController {
         assert!(offset + 4 < Size4KiB::SIZE as isize);
         let property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have shared access to self
-            self.controller_base_ptr.offset(offset).as_volatile()
+            self.controller_base_ptr.offset(offset).as_volatile_ptr()
         };
         property.read()
     }
 
     fn write_property_32(&mut self, offset: isize, value: u32) {
         assert!(offset + 4 < Size4KiB::SIZE as isize);
-        let mut property = unsafe {
+        let property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have mutable access to self
-            self.controller_base_ptr.offset(offset).as_volatile_mut()
+            self.controller_base_ptr
+                .offset(offset)
+                .as_volatile_ptr_mut()
         };
         property.write(value)
     }
@@ -819,16 +821,18 @@ impl NVMEController {
         assert!(offset + 8 < Size4KiB::SIZE as isize);
         let property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have shared access to self
-            self.controller_base_ptr.offset(offset).as_volatile()
+            self.controller_base_ptr.offset(offset).as_volatile_ptr()
         };
         property.read()
     }
 
     fn write_property_64(&mut self, offset: isize, value: u64) {
         assert!(offset + 8 < Size4KiB::SIZE as isize);
-        let mut property = unsafe {
+        let property = unsafe {
             // Safety: base_vaddr is mapped for 1 page and we have mutable access to self
-            self.controller_base_ptr.offset(offset).as_volatile_mut()
+            self.controller_base_ptr
+                .offset(offset)
+                .as_volatile_ptr_mut()
         };
         property.write(value)
     }

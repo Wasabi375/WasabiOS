@@ -365,7 +365,7 @@ mod test {
                 // any ptr is alliged for u8
                 let mut ptr = UntypedPtr::new(addr_in_page)
                     .unwrap()
-                    .as_volatile_mut::<u8>();
+                    .as_volatile_ptr_mut::<u8>();
                 ptr.write(12);
                 t_assert_eq!(ptr.read(), 12);
             }
