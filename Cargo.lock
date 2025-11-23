@@ -162,8 +162,9 @@ dependencies = [
 
 [[package]]
 name = "bootloader"
-version = "0.11.10"
-source = "git+https://github.com/Wasabi375/bootloader?branch=fixed_entry#fa4be39490b9939e60721f9e468f0306f831b919"
+version = "0.11.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61e418d2f8952e4a6d935d23ea038daed2fe7707b0118923f91e83bf1fbe64b3"
 dependencies = [
  "anyhow",
  "bootloader-boot-config",
@@ -176,16 +177,18 @@ dependencies = [
 
 [[package]]
 name = "bootloader-boot-config"
-version = "0.11.10"
-source = "git+https://github.com/Wasabi375/bootloader?branch=fixed_entry#fa4be39490b9939e60721f9e468f0306f831b919"
+version = "0.11.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cfbe7f4a5d9843a9a310712e64691f3c474546f02bed7a53ed81775a681d18e"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "bootloader_api"
-version = "0.11.10"
-source = "git+https://github.com/Wasabi375/bootloader?branch=fixed_entry#fa4be39490b9939e60721f9e468f0306f831b919"
+version = "0.11.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba1a4adcd36a49a08c4fb8c13c132fb1ea01a59681b305b46625095318328455"
 
 [[package]]
 name = "bumpalo"

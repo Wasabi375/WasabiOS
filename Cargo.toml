@@ -77,6 +77,8 @@ staticvec = { path = "forked-libs/staticvec" }
 anyhow =  "1.0.94"
 bit_field = "0.10.2"
 bitflags = "2.6.0"
+bootloader = {  version = "0.11.12", default-features = false, features = ["uefi"] }
+bootloader_api = {  version = "0.11.12" }
 crc32fast = { version = "1.5.0", default-features = false }
 crossbeam-epoch = { version = "0.9.18", default-features = false, features = ["alloc"] }
 derive-where = "1.2.7"
@@ -109,13 +111,6 @@ x86_64 = { version = "0.15.1", git = "https://github.com/Wasabi375/x86_64", bran
 
 # TODO: why am I using my fork?
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
-
-# TODO use upstream once new version is released
-bootloader = { git = "https://github.com/Wasabi375/bootloader", branch = "fixed_entry", version = "0.11", default-features = false, features = ["uefi"] }
-# bootloader = { version = "0.12.0", default-features = false, features = ["uefi"] }
-# bootloader = { path = "/home/burkhard/programming/forks/bootloader", default-features = false, features = ["uefi"]}
-# bootloader_api = { version = "0.12" }
-bootloader_api = { git = "https://github.com/Wasabi375/bootloader", branch = "fixed_entry", version = "0.11" }
 
 [profile.dev]
 panic = "abort"
