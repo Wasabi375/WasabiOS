@@ -13,7 +13,7 @@ fuser = { version = "0.15.0", git = "https://github.com/Wasabi375/fuser.git" }
 libc = "0.2.161"
 
 clap = { version = "4.5", features = ["derive"] }
-simple_logger = { version = "4.2.0", default-features = false, features = ["colors"] }
+simple_logger.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 log.workspace = true
 thiserror.workspace = true

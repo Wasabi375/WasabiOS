@@ -6,18 +6,18 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 bootloader.workspace = true
-cargo_toml = "0.20.5"
+cargo_toml = "0.22"
 clap = { version = "4.5", features = ["derive"] }
 fs-err = "3.0.0"
 log.workspace = true
 lzma-rs = "0.3.0"
-nix = { version = "0.29.0", features = [ "term" ] }
+nix = { version = "0.30", features = [ "term" ] }
 sha2 = "0.10.8"
-simple_logger = { version = "4.3.3", default-features = false, features = ["colors"]}
+simple_logger.workspace = true 
 tar = "0.4.41"
 tempfile = "3.12.0"
 tokio = { version = "1.32.0", features = ["full"] }
-ureq = "2.10.1"
+ureq = "3.1"
 
 
 [workspace]
@@ -82,7 +82,7 @@ bootloader_api = {  version = "0.11.12" }
 crc32fast = { version = "1.5.0", default-features = false }
 crossbeam-epoch = { version = "0.9.18", default-features = false, features = ["alloc"] }
 derive-where = "1.2.7"
-hashbrown = "0.15.2"
+hashbrown = "0.16"
 itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
 libm = "0.2.11"
 linkme = "0.3.31"
@@ -92,6 +92,7 @@ noto-sans-mono-bitmap = { version = "0.3.0", features = ["unicode-latin-1-supple
 paste = "1.0.12"
 proc-macro2 = "1.0.92"
 quote = "1.0.37"
+simple_logger = { version = "5.1", default-features = false, features = ["colors"]}
 static_assertions = "1.1"
 syn = { version = "2.0.90", features = ["full", "extra-traits"] }
 thiserror = { version = "2.0.4",  default-features = false }

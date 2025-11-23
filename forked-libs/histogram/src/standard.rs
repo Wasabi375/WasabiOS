@@ -514,7 +514,7 @@ mod tests {
         }
 
         let buckets = histogram.as_slice();
-        let constructed = Histogram::from_buckets(8, 32, buckets.to_vec()).unwrap();
+        let constructed = Histogram::from_buckets(8, 32, buckets.to_vec().into()).unwrap();
 
         assert!(constructed == histogram);
     }

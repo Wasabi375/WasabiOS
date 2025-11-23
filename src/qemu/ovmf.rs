@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use sha2::{Digest, Sha256};
 use std::{
     env,
@@ -208,9 +208,11 @@ fn update_prebuilt() -> Result<PathBuf> {
 
 /// Download `url` and return the raw data.
 fn download_url(url: &str) -> Result<Vec<u8>> {
-    let agent: Agent = ureq::AgentBuilder::new()
-        .user_agent("uefi-rs-ovmf-downloader")
-        .build();
+    let agent: Agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .user_agent("uefi-rs-ovmf-downloader")
+            .build(),
+    );
 
     // Limit the size of the download.
     let max_size_in_bytes = 5 * 1024 * 1024;
@@ -219,7 +221,8 @@ fn download_url(url: &str) -> Result<Vec<u8>> {
     println!("downloading {url}");
     let resp = agent.get(url).call()?;
     let mut data = Vec::with_capacity(max_size_in_bytes);
-    resp.into_reader()
+    resp.into_body()
+        .as_reader()
         .take(max_size_in_bytes.try_into().unwrap())
         .read_to_end(&mut data)?;
     println!("received {} bytes", data.len());
