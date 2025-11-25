@@ -1,5 +1,6 @@
 //! Additional traits and structs that depend on alloc
 
+pub mod leak_allocator;
 pub mod owned_slice;
 pub mod reforbox;
 mod single_arc;
