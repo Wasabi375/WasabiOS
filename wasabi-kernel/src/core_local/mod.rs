@@ -4,7 +4,7 @@
 //! which can be used to access per core static kernel data.
 
 mod statics;
-pub use statics::{CoreStatics, core_boot, get_core_statics, init};
+pub use statics::{CoreStatics, InterruptDisableGuard, core_boot, get_core_statics, init};
 
 /// A [shared::task_local::TaskLocal] based on [CoreId]
 pub type CoreLocal<T> = shared::task_local::TaskLocal<T, CoreInterruptState>;
@@ -111,6 +111,41 @@ impl CoreInfo for CoreInterruptState {
     {
         get_ready_core_count(Ordering::SeqCst)
     }
+
+    fn task_system_is_init(&self) -> bool {
+        locals!().task_system.is_init.load(Ordering::Acquire)
+    }
+
+    unsafe fn write_current_task_name(
+        &self,
+        writer: &mut dyn core::fmt::Write,
+    ) -> Result<(), core::fmt::Error> {
+        let handle = locals!().task_system.current_task(Ordering::Relaxed);
+
+        writer.write_fmt(format_args!("({}", handle.to_u64()))?;
+
+        #[cfg(feature = "log-task-name")]
+        if locals!()
+            .task_system
+            .log_task_locked_data
+            .load(Ordering::Relaxed)
+        {
+            let Some(info) = locals!().task_system.get_task_info(handle) else {
+                return Ok(());
+            };
+
+            if let Some(name) = info.name {
+                writer.write_str(": ")?;
+                writer.write_str(name)?;
+            } else {
+                writer.write_str(": unknown")?;
+            }
+        }
+
+        writer.write_char(')')?;
+
+        Ok(())
+    }
 }
 
 impl InterruptState for CoreInterruptState {
@@ -133,7 +168,7 @@ impl InterruptState for CoreInterruptState {
         if disable_interrupts {
             unsafe {
                 // safety: disbaling interrupts is ok for locked critical sections
-                locals!().disable_interrupts();
+                locals!().disable_interrupts_guardless();
             }
         }
     }

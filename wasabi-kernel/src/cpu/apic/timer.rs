@@ -194,6 +194,11 @@ impl Timer<'_> {
         self.apic.timer.is_running
     }
 
+    /// the interrupt vector currently used by the timer
+    pub fn vector(&self) -> Option<InterruptVector> {
+        self.apic.timer.interrupt_vector
+    }
+
     /// `true` if the hardware supports tsc-deadline mode
     pub fn supports_tsc_deadline(&self) -> bool {
         self.apic.timer.supports_tsc_deadline
@@ -206,13 +211,14 @@ impl Timer<'_> {
         &mut self,
         vector: InterruptVector,
         handler: InterruptFn,
-    ) -> Result<(Option<InterruptVector>, Option<InterruptFn>), TimerError> {
+    ) -> Result<Option<InterruptVector>, TimerError> {
         if self.is_running() {
             return Err(TimerError::TimerRunning);
         }
-        let old_handler = interrupts::register_interrupt_handler(vector, handler);
+        interrupts::register_interrupt_handler(vector, handler)?;
 
-        Ok((self.enable_interrupt_hander(vector)?, old_handler))
+        let old_interrupt_vector = self.enable_interrupt_hander(vector)?;
+        Ok(old_interrupt_vector)
     }
 
     /// unregister the current interrupt for the timer
@@ -288,7 +294,7 @@ impl Timer<'_> {
                 };
 
                 if matches!(mode, TimerMode::OneShot(_)) {
-                    apic.timer.one_shot_inner_handler = interrupts::register_interrupt_handler(
+                    apic.timer.one_shot_inner_handler = interrupts::change_interrupt_handler(
                         int_vector,
                         Self::one_shot_interrupt_handler,
                     );
@@ -463,7 +469,7 @@ impl Timer<'_> {
 
         if let Some(inner_handler) = inner_handler {
             // register the inner_handler as the "real" interrupt handler again
-            interrupts::register_interrupt_handler(int_vec, inner_handler);
+            interrupts::change_interrupt_handler(int_vec, inner_handler);
 
             inner_handler(int_vec, stack_frame)
         } else {

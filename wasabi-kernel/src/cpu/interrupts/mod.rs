@@ -187,9 +187,36 @@ pub enum InterruptRegistrationError {
 
 /// registers a new `handler` for the interrupt `vector`.
 ///
-/// Returns the old hanlder if a handler is already
+/// Fails with [InterruptRegistrationError::InterruptVectorInUse] if a handler is already
 /// registered for this `vector`
 pub fn register_interrupt_handler(
+    vector: InterruptVector,
+    handler: InterruptFn,
+) -> Result<(), InterruptRegistrationError> {
+    check_interrupt_vector(vector);
+
+    // TODO Fail on special use InterruptVectors, e.g. TaskSystem's ContextSwitch
+
+    let mut handler_guard = locals!().interrupt_state.handlers.lock();
+    let handlers = &mut handler_guard;
+
+    let index = (vector as u8 - 32) as usize;
+
+    if handlers[index].is_some() {
+        return Err(InterruptRegistrationError::InterruptVectorInUse(vector));
+    }
+
+    handlers[index] = Some(handler);
+
+    Ok(())
+}
+
+/// registers a new `handler` for the interrupt `vector`.
+///
+/// Returns the old hanlder if a handler is already
+/// registered for this `vector`
+/// FIXME change back to return Err if handler exists. Provide second function that returns Option
+pub fn change_interrupt_handler(
     vector: InterruptVector,
     handler: InterruptFn,
 ) -> Option<InterruptFn> {
@@ -314,7 +341,6 @@ exception_page_fault_fn!(pub(super) page_fault_handler, stack_frame, page_fault,
         PageTable::get_for_kernel().lockcell.get_mut().assume_init_mut()
     };
     let vaddr = Cr2::read().expect("Cr2 is not a valid addr");
-    log::info!("cr2: {vaddr:p}");
     if let TranslateResult::Mapped { frame, offset, flags } = page_table.translate(vaddr) {
         log::warn!(
             "PAGE FAULT: {:p}: frame: {:?}, offset: {:#X}, flags: {:?}",

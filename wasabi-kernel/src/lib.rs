@@ -61,7 +61,6 @@ use x86_64::{
 use crate::{
     core_local::core_boot,
     cpu::{acpi::ACPI, apic, cpuid, halt, interrupts},
-    task::TaskSystem,
 };
 use bootloader_api::{BootInfo, config::Mapping, info::Optional};
 use core::{
@@ -212,8 +211,8 @@ pub unsafe fn processor_init() {
     apic::init().unwrap();
 
     unsafe {
-        // TODO Safety
-        TaskSystem::init();
+        // Safety: once per core during init after apic::init
+        locals!().task_system.init();
     }
 }
 

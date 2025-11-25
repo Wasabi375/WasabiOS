@@ -391,10 +391,14 @@ pub fn max_freeze_heap_count() -> usize {
 }
 
 /// the sizes of the [SlabAllocator]s used by the kernel heap
-const SLAB_ALLOCATOR_SIZES_BYTES: &'static [usize] = &[4, 64, 256];
+// 2440 is the size of xsave-area used for context-switching
+// TODO reassess sizes once xsave has a better allocation strategy
+// TODO reassess sizes
+// FIXME allowing for larger slabs seems to crash, but without any log output
+const SLAB_ALLOCATOR_SIZES_BYTES: &'static [usize] = &[4, 64, 256]; // , 1024, 2440];
 
 /// block size for the [SlabAllocator]
-const SLAB_BLOCK_SIZE: usize = KiB!(1);
+const SLAB_BLOCK_SIZE: usize = KiB!(1); // TODO why is this 1KiB and not 4
 
 /// The allocator trait used by the kernel
 pub trait Allocator {
@@ -475,7 +479,7 @@ impl KernelHeap {
     unsafe fn new<S: PageSize>(pages: Pages<S>) -> Self {
         trace!("KernelHeap::new()");
         let heap = LockedAllocator {
-            allocator: TicketLock::new(LinkedHeap::empty()),
+            allocator: TicketLock::new_non_preemtable(LinkedHeap::empty()),
         };
 
         unsafe {

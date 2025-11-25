@@ -64,6 +64,7 @@ fn write_record<W: Write, CI: CoreInfo>(
     opts: WriteOpts<'_, CI>,
 ) -> Result<(), core::fmt::Error> {
     write_processor::<W, CI>(writer)?;
+    write_task_name::<W, CI>(writer)?;
     writer.write_char(' ')?;
     write_log_level(record, &opts, writer)?;
     writer.write_char(' ')?;
@@ -72,6 +73,18 @@ fn write_record<W: Write, CI: CoreInfo>(
 
     writer.write_fmt(format_args!("{}\n", record.args()))?;
 
+    Ok(())
+}
+
+fn write_task_name<W: Write, CI: CoreInfo>(writer: &mut W) -> Result<(), core::fmt::Error> {
+    let ci = CI::instance();
+    if ci.task_system_is_init() {
+        unsafe {
+            // Safety: task_system is initialized
+            ci.write_current_task_name(writer)?;
+        }
+        writer.write_char(' ')?;
+    }
     Ok(())
 }
 

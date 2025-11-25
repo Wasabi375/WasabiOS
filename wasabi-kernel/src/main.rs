@@ -9,16 +9,12 @@ extern crate alloc;
 #[macro_use]
 extern crate wasabi_kernel;
 
-use core::arch::asm;
-
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
 use wasabi_kernel::{
-    KernelConfig, bootloader_config_common,
-    cpu::interrupts::InterruptVector,
-    default_kernel_config,
+    KernelConfig, bootloader_config_common, default_kernel_config,
     task::{TaskDefinition, TaskSystem},
     time::{self},
 };
@@ -39,11 +35,12 @@ fn kernel_main() -> ! {
 
     if locals!().is_bsp() {
         // wasabi_kernel::pci::pci_experiment();
-        context_switch_experiment();
     }
+    context_switch_experiment();
 
     #[cfg(feature = "mem-stats")]
     if locals!().is_bsp() {
+        // TODO figure out how I can to this at the end of the kernel, with a running Task System
         let level = log::Level::Info;
         KernelHeap::get().lock().stats().log(level);
         PageAllocator::get_for_kernel()
@@ -58,6 +55,7 @@ fn kernel_main() -> ! {
     }
 
     info!("OS core cpu task is done!\t");
+    assert!(!locals!().in_interrupt());
 
     // TODO move into lib. Change kernel_main to return unit
     unsafe {
@@ -67,28 +65,83 @@ fn kernel_main() -> ! {
 }
 
 fn context_switch_experiment() {
+    let task_sytem = &locals!().task_system;
+    // // Safety: tasks do not share stack references
     unsafe {
         let foo = 5u64;
         let bar = 5u64;
-        // Safety: tasks do not share stack references
-        TaskSystem::launch_task(TaskDefinition::new(move || info!("foobar: {}", foo + bar)))
+        task_sytem
+            .launch_task(TaskDefinition::with_name(
+                move || info!("foobar: {}", foo + bar),
+                "foobar",
+            ))
             .unwrap();
-        TaskSystem::launch_task(TaskDefinition::new(count_task)).unwrap();
+        task_sytem
+            .launch_task(TaskDefinition::with_name(count_task, "count"))
+            .unwrap();
+
+        task_sytem
+            .launch_task(TaskDefinition::with_name(calc_pi, "pi"))
+            .unwrap();
+        task_sytem
+            .launch_task(TaskDefinition::with_name(find_primes, "primes"))
+            .unwrap();
     }
 
-    warn!("about to context switch");
-    unsafe {
-        asm!(
-            "int {iv}",
-            iv = const InterruptVector::ContextSwitch as u8,
-        );
-    }
+    task_sytem.start().expect("Timer not in use");
 }
 
 fn count_task() {
     info!("in count task");
     for i in 0..100 {
         info!("{i}");
+    }
+}
+
+fn find_primes() {
+    fn is_prime(x: u64) -> bool {
+        if x == 2 {
+            return true;
+        }
+        if x % 2 == 0 {
+            return false;
+        }
+        let mut factor = 3;
+        while factor < x / 2 {
+            if x % factor == 0 {
+                return false;
+            }
+            factor += 2;
+        }
+        true
+    }
+
+    let mut last_prime = 1;
+    for i in 2.. {
+        if is_prime(i) {
+            if last_prime + 2 == i {
+                info!("{last_prime} and {i} are prime twins");
+            } else {
+                info!("{i} is prime");
+            }
+            last_prime = i;
+        } else {
+            // info!("{i} is not prime");
+        }
+    }
+}
+
+fn calc_pi() {
+    let mut sum = 0.0;
+    let mut sign = 1;
+    for k in 0u64.. {
+        let term = sign as f64 / (2.0 * k as f64 + 1.0);
+        sign *= -1;
+        sum += term;
+
+        if k % 100_000 == 0 {
+            info!("pi({}e5) = {}", k / 100_000, 4.0 * sum);
+        }
     }
 }
 

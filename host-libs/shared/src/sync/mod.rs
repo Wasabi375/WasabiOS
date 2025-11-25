@@ -7,8 +7,8 @@ use std::{
     collections::BTreeMap,
     num::NonZero,
     sync::{
-        atomic::{AtomicU8, Ordering},
         Mutex,
+        atomic::{AtomicU8, Ordering},
     },
 };
 
@@ -65,6 +65,17 @@ impl CoreInfo for StdInterruptState {
         Self: Sized,
     {
         max(num_cpus::get(), u8::MAX as usize - 1) as u8
+    }
+
+    fn task_system_is_init(&self) -> bool {
+        false
+    }
+
+    unsafe fn write_current_task_name(
+        &self,
+        _writer: &mut dyn core::fmt::Write,
+    ) -> Result<(), core::fmt::Error> {
+        Ok(())
     }
 }
 

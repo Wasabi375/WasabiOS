@@ -21,14 +21,14 @@ use uart_16550::SerialPort;
 use log::{debug, error, info, trace, warn};
 
 use crate::{
-    core_local::{get_ready_core_count, CoreInterruptState},
+    core_local::{CoreInterruptState, get_ready_core_count},
     cpu::{
         self,
         apic::ipi::{DeliveryMode, Destination, Ipi},
         halt,
     },
     locals,
-    logger::{set_global_logger, setup_logger_module_rename, MAX_RENAME_MAPPINGS},
+    logger::{MAX_RENAME_MAPPINGS, set_global_logger, setup_logger_module_rename},
     prelude::UnwrapTicketLock,
     serial::{SERIAL1, SERIAL2},
     time::{sleep_tsc, ticks_in},
@@ -37,6 +37,7 @@ use crate::{
 struct PanicNMIPayload {
     barrier: Barrier,
     panicing: CoreId,
+    // TODO TaskInfo
 }
 
 static NMI_PAYLOAD: AtomicPtr<PanicNMIPayload> = AtomicPtr::new(null_mut());
@@ -62,7 +63,7 @@ fn handle_other_core_panic(payload: &PanicNMIPayload) {
     unsafe {
         // its save to disable interrupts, as we are shutting down
         // we shouldn't get interrupts anyways as this is called from an nmi
-        locals!().disable_interrupts();
+        locals!().disable_interrupts_guardless();
     }
 
     payload.barrier.enter();
@@ -85,12 +86,6 @@ enum CoreDisableResult {
 /// The caller must guarantee that `payload` has a static lifetime relative to
 /// the panic
 unsafe fn panic_disable_cores(payload: &mut PanicNMIPayload) -> CoreDisableResult {
-    unsafe {
-        // Safety: we are in a panic state, so anything relying on interrupts is
-        // done for anyways
-        locals!().disable_interrupts();
-    }
-
     if !locals!().nmi_on_panic.load(Ordering::Acquire) {
         if locals!().is_bsp() {
             // Safety:
@@ -195,7 +190,13 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[cfg_attr(feature = "test", allow(unreachable_code, unused_variables))]
 fn panic_impl(info: &PanicInfo) -> ! {
-    // TODO this is running in an endless loop if there are no aps
+    unsafe {
+        // Safety: we are in a panic state, so anything relying on interrupts is
+        // done for anyways
+        locals!().disable_interrupts_guardless();
+        locals!().task_system.panic_stop();
+    }
+
     let core_disable_result = if IN_PANIC.load(Ordering::Acquire) {
         error!(target: "PANIC", "panic in panic! {info:?}");
         CoreDisableResult::AllDisabled

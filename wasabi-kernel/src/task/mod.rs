@@ -1,19 +1,30 @@
-#![allow(missing_docs)] // FIXME
-#![expect(unused_variables)] // TODO remove
+//! A task system that allows per-core concurency
+//!
+//! TODO implement task stealing between cores
+//! FIXME when the timer is to fast I somehow get a page-fault
+//!     I think the issue is that the timer interrupts during
+//!     the interrupt handler, thereby getting a memory access to a
+//!     stack of a wrong task. When that task terminates and drops the stack
+//!     this leads to the page fault.
+//!     I need to look into how interrupts of the same type can stack.
+//!     Otherwise maybe I can cli sti, but that might interfere with my
+//!     interrupt counter.
 
 use core::{
     arch::{asm, naked_asm},
+    ops::Add,
     ptr::DynMetadata,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec};
 use hashbrown::HashMap;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 use shared::{
     alloc_ext::{alloc_buffer_aligned, leak_allocator::LeakAllocator},
-    dbg,
-    sync::lockcell::{LockCell, LockCellGuard},
+    sync::lockcell::{LockCell, LockCellGuard, LockCellInternal},
 };
+use shared_derive::AtomicWrapper;
 use x86_64::{
     VirtAddr,
     registers::{
@@ -21,26 +32,28 @@ use x86_64::{
         rflags::{self, RFlags},
         xcontrol::{XCr0, XCr0Flags},
     },
-    structures::{
-        gdt::SegmentSelector,
-        idt::InterruptStackFrame,
-        paging::{Size4KiB, Translate},
-    },
+    structures::{gdt::SegmentSelector, idt::InterruptStackFrame, paging::Size4KiB},
 };
 
 use crate::{
     DEFAULT_STACK_SIZE,
+    core_local::{AutoRefCounterGuard, InterruptDisableGuard},
     cpu::{
         self,
-        apic::Apic,
+        apic::{
+            Apic,
+            timer::{TimerConfig, TimerDivider, TimerError, TimerMode},
+        },
         cpuid::{CPUCapabilities, cpuid},
+        interrupts::InterruptVector,
     },
     locals,
-    mem::{MemError, page_allocator::PageAllocator, page_table::PageTable, structs::GuardedPages},
+    mem::{MemError, page_allocator::PageAllocator, structs::GuardedPages},
     pages_required_for,
     prelude::UnwrapTicketLock,
 };
 
+/// A Task in the [TaskSystem]
 struct Task {
     /// Optional debug name for the task
     name: Option<&'static str>,
@@ -63,8 +76,17 @@ struct Task {
 
 impl Drop for Task {
     fn drop(&mut self) {
-        error!("dropping task");
+        if let Some(name) = self.name {
+            debug!("dropping task: {name}");
+        } else {
+            debug!("dropping unnamed task");
+        }
         if let Some(stack) = self.stack.take() {
+            debug!(
+                "dropping stack: {:p} - {:p}",
+                stack.start_addr(),
+                stack.end_addr()
+            );
             unsafe {
                 // Safety: Stack is no longer in use
                 match stack.unmap() {
@@ -72,7 +94,7 @@ impl Drop for Task {
                         PageAllocator::get_for_kernel()
                             .lock()
                             // pages just unmapped
-                            .free_guarded_pages(stack);
+                            .free_guarded_pages(unmapped);
                     }
                     Err(e) => error!(
                         "Failed to unmap stack for task {}. Leaking memory\n{e}",
@@ -84,18 +106,34 @@ impl Drop for Task {
     }
 }
 
+/// Publicly accessible data about a [Task]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskInfo {
+    /// The [TaskHandle]
+    pub handle: TaskHandle,
+    /// A debug name for the task
+    pub name: Option<&'static str>,
+}
+
+/// Describes a Task that can be launched
 #[derive(Debug, Clone)]
 pub struct TaskDefinition<F> {
+    /// A lambda for the task, that is executed sometime in the future
     pub task: F,
 
+    /// A debug name for the task
     pub debug_name: Option<&'static str>,
 
+    /// The stack size for the task stack.
     pub stack_size: u64,
+    /// Whether to create a guard page for the stack
     pub stack_head_guard: bool,
+    /// Whether to create a guard page for the stack
     pub stack_tail_guard: bool,
 }
 
 impl<F> TaskDefinition<F> {
+    /// Create a new [TaskDefinition]
     pub const fn new(task: F) -> Self {
         Self {
             task,
@@ -105,36 +143,507 @@ impl<F> TaskDefinition<F> {
             stack_tail_guard: true,
         }
     }
+
+    /// Create a new [TaskDefinition]
+    pub const fn with_name(task: F, name: &'static str) -> Self {
+        Self {
+            task,
+            debug_name: Some(name),
+            stack_size: DEFAULT_STACK_SIZE,
+            stack_head_guard: true,
+            stack_tail_guard: true,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A unique Handle for a [Task]
+///
+/// Handles are unique across cores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AtomicWrapper)]
 pub struct TaskHandle(u64);
 
-impl TaskHandle {
-    pub const CORE_TASK: Self = TaskHandle(0);
-    const FIRST_NON_RESERVED: Self = TaskHandle(1);
+impl Add<TaskHandle> for TaskHandle {
+    type Output = TaskHandle;
+
+    fn add(self, rhs: TaskHandle) -> Self::Output {
+        TaskHandle(self.0 + rhs.0)
+    }
 }
 
+/// the next unused [TaskHandle].
+static NEXT_FREE_HANDLE: AtomicTaskHandle = AtomicTaskHandle::new(TaskHandle(0));
+
+impl TaskHandle {
+    /// Returns an unused [TaskHandle]
+    ///
+    /// this function only produces the same value once.
+    fn take_next() -> TaskHandle {
+        // TODO I want to change this so I can impl this as fetch_add(1)
+        NEXT_FREE_HANDLE.fetch_add(TaskHandle(1), Ordering::Relaxed)
+    }
+
+    /// Returns the inner value
+    pub fn to_u64(&self) -> u64 {
+        self.0
+    }
+}
+
+/// A task system for a cpu-core
+///
+/// This allows for single-core concurent task execution.
 pub struct TaskSystem {
+    /// the [TaskHandle] of the task currently executing on this cpu-core.
+    current_task: AtomicTaskHandle,
+
+    /// Whether the task system is running. If set to `true` the task system can interrupt
+    /// the executing task at any time in order to switch to another system.
+    running: AtomicBool,
+
+    /// Whether the interrupt timer is running.
+    /// The timer might be disabled if there are currently no tasks interrupted tasks available.
+    /// However the timer can be restarted any time as long as [Self::running] is `true`.
+    timer_running: AtomicBool,
+
+    /// Used to decide whether to logger can access the data lock.
+    pub log_task_locked_data: AtomicBool,
+
+    /// Set to true when the [TaskSystem] is initialized
+    ///
+    /// Accessed by [CoreInfo](shared::sync::CoreInfo) to provide better debug data
+    pub is_init: AtomicBool,
+
+    /// system data that needs locked access
+    data: UnwrapTicketLock<SystemData>,
+}
+
+/// Data used by the [TaskSystem] that is accessed via a lock
+struct SystemData {
+    /// A list of all running tasks
     tasks: HashMap<TaskHandle, Task>,
 
-    current_task: TaskHandle,
-
-    next_free_handle: TaskHandle,
-
+    /// a list of tasks that are currentyl interrupted and can be resumed at a future time
     interrupted: VecDeque<TaskHandle>,
 
+    /// Terminated but not yet dropped tasks.
+    ///
+    /// Dropping [Task] is not always save, as we need to ensure that dropping does not free
+    /// the stack that is used while dropping.
     terminated: Vec<Task>,
 }
 
-pub struct TaskInterrupt {
+impl TaskSystem {
+    /// Creats a new uninitialized [TaskSystem]
+    ///
+    /// # Safety
+    ///
+    /// Caller ensures that [Self::init] is called before anything else
+    pub const unsafe fn new() -> Self {
+        TaskSystem {
+            current_task: AtomicTaskHandle::new(TaskHandle(0)),
+            running: AtomicBool::new(false),
+            timer_running: AtomicBool::new(false),
+            is_init: AtomicBool::new(false),
+            log_task_locked_data: AtomicBool::new(true),
+            data: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
+        }
+    }
+
+    /// Initializes the task system
+    ///
+    /// This does not start the timer. use [Self::start] for that
+    ///
+    /// # Safety
+    ///
+    /// This needs to be called during process initialization, once per core
+    /// and relies on a working apic
+    pub unsafe fn init(&self) {
+        setup_xsave();
+
+        let mut tasks = HashMap::new();
+        let current_task = TaskHandle::take_next();
+        tasks.insert(
+            current_task,
+            Task {
+                name: Some("cpu-core"),
+                last_interrupt: None,
+                stack: None,
+            },
+        );
+
+        let system_data = SystemData {
+            tasks,
+            interrupted: VecDeque::new(),
+            terminated: Vec::new(),
+        };
+        self.data.lock_uninit().write(system_data);
+        self.current_task.store(current_task, Ordering::Release);
+
+        self.is_init.store(true, Ordering::Release);
+    }
+
+    /// Stop the task system on panic
+    ///
+    /// # Safety
+    ///
+    /// This should only be called on panic
+    pub unsafe fn panic_stop(&self) {
+        // Safety: we are panicing
+        unsafe {
+            LockCellInternal::<Apic>::shatter_permanent(&locals!().apic);
+        }
+        let mut apic = locals!().apic.lock();
+        let mut timer = apic.timer();
+        timer.stop();
+
+        self.running.store(false, Ordering::SeqCst);
+        self.timer_running.store(false, Ordering::SeqCst);
+
+        unsafe {
+            // Safety: try to prevent deadlocks during panic shutdown
+            LockCellInternal::<SystemData>::shatter_permanent(&self.data);
+        }
+    }
+
+    /// `true` if the task system is running
+    ///
+    /// If so the task system can interrupt
+    /// the executing task at any time in order to switch to another system.
+    /// Use [Self::start] and [Self::pause] to set.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::Acquire)
+    }
+
+    /// Returns the [TaskHandle] of the [Task] currently executing on the [TaskSystem]
+    pub fn current_task(&self, order: Ordering) -> TaskHandle {
+        self.current_task.load(order)
+    }
+
+    /// Get some basic information about a [Task]
+    pub fn get_task_info(&self, handle: TaskHandle) -> Option<TaskInfo> {
+        let data = self.data.lock();
+        let Some(task) = data.tasks.get(&handle) else {
+            return None;
+        };
+
+        Some(TaskInfo {
+            handle,
+            name: task.name,
+        })
+    }
+
+    /// Enable the task system and starts the timer
+    ///
+    /// While running the task system can interrupt
+    /// the executing task at any time in order to switch to another system.
+    ///
+    /// returns the interrupt vector that was previously used by the timer
+    pub fn start(&self) -> Result<Option<InterruptVector>, TimerError> {
+        if self.is_running() {
+            warn!("already running");
+            return Ok(None);
+        }
+        info!("Starting task system");
+
+        let _guard = unsafe { InternalGuard::non_interrupt_enter() };
+
+        self.running.store(true, Ordering::Release);
+
+        let res = self.start_timer(self.data.lock().as_ref());
+        res
+    }
+
+    /// Pauses the task system.
+    ///
+    /// use [Self::start] to restart it
+    pub fn pause(&self) {
+        if !self.is_running() {
+            warn!("not running. pause is noop");
+            return;
+        }
+
+        debug!("stopping timer");
+        let _guard = unsafe { InternalGuard::non_interrupt_enter() };
+
+        self.running.store(false, Ordering::Release);
+        self.stop_timer(self.data.lock().as_ref());
+    }
+
+    /// Start/restart the APIC timer to switch between tasks
+    ///
+    /// returns the interrupt vector that was previously used by the timer
+    fn start_timer(&self, _data_guard: &SystemData) -> Result<Option<InterruptVector>, TimerError> {
+        let mut apic = locals!().apic.lock();
+        let mut timer = apic.timer();
+
+        if timer.is_running() {
+            assert!(self.timer_running.load(Ordering::Acquire));
+            error!("Can't start TaskSystem timer if timer is already running");
+            return Err(TimerError::TimerRunning);
+        }
+        assert!(!self.timer_running.load(Ordering::Acquire));
+        // no need to set a handler since, ContextSwitch uses a special case handler that
+        // can't be changed
+        let mut old_vec = timer.enable_interrupt_hander(InterruptVector::ContextSwitch)?;
+        if let Some(int_vec) = old_vec
+            && int_vec == InterruptVector::ContextSwitch
+        {
+            old_vec = None;
+        }
+
+        let timer_cycles = u32::try_from(timer.rate_mhz() * 1_000_000 / 1_000)
+            .expect("timer duration should really fit into a u32")
+            * 100; // TODO temp 
+
+        let config = TimerConfig {
+            divider: TimerDivider::DivBy1,
+            duration: timer_cycles, // TODO what is a good interval
+        };
+
+        self.timer_running.store(true, Ordering::Release);
+        timer.start(TimerMode::Periodic(config))?;
+        debug!("timer started");
+
+        Ok(old_vec)
+    }
+
+    /// Stop/pause the APIC timer
+    fn stop_timer(&self, _data_guard: &SystemData) {
+        let mut apic = locals!().apic.lock();
+        let mut timer = apic.timer();
+        assert_eq!(timer.vector(), Some(InterruptVector::ContextSwitch));
+        self.timer_running.store(false, Ordering::Release);
+
+        timer.stop();
+        debug!("timer stopped");
+    }
+
+    /// Launch the defined task
+    ///
+    /// # Safety
+    ///
+    /// the task may not terminate while references into the tasks stack exist
+    pub unsafe fn launch_task<F>(
+        &self,
+        task_definition: TaskDefinition<F>,
+    ) -> Result<TaskHandle, MemError>
+    where
+        F: FnOnce() -> (),
+        F: Sized,
+    {
+        let stack = PageAllocator::get_for_kernel()
+            .lock()
+            .allocate_guarded_pages::<Size4KiB>(
+                pages_required_for!(Size4KiB, task_definition.stack_size),
+                task_definition.stack_head_guard,
+                task_definition.stack_tail_guard,
+            )?;
+
+        let stack = unsafe {
+            // Safety: stack is newly allocated and therefor not mapped
+            stack.map()?
+        };
+
+        let mut launch_rflags = rflags::read();
+        launch_rflags.set(RFlags::INTERRUPT_FLAG, true);
+        launch_rflags.set(RFlags::OVERFLOW_FLAG, false);
+        launch_rflags.set(RFlags::SIGN_FLAG, false);
+        launch_rflags.set(RFlags::ZERO_FLAG, false);
+        launch_rflags.set(RFlags::AUXILIARY_CARRY_FLAG, false);
+        launch_rflags.set(RFlags::PARITY_FLAG, false);
+        launch_rflags.set(RFlags::CARRY_FLAG, false);
+
+        let stack_end = stack.end_addr().align_down(16u64);
+        let task_size = size_of::<F>() as u64;
+        let task_def_start_addr = (stack_end - task_size).align_down(align_of::<F>() as u64);
+
+        let stack_end_minus_task = task_def_start_addr.align_down(16u64);
+
+        unsafe {
+            task_def_start_addr
+                .as_mut_ptr::<F>()
+                .write(task_definition.task);
+        }
+        let task_ptr = task_def_start_addr.as_mut_ptr::<F>();
+        let task_dyn_ptr = task_ptr as *mut DynTask;
+        let (task_thin, task_meta) = task_dyn_ptr.to_raw_parts();
+
+        let mut registers = InterruptRegisterState::default();
+        // rdi contains first argument
+        registers.rdi = task_thin as u64;
+        // rsi contains second argument
+        // Safety: DynMetadata is a NonNull wrapper and therefor can be transmuted into a u64
+        registers.rsi = unsafe { core::mem::transmute(task_meta) };
+
+        // TODO locals is wrong here. I need the gdt for the cpu core that the task is launched on
+        let segments = locals!().gdt.kernel_segments();
+
+        let launch_interrupt_fake = TaskInterrupt {
+            stack_frame: InterruptStackFrame::new(
+                VirtAddr::new(task_entry as *mut () as usize as u64),
+                segments.code,
+                launch_rflags,
+                stack_end_minus_task,
+                SegmentSelector::NULL,
+            ),
+            registers,
+            xsave_area: None,
+        };
+
+        let task = Task {
+            name: task_definition.debug_name,
+            stack: Some(stack),
+            last_interrupt: Some(launch_interrupt_fake),
+        };
+
+        let mut data = self.data.lock();
+        let _guard = unsafe { InternalGuard::non_interrupt_enter() };
+
+        let new_handle = TaskHandle::take_next();
+        let old_task_value = data.tasks.insert(new_handle, task);
+        assert!(old_task_value.is_none());
+
+        debug!(
+            "new task {:?} stack: {:p} - {:p}",
+            new_handle,
+            stack.start_addr(),
+            stack_end_minus_task
+        );
+
+        data.interrupted.push_back(new_handle);
+
+        if self.is_running() && !self.timer_running.load(Ordering::Acquire) {
+            if let Some(old_vec) = self
+                .start_timer(&data)
+                .expect("Restarting timer should work.")
+            {
+                warn!("TaskSystem is overwriting timer interrupt vector. Old vector: {old_vec}");
+            }
+        }
+
+        Ok(new_handle)
+    }
+
+    /// Terminates the current task
+    ///
+    /// The task system will switch to another running task if one exist
+    /// or halt the cpu if not.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that there are no active references into the stack if
+    /// the task was spawned with an owned stack.
+    pub unsafe fn terminate_task() -> ! {
+        // FIXME somehwo we are terminating 1 additional task
+        // FIXME why are we in an interrupt?
+        // assert!(!locals!().in_interrupt());
+
+        // Safety: enter context switch from outside interrupt
+        let int_guard = unsafe { InternalGuard::non_interrupt_enter() };
+
+        // task needs to terminate on the system it is running on. Therefor this is not using self
+        let this = &locals!().task_system;
+        let mut data = this.data.lock();
+
+        let current_handle = this.current_task.load(Ordering::Acquire);
+        let current_task = data
+            .tasks
+            .remove(&current_handle)
+            .expect("Current task should always exist");
+
+        assert!(current_task.last_interrupt.is_none());
+        warn!(
+            "terminate task {current_handle:?} {}",
+            current_task.name.unwrap_or("")
+        );
+
+        // NOTE can't drop current_task right now, this function uses the stack
+        // owned by it. Dropping it now would also unmap the stack. Instead we
+        // keep track of terminated tasks and drop them later.
+        data.terminated.push(current_task);
+
+        if let Some(next_task_handle) = data.interrupted.pop_front() {
+            debug!("next task: {next_task_handle:?}");
+            this.resume_task(data, next_task_handle, int_guard);
+        } else {
+            info!("No tasks ready to resume. Halting");
+            if this.timer_running.load(Ordering::Acquire) {
+                this.stop_timer(&data);
+            }
+            drop(data);
+            // reenable interrupts befor halt
+            drop(int_guard);
+            cpu::halt();
+        }
+    }
+
+    /// Called by the context-switch interrupt handler
+    fn task_interrupted(interrupt: TaskInterrupt, int_guard: InternalGuard) -> ! {
+        // Called from interrupt. This needs to be the TaskSystem for the current cpu
+        let this = &locals!().task_system;
+
+        let mut data = this.data.lock();
+
+        // TODO this is not the best time to drop terminated tasks. Instead I want
+        // to have some kind of cleanup task. But this works for now
+        // TODO I should be able to change PageTable/PageAlloc/PhysAlloc locks to be preemtable
+        // once this is no longer in the context-switch path
+        data.terminated.clear();
+
+        let current_handle = this.current_task.load(Ordering::Acquire);
+        let current_task = data
+            .tasks
+            .get_mut(&current_handle)
+            .expect("Current task should always exist");
+
+        assert!(current_task.last_interrupt.is_none());
+        current_task.last_interrupt = Some(interrupt);
+
+        data.interrupted.push_back(current_handle);
+
+        let next_task_handle = data
+            .interrupted
+            .pop_front()
+            .expect("This should always at least contain the currently interrupted task");
+
+        this.resume_task(data, next_task_handle, int_guard);
+    }
+
+    /// resumes a [Task]
+    fn resume_task<L: LockCell<SystemData>>(
+        &self,
+        mut data: LockCellGuard<'_, SystemData, L>,
+        next_task_handle: TaskHandle,
+        int_guard: InternalGuard,
+    ) -> ! {
+        let next_task = data
+            .tasks
+            .get_mut(&next_task_handle)
+            .expect("Task should always exist if we find the handle");
+
+        let Some(next_task_interrupt) = next_task.last_interrupt.take() else {
+            panic!("next task was never iterrupted");
+        };
+        self.current_task.store(next_task_handle, Ordering::Release);
+
+        drop(data);
+
+        next_task_interrupt.resume(int_guard)
+    }
+}
+
+/// The state of an interrupted [Task]
+///
+/// can be used to [Self::resume] a [Task]
+struct TaskInterrupt {
     stack_frame: InterruptStackFrame,
     registers: InterruptRegisterState,
     xsave_area: Option<Box<[u8]>>,
 }
 
 impl TaskInterrupt {
-    fn resume(self) -> ! {
+    /// resumes the interrupted task
+    fn resume(self, int_guard: InternalGuard) -> ! {
+        // NOTE: logging here causes deadlock
         #[inline]
         extern "C" fn dealloc_xsave_area(ptr: *mut u8, len: usize) {
             unsafe {
@@ -142,13 +651,18 @@ impl TaskInterrupt {
                 let _ = Box::from_raw(core::ptr::slice_from_raw_parts_mut(ptr, len));
             }
         }
-        warn!("resume at {:p}", self.stack_frame.instruction_pointer);
+
         let (xsave_area_size, xsave_area) = if let Some(xsave_area) = self.xsave_area {
             (xsave_area.len(), Box::leak(xsave_area).as_mut_ptr())
         } else {
             (0, core::ptr::null_mut())
         };
         assert!(xsave_area.is_aligned_to(64));
+
+        // ensure to keep track of interrupt counters
+        // drop manually as the assembly exits the function without automatically dorpping
+        drop(int_guard);
+
         unsafe {
             // Saftey: this has to be done in assembly
             asm!(
@@ -229,218 +743,66 @@ impl TaskInterrupt {
     }
 }
 
-impl TaskSystem {
-    pub unsafe fn init() {
-        setup_xsave();
+/// Guards general access to TaskSystem internals
+///
+/// this includes
+/// * inc/dec interrupt count (if applicable)
+/// * en/disable interrupts (if necessary)
+/// * stop logger from accessing task state (deadlock prevention)
+struct InternalGuard {
+    _int_count_guard: Option<AutoRefCounterGuard<'static>>,
+    _int_disable_guard: Option<InterruptDisableGuard>,
+}
 
-        let mut tasks = HashMap::new();
-        tasks.insert(
-            TaskHandle::CORE_TASK,
-            Task {
-                name: Some("cpu-core"),
-                last_interrupt: None,
-                stack: None,
-            },
-        );
-
-        let system = TaskSystem {
-            tasks,
-            current_task: TaskHandle::CORE_TASK,
-            next_free_handle: TaskHandle::FIRST_NON_RESERVED,
-            interrupted: VecDeque::new(),
-            terminated: Vec::new(),
-        };
-        locals!().task_system.lock_uninit().write(system);
-    }
-
-    /// Launch the defined task
+impl InternalGuard {
+    /// Interrupt leading to context switch entered TaskSystem
     ///
-    /// # Safety
+    /// Safety:
     ///
-    /// the task may not terminate while references into the tasks stack exist
-    pub unsafe fn launch_task<F>(task_definition: TaskDefinition<F>) -> Result<TaskHandle, MemError>
-    where
-        F: FnOnce() -> (),
-        F: Sized,
-    {
-        let stack = PageAllocator::get_for_kernel()
-            .lock()
-            .allocate_guarded_pages::<Size4KiB>(
-                pages_required_for!(Size4KiB, task_definition.stack_size),
-                task_definition.stack_head_guard,
-                task_definition.stack_tail_guard,
-            )?;
+    /// must be called once in interrupts in code paths that lead to [TaskInterrupt::resume]
+    /// before [SystemData] lock is taken to ensure context-switch is not preemted
+    /// by another context-switch
+    #[must_use]
+    unsafe fn interrupt_enter() -> Self {
+        locals!()
+            .task_system
+            .log_task_locked_data
+            .store(false, Ordering::Relaxed);
 
-        let stack = unsafe {
-            // Safety: stack is newly allocated and therefor not mapped
-            stack.map()?
-        };
-
-        let mut launch_rflags = rflags::read();
-        launch_rflags.set(RFlags::INTERRUPT_FLAG, true);
-        launch_rflags.set(RFlags::OVERFLOW_FLAG, false);
-        launch_rflags.set(RFlags::SIGN_FLAG, false);
-        launch_rflags.set(RFlags::ZERO_FLAG, false);
-        launch_rflags.set(RFlags::AUXILIARY_CARRY_FLAG, false);
-        launch_rflags.set(RFlags::PARITY_FLAG, false);
-        launch_rflags.set(RFlags::CARRY_FLAG, false);
-
-        let stack_end = stack.end_addr().align_down(16u64);
-        let task_size = size_of::<F>() as u64;
-        let task_def_start_addr = (stack_end - task_size).align_down(align_of::<F>() as u64);
-
-        let stack_end_minus_task = task_def_start_addr.align_down(16u64);
-
-        debug!(
-            "new task stack: {:p} - {:p}",
-            stack.start_addr(),
-            stack_end_minus_task
-        );
-
-        unsafe {
-            task_def_start_addr
-                .as_mut_ptr::<F>()
-                .write(task_definition.task);
-        }
-        let task_ptr = task_def_start_addr.as_mut_ptr::<F>();
-        let task_dyn_ptr = task_ptr as *mut DynTask;
-        let (task_thin, task_meta) = task_dyn_ptr.to_raw_parts();
-
-        let mut registers = InterruptRegisterState::default();
-        // rdi contains first argument
-        registers.rdi = task_thin as u64;
-        // rsi contains second argument
-        registers.rsi = unsafe {
-            // Safety: DynMetadata is a NonNull wrapper and therefor can be transmuted into a u64
-            core::mem::transmute(task_meta)
-        };
-        warn!(
-            "prep launch task with rdi: {:#x}, rsi: {:#x}",
-            registers.rdi, registers.rsi
-        );
-
-        {
-            let page_table = PageTable::get_for_kernel().lock();
-            dbg!(page_table.translate(VirtAddr::new(0x30000158608)));
-        }
-
-        let segments = locals!().gdt.kernel_segments();
-
-        let launch_interrupt_fake = TaskInterrupt {
-            stack_frame: InterruptStackFrame::new(
-                VirtAddr::new(task_entry as *mut () as usize as u64),
-                segments.code,
-                launch_rflags,
-                stack_end_minus_task,
-                SegmentSelector::NULL,
-            ),
-            registers,
-            xsave_area: None,
-        };
-
-        let task = Task {
-            name: task_definition.debug_name,
-            stack: Some(stack),
-            last_interrupt: Some(launch_interrupt_fake),
-        };
-
-        let mut system = locals!().task_system.lock();
-        let new_handle = system.take_next_handle();
-        let old_task_value = system.tasks.insert(new_handle, task);
-        assert!(old_task_value.is_none());
-        system.interrupted.push_back(new_handle);
-
-        Ok(new_handle)
-    }
-
-    /// Terminates the current task
-    ///
-    /// The task system will switch to another running task if one exist
-    /// or halt the cpu if not.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure that there are no active references into the stack if
-    /// the task was spawned with an owned stack.
-    pub unsafe fn terminate_task() -> ! {
-        let mut system = locals!().task_system.lock();
-
-        let current_handle = system.current_task;
-        let current_task = system
-            .tasks
-            .remove(&current_handle)
-            .expect("Current task should always exist");
-
-        assert!(current_task.last_interrupt.is_none());
-        warn!("terminate task {current_handle:?}");
-
-        // NOTE can't drop current_task right now, this function uses the stack
-        // owned by it. Dropping it now would also unmap the stack. Instead we
-        // keep track of terminated tasks and drop them later.
-        system.terminated.push(current_task);
-
-        if let Some(next_task_handle) = system.interrupted.pop_front() {
-            Self::resume_task(system, next_task_handle);
-        } else {
-            info!("Last task terminated");
-            // TODO stop timer
-            drop(system);
-            cpu::halt();
+        Self {
+            _int_count_guard: Some(locals!().interrupt_count.increment()),
+            _int_disable_guard: None,
         }
     }
 
-    pub fn task_interrupted(interrupt: TaskInterrupt) -> ! {
-        let mut system = locals!().task_system.lock();
+    /// Enter a context switch without an existing interrupt
+    ///
+    /// Safety:
+    ///
+    /// must be called once  in *non* interrupts in code paths that lead to [TaskInterrupt::resume]
+    /// before [SystemData] lock is taken to ensure context-switch is not preemted
+    /// by another context-switch
+    #[must_use]
+    unsafe fn non_interrupt_enter() -> Self {
+        locals!()
+            .task_system
+            .log_task_locked_data
+            .store(false, Ordering::Relaxed);
 
-        // TODO this is not the best time to drop terminated tasks. Instead I want
-        // to have some kind of cleanup task. But this works for now
-        system.terminated.clear();
-
-        let current_handle = system.current_task;
-        let current_task = system
-            .tasks
-            .get_mut(&current_handle)
-            .expect("Current task should always exist");
-
-        assert!(current_task.last_interrupt.is_none());
-        current_task.last_interrupt = Some(interrupt);
-
-        system.interrupted.push_back(current_handle);
-
-        let next_task_handle = system
-            .interrupted
-            .pop_front()
-            .expect("This should always at least contain the currently interrupted task");
-
-        Self::resume_task(system, next_task_handle);
+        let disable = unsafe { locals!().disable_interrupts() };
+        Self {
+            _int_count_guard: None,
+            _int_disable_guard: Some(disable),
+        }
     }
+}
 
-    fn take_next_handle(&mut self) -> TaskHandle {
-        let handle = self.next_free_handle;
-        self.next_free_handle = TaskHandle(handle.0 + 1);
-        handle
-    }
-
-    fn resume_task(
-        mut system: LockCellGuard<'_, TaskSystem, UnwrapTicketLock<TaskSystem>>,
-        next_task_handle: TaskHandle,
-    ) -> ! {
-        trace!("resume task {next_task_handle:?}");
-        let next_task = system
-            .tasks
-            .get_mut(&next_task_handle)
-            .expect("Task should always exist if we find the handle");
-
-        let Some(next_task_interrupt) = next_task.last_interrupt.take() else {
-            panic!("next task was never iterrupted");
-        };
-        system.current_task = next_task_handle;
-        drop(system);
-
-        dbg!(&next_task_interrupt.registers);
-        dbg!(&next_task_interrupt.stack_frame);
-
-        next_task_interrupt.resume()
+impl Drop for InternalGuard {
+    fn drop(&mut self) {
+        locals!()
+            .task_system
+            .log_task_locked_data
+            .store(true, Ordering::Relaxed);
     }
 }
 
@@ -449,6 +811,8 @@ impl TaskSystem {
 /// Do I need this stack? I am not really sure
 pub const CONTEXT_SWITCH_STACK_PAGE_COUNT: u64 = 8;
 
+/// The context-switch interrupt handler used by the [TaskSystem]
+/// [Timer](crate::cpu::apic::timer::Timer).
 #[unsafe(naked)]
 pub extern "x86-interrupt" fn context_switch_handler(_int_stack_frame: InterruptStackFrame) {
     #[inline]
@@ -457,6 +821,9 @@ pub extern "x86-interrupt" fn context_switch_handler(_int_stack_frame: Interrupt
         registers: &InterruptRegisterState,
         xsave_area: *mut u8,
     ) -> ! {
+        // Safety: start of context_switch_handler
+        let int_guard = unsafe { InternalGuard::interrupt_enter() };
+
         let xsave_area_size = cpuid(0xd, None).ebx as usize;
         let xsave_area = unsafe {
             // Safety: alloc_xsave_area allocated this ptr as a box
@@ -465,13 +832,12 @@ pub extern "x86-interrupt" fn context_switch_handler(_int_stack_frame: Interrupt
                 xsave_area_size,
             ))
         };
-
         let interrupt = TaskInterrupt {
             stack_frame: *stack_frame,
             registers: registers.clone(),
             xsave_area: Some(xsave_area),
         };
-        TaskSystem::task_interrupted(interrupt);
+        TaskSystem::task_interrupted(interrupt, int_guard);
     }
 
     #[inline]
@@ -537,25 +903,26 @@ pub extern "x86-interrupt" fn context_switch_handler(_int_stack_frame: Interrupt
 /// State of all basic registers
 #[repr(C)]
 #[derive(Debug, Clone, Default)]
-pub struct InterruptRegisterState {
-    pub rax: u64,
-    pub rbx: u64,
-    pub rcx: u64,
-    pub rdx: u64,
-    pub rsi: u64,
-    pub rdi: u64,
-    pub rbp: u64,
+struct InterruptRegisterState {
+    rax: u64,
+    rbx: u64,
+    rcx: u64,
+    rdx: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
 
-    pub r8: u64,
-    pub r9: u64,
-    pub r10: u64,
-    pub r11: u64,
-    pub r12: u64,
-    pub r13: u64,
-    pub r14: u64,
-    pub r15: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
 }
 
+/// setup necessary to enable the xsave/xrstor assembly instructions
 fn setup_xsave() {
     let cpu_cap = CPUCapabilities::get();
     assert!(cpu_cap.xsave, "XSAVE instruction not supported");
@@ -575,48 +942,24 @@ fn setup_xsave() {
         // Safety: all_features is supported based on the cpuid result
         XCr0::write(*all_features);
     }
+
+    let xsave_area_size = cpuid(0xd, None).ebx as usize;
+    info!("xsave area size: {0}|{0:#x} bytes", xsave_area_size);
 }
 
 type DynTask = dyn FnOnce() -> ();
 
 // unsafe fn task_entry(task: Box<dyn FnOnce() -> ()>) -> ! {
 unsafe fn task_entry(task_ptr: *mut (), task_dyn: DynMetadata<DynTask>) -> ! {
-    warn!(
-        "Task launched with args: 0 = {:#x}, 1 = {:#x}",
-        task_ptr as u64,
-        unsafe { core::mem::transmute::<_, u64>(task_dyn) }
-    );
-
     let task_ptr: *mut DynTask = core::ptr::from_raw_parts_mut(task_ptr, task_dyn);
     let task = unsafe {
         // Safety: task_ptr is valid and LeakAllocator can be used for any allocation
         Box::from_raw_in(task_ptr, LeakAllocator::get())
     };
     task();
-    {
-        core::hint::black_box(
-            foo::test_abi as extern "x86-interrupt" fn(InterruptStackFrame) -> (),
-        );
-    }
 
     unsafe {
-        // TODO
         // Safety: this is not save. Task might leak stack data
         TaskSystem::terminate_task();
-    }
-}
-
-mod foo {
-    use core::hint::black_box;
-
-    use x86_64::structures::idt::InterruptStackFrame;
-
-    pub extern "x86-interrupt" fn test_abi(isf: InterruptStackFrame) {
-        test_pass_by_value(isf);
-    }
-
-    #[inline(never)]
-    pub extern "C" fn test_pass_by_value(isf: InterruptStackFrame) {
-        black_box(isf);
     }
 }

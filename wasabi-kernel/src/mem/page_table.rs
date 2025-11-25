@@ -32,7 +32,7 @@ pub struct PageTable<T> {
 /// the kernel [RecursivePageTable]
 // Safety: not used before initialized in [init]
 static KERNEL_PAGE_TABLE: UnwrapTicketLock<PageTable<RecursivePageTable>> =
-    unsafe { UnwrapTicketLock::new_uninit() };
+    unsafe { UnwrapTicketLock::new_non_preemtable_uninit() };
 
 impl PageTable<RecursivePageTable<'static>> {
     /// get access to the kernel's [PageTable]

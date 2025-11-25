@@ -19,7 +19,7 @@ use core::{
     ptr::{NonNull, addr_of_mut},
     sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
 };
-use shared::types::CoreId;
+use shared::types::{CoreId, NotSend, NotSync};
 
 use super::{AutoRefCounter, AutoRefCounterGuard, CORE_ID_COUNTER, CORE_READY_COUNT};
 
@@ -102,7 +102,7 @@ pub struct CoreStatics {
     pub epoch_handle: LocalEpochHandle,
 
     /// The task system used for concurency on this core
-    pub task_system: UnwrapTicketLock<TaskSystem>,
+    pub task_system: TaskSystem,
 
     /// Core locals used by tests
     #[cfg(feature = "test")]
@@ -131,7 +131,7 @@ impl CoreStatics {
 
             epoch_handle: LocalEpochHandle::new_uninit(),
 
-            task_system: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
+            task_system: unsafe { TaskSystem::new() },
 
             initialized: false,
 
@@ -249,16 +249,38 @@ impl CoreStatics {
         }
     }
 
-    /// Disable interrupts and increment [Self::interrupt_count]
+    /// Disable interrupts and increment [Self::interrupts_disable_count]
     ///
     /// # Safety
     ///
-    /// caller must ensure that interrupts can be safely disabled
-    pub unsafe fn disable_interrupts(&self) {
+    /// Caller must ensure that interrupts can be safely disabled.
+    /// Caller is also responsible to enable interrupts again using [Self::enable_interrupts].
+    pub unsafe fn disable_interrupts_guardless(&self) {
         self.interrupts_disable_count.fetch_add(1, Ordering::SeqCst);
         unsafe {
             // Safety: see function safety definition
             cpu::disable_interrupts();
+        }
+    }
+
+    /// Disable interrupts and increment [Self::interrupts_disable_count]
+    ///
+    /// Returns a guard that automaticall callse [Self::enable_interrupts] on drop.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that interrupts can be safely disabled and that
+    /// it is save to call [Self::enable_interrupts] when dropping the guard
+    #[must_use]
+    pub unsafe fn disable_interrupts(&self) -> InterruptDisableGuard {
+        unsafe {
+            // Safety: same as self
+            self.disable_interrupts_guardless();
+        }
+        InterruptDisableGuard {
+            _private: (),
+            _not_send: NotSend,
+            _not_sync: NotSync,
         }
     }
 
@@ -402,5 +424,21 @@ pub unsafe fn get_core_statics() -> &'static CoreStatics {
         }
 
         &*(ptr as *const CoreStatics)
+    }
+}
+
+/// Guard struct which will reenable interrupts once dropped
+pub struct InterruptDisableGuard {
+    _private: (),
+    _not_send: NotSend,
+    _not_sync: NotSync,
+}
+
+impl Drop for InterruptDisableGuard {
+    fn drop(&mut self) {
+        unsafe {
+            // Safety: interrupt reenable is save based on guard creation safety
+            super::locals!().enable_interrupts();
+        }
     }
 }

@@ -119,7 +119,6 @@ impl GDTInfo {
         let mut gdt = GlobalDescriptorTable::new();
         let code = gdt.append(Descriptor::kernel_code_segment());
         let tss = gdt.append(Descriptor::tss_segment(&tss));
-        log::warn!("code: {code:?}, tss: {tss:?}"); // TODO temp
         (gdt, Segments { code, tss })
     }
 

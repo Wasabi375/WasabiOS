@@ -33,6 +33,7 @@ where
     ///
     /// This may make the lock inoperable
     fn shatter(&self) -> *mut T {
+        // TODO what is the difference to sahtter_permanent?
         unsafe { self.get_mut() as *mut T }
     }
 }
@@ -857,6 +858,7 @@ impl<T: Send, L: LockCell<MaybeUninit<T>>> UnwrapLock<T, L> {
 }
 
 impl<T: Send, L: LockCell<MaybeUninit<T>>> LockCell<T> for UnwrapLock<T, L> {
+    #[track_caller]
     fn lock(&self) -> LockCellGuard<'_, T, Self> {
         let inner_guard = self.lockcell.lock();
         let reason = inner_guard.reason;

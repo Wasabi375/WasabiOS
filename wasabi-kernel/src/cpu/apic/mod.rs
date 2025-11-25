@@ -183,9 +183,8 @@ impl Apic {
         // stop the timer in case the bootloader used the apic timer
         apic.timer().stop();
 
-        register_interrupt_handler(InterruptVector::Spurious, spurious_int_handler).ok_or(
-            InterruptRegistrationError::InterruptVectorInUse(InterruptVector::Spurious),
-        )?;
+        register_interrupt_handler(InterruptVector::Spurious, spurious_int_handler)?;
+
         apic.offset_mut(Offset::SpuriousInterruptVector)
             .update(|mut siv| {
                 siv.set_bit(8, true);

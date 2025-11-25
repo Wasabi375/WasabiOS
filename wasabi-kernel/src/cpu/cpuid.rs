@@ -131,6 +131,9 @@ pub struct CPUCapabilities {
     pub xsaveopt: bool,
     /// compacting extension for xsave feature set
     pub xsave_compact: bool,
+
+    /// PCID feature allows invalidating tlb pages dependent on a process id
+    pub pcid: bool,
 }
 
 /// Wrapper around [XCr0Flags] which also implements [ConstDefault]
@@ -203,6 +206,8 @@ impl CPUCapabilities {
 
         cap.xsave = basic_features.ecx.get_bit(26);
         cap.osxsave = basic_features.ecx.get_bit(27);
+
+        cap.pcid = basic_features.ecx.get_bit(17);
 
         let xsave_state = cpuid(0xd, None);
         let xsave_features = xsave_state.eax as u64 | ((xsave_state.edx as u64) << 32);

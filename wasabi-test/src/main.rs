@@ -103,7 +103,7 @@ use core::{
     any::Any,
     fmt::Debug,
     i128,
-    str::{from_utf8, FromStr},
+    str::{FromStr, from_utf8},
     sync::atomic::{AtomicBool, Ordering},
 };
 use itertools::Itertools;
@@ -114,15 +114,14 @@ use testing::{
 };
 use uart_16550::SerialPort;
 use wasabi_kernel::{
-    bootloader_config_common,
-    core_local::{get_ready_core_count, CoreInterruptState},
+    KernelConfig, bootloader_config_common,
+    core_local::{CoreInterruptState, get_ready_core_count},
     mem::{
         frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
         page_table::PageTable,
     },
     serial::SERIAL2,
     testing::{self, panic::use_custom_panic_handler, qemu},
-    KernelConfig,
 };
 
 /// Write to the serial port and also trace the output
@@ -214,7 +213,7 @@ fn init_mp() {
 /// the main entry point for the kernel in test mode
 fn kernel_test_main() -> ! {
     unsafe {
-        locals!().disable_interrupts();
+        locals!().disable_interrupts_guardless();
     }
 
     // Access guard frame. This ensures the guard frame allocation won't mess
@@ -614,9 +613,13 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
             let leaked_1g = page_usage_after.count_1g as i128 - page_usage_before.count_1g as i128;
 
             if test.allow_page_leak {
-                warn!("Memory leak detected in pages! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                warn!(
+                    "Memory leak detected in pages! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}"
+                );
             } else {
-                error!("Memory leak detected in pages! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                error!(
+                    "Memory leak detected in pages! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}"
+                );
                 mem_failure = true;
             }
         }
@@ -631,9 +634,13 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
                 frame_usage_after.count_1g as i128 - frame_usage_before.count_1g as i128;
 
             if test.allow_frame_leak {
-                warn!("Memory leak detected in frames! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                warn!(
+                    "Memory leak detected in frames! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}"
+                );
             } else {
-                error!("Memory leak detected in frames! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                error!(
+                    "Memory leak detected in frames! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}"
+                );
                 mem_failure = true;
             }
         }
@@ -645,9 +652,13 @@ fn run_test_bsp(test: &KernelTestDescription, panicing: bool) -> bool {
             let leaked_1g = mappings_after.count_1g as i128 - mappings_before.count_1g as i128;
 
             if test.allow_mapping_leak {
-                warn!("Memory leak detected in page table mappings! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                warn!(
+                    "Memory leak detected in page table mappings! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}"
+                );
             } else {
-                error!("Memory leak detected in page table mappings! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}");
+                error!(
+                    "Memory leak detected in page table mappings! 4K: {leaked_4k}, 2M: {leaked_2m}, 1G: {leaked_1g}"
+                );
                 mem_failure = true;
             }
         }

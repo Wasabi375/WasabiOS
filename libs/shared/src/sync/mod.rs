@@ -23,6 +23,27 @@ pub trait CoreInfo: 'static + Send + Sync {
         !self.is_bsp()
     }
 
+    /// Returns `true` if a "task system" is running on the processor
+    ///
+    /// This result of this value can only switch from `false` to `true`.
+    /// Therefor it is save to assume that once this returns `true` all future
+    /// calls to this function will always return `true`.
+    ///
+    /// This function will not have any side-effects.
+    fn task_system_is_init(&self) -> bool;
+
+    /// Writes the debug name and or taks handle to the writer
+    ///
+    /// This is used to print debug information and can be a Nop.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the TaskSystem is initialized. See [CoreInfo::task_system_is_init]
+    unsafe fn write_current_task_name(
+        &self,
+        writer: &mut dyn core::fmt::Write,
+    ) -> Result<(), core::fmt::Error>;
+
     /// Returns `true` if the [CoreInfo] is fully initialized.
     ///
     /// If set to `false` the core is in it's early boot state and not all functionallity

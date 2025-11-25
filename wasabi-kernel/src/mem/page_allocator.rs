@@ -5,19 +5,19 @@ use log::{debug, error, info, trace, warn};
 
 use crate::{
     mem::{
+        MemError, Result,
         page_table::RecursivePageTableExt,
         structs::{GuardedPages, Pages},
-        MemError, Result,
     },
     prelude::UnwrapTicketLock,
 };
 use shared::rangeset::{Range, RangeSet};
 use x86_64::{
-    structures::paging::{
-        page_table::FrameError::FrameNotPresent, Page, PageSize, PageTable, PageTableFlags,
-        PageTableIndex, RecursivePageTable, Size1GiB, Size2MiB, Size4KiB,
-    },
     VirtAddr,
+    structures::paging::{
+        Page, PageSize, PageTable, PageTableFlags, PageTableIndex, RecursivePageTable, Size1GiB,
+        Size2MiB, Size4KiB, page_table::FrameError::FrameNotPresent,
+    },
 };
 
 #[cfg(feature = "mem-stats")]
@@ -26,7 +26,7 @@ use super::stats::PageFrameAllocStats;
 /// the kernel page allocator
 // safety: not accessed before it is initialized in [init]
 static KERNEL_PAGE_ALLOCATOR: UnwrapTicketLock<PageAllocator> =
-    unsafe { UnwrapTicketLock::new_uninit() };
+    unsafe { UnwrapTicketLock::new_non_preemtable_uninit() };
 
 /// the largets valid virt addr
 ///
@@ -381,7 +381,9 @@ impl PageAllocator {
     pub unsafe fn free_page<S: PageSize>(&mut self, page: Page<S>) {
         if self.vaddrs.len() as usize == self.vaddrs.capacity() {
             // TODO this warning also aplies to try_allocate_page
-            warn!("trying to free page({page:?}) when range set is at max len. This can panic unexpectedly");
+            warn!(
+                "trying to free page({page:?}) when range set is at max len. This can panic unexpectedly"
+            );
         }
         self.vaddrs.insert(Range {
             start: page.start_address().as_u64(),
@@ -431,12 +433,12 @@ mod test {
     use core::assert_matches::assert_matches;
 
     use shared::sync::lockcell::LockCell;
-    use testing::{kernel_test, KernelTestError};
+    use testing::{KernelTestError, kernel_test};
     use x86_64::structures::paging::{Page, PageTableIndex, RecursivePageTable, Size4KiB};
 
     use crate::mem::{
-        page_table::{PageTable, RecursivePageTableExt},
         MemError,
+        page_table::{PageTable, RecursivePageTableExt},
     };
 
     use super::PageAllocator;

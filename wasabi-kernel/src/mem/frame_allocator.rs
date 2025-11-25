@@ -9,11 +9,11 @@ use crate::prelude::{LockCell, UnwrapTicketLock};
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
 use shared::rangeset::{Range, RangeSet, RegionRequest};
 use x86_64::{
-    structures::paging::{
-        frame::PhysFrameRangeInclusive, FrameAllocator as X86FrameAllocator, FrameDeallocator,
-        PageSize, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
-    },
     PhysAddr,
+    structures::paging::{
+        FrameAllocator as X86FrameAllocator, FrameDeallocator, PageSize, PhysFrame, Size1GiB,
+        Size2MiB, Size4KiB, frame::PhysFrameRangeInclusive,
+    },
 };
 
 #[cfg(feature = "mem-stats")]
@@ -22,12 +22,12 @@ use super::stats::PageFrameAllocStats;
 /// The global kernel phys allocator. This is used by the frame allocators to create frames
 // Safetey: this is initailized by [init] before it is used
 static GLOBAL_PHYS_ALLOCATOR: UnwrapTicketLock<PhysAllocator> =
-    unsafe { UnwrapTicketLock::new_uninit() };
+    unsafe { UnwrapTicketLock::new_non_preemtable_uninit() };
 
 /// A [FrameAllocator] for 4KiB pages
 // Safetey: this is initailized by [init] before it is used
 static KERNEL_FRAME_ALLOCATOR: UnwrapTicketLock<FrameAllocator> =
-    unsafe { UnwrapTicketLock::new_uninit() };
+    unsafe { UnwrapTicketLock::new_non_preemtable_uninit() };
 
 /// initializes the frame allocators
 pub fn init(regions: &MemoryRegions) {

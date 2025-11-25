@@ -115,6 +115,17 @@ impl CoreInfo for TestInterruptState {
     {
         MAX_CORE_COUNT.load(Ordering::SeqCst)
     }
+
+    fn task_system_is_init(&self) -> bool {
+        false
+    }
+
+    unsafe fn write_current_task_name(
+        &self,
+        _writer: &mut dyn core::fmt::Write,
+    ) -> Result<(), core::fmt::Error> {
+        Ok(())
+    }
 }
 
 impl InterruptState for TestInterruptState {

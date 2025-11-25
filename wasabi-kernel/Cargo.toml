@@ -4,11 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = []
+default = ["log-task-name"]
 
 fixed-kernel-vaddr = []
 no-color = ["logger/no-color"]  
 no-unicode-log = ["shared/no-unicode-log"]
+log-task-name = []
 mem-stats = [ "dep:histogram" ]
 test = ["dep:testing"]
 mem-backed-guard-page = []  
