@@ -82,6 +82,8 @@ pub fn init() -> Result<(), ApicCreationError> {
         "apic id in locals()! did not match apic provided id"
     );
 
+    // TODO do we need to do this on every core or is it enough to do it once and
+    // apply the calibration to all cores?
     apic.timer().calibrate();
 
     local_apic.write(apic);

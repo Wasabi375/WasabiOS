@@ -123,10 +123,9 @@ pub unsafe fn init() {
 /// The different interrupt vectors used by the kernel
 #[derive(U8Enum, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-#[allow(missing_docs)]
 pub enum InterruptVector {
     // NOTE: all values must be >= 32
-    Timer = 55,
+    /// Spurious APIC interrupt
     // for some older processors the lower 4 bits must be 1, 63 is the lowest number >=32 matching
     // this condition
     Spurious = 63,
@@ -134,6 +133,8 @@ pub enum InterruptVector {
     ///
     /// does nothing
     Nop = 254,
+
+    /// Interrupt used for tests
     Test = 255,
 }
 
