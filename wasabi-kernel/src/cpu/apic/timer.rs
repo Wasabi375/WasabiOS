@@ -172,6 +172,10 @@ impl Timer<'_> {
 
     /// `true` if the timer is running and can cause interrupts
     pub fn is_running(&self) -> bool {
+        // TODO how does is_running interact with one_shot timers
+        // FIXME this is wrong in combination with enable_interrupt_handler
+        //  this reports the timer as running, if a handler is registered
+        //  even without calling start.
         self.apic.timer.interrupt_vector.is_some()
     }
 
