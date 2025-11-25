@@ -3,10 +3,11 @@ extern crate proc_macro;
 use paste::paste;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Expr, ExprLit, Lit};
+use syn::{DeriveInput, Expr, ExprLit, Lit, parse_macro_input};
 
 // TODO replace paste with concat from rust. See: https://doc.rust-lang.org/stable/unstable-book/language-features/macro-metavar-expr-concat.html
 
+// TODO support Other variant. That is valid over all unused discriminants
 macro_rules! primitive_enum {
     ($type:ident) => {
         paste! {
@@ -47,7 +48,7 @@ macro_rules! primitive_enum {
                             impl TryFrom<$type> for #ident {
                                 type Error = shared::primitive_enum::InvalidValue<$type>;
 
-                                fn try_from(value: u8) -> Result<Self, Self::Error> {
+                                fn try_from(value: $type) -> Result<Self, Self::Error> {
                                     match value {
                                         #(#variants),*,
                                         v => Err(shared::primitive_enum::InvalidValue { value: v })
