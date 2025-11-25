@@ -12,7 +12,7 @@ pub use time::TscDuration;
 pub use time::TscTimestamp;
 
 /// Marker type to ensure a type is not [Send]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
 pub struct NotSend {
     _mark: PhantomData<*const ()>,
 }
