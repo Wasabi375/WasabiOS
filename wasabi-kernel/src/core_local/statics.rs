@@ -15,8 +15,8 @@ use alloc::boxed::Box;
 use core::{
     arch::asm,
     hint::spin_loop,
-    ptr::{addr_of_mut, NonNull},
-    sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+    ptr::{NonNull, addr_of_mut},
+    sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
 };
 use shared::types::CoreId;
 
@@ -59,12 +59,12 @@ pub struct CoreStatics {
     /// Current depth of interrupts. Every time an interrupt fires, this is incremented
     /// and decremented once the interrupt is done. Therefore a `count() > 0` implies
     /// that we are currently in an interrupt.
-    interrupt_count: AutoRefCounter,
+    pub interrupt_count: AutoRefCounter,
 
     /// Current depth of expcetions. Every time an expcetion fires, this is incremented
     /// and decremented once the expcetion is done. Therefore a `count() > 0` implies
     /// that we are currently in an expcetion.
-    exception_count: AutoRefCounter,
+    pub exception_count: AutoRefCounter,
 
     /// A count of how many times [Self::disable_interrupts] has been called. We only reenable
     /// interrupts once this hits 0. This is decremented in [Self::enable_interrupts].

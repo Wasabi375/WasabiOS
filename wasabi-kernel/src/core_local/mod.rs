@@ -4,7 +4,7 @@
 //! which can be used to access per core static kernel data.
 
 mod statics;
-pub use statics::{core_boot, get_core_statics, init, CoreStatics};
+pub use statics::{CoreStatics, core_boot, get_core_statics, init};
 
 /// A [shared::task_local::TaskLocal] based on [CoreId]
 pub type CoreLocal<T> = shared::task_local::TaskLocal<T, CoreInterruptState>;
@@ -19,7 +19,7 @@ use log::{debug, info, trace, warn};
 use crate::test_locals;
 
 use crate::locals;
-use core::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use shared::{
     sync::{CoreInfo, InterruptState},
     types::CoreId,
@@ -39,6 +39,8 @@ static CORE_READY_COUNT: AtomicU8 = AtomicU8::new(0);
 #[derive(Debug)]
 pub struct AutoRefCounter(AtomicU64);
 
+// TODO check Ordering. right now AutoRefCounter uses SeqCst which is fine, but I can prob relax
+// this
 impl AutoRefCounter {
     /// creates a new [AutoRefCounter]
     pub const fn new(init: u64) -> Self {
@@ -55,6 +57,17 @@ impl AutoRefCounter {
     pub fn increment(&self) -> AutoRefCounterGuard<'_> {
         self.0.fetch_add(1, Ordering::SeqCst);
         AutoRefCounterGuard(self)
+    }
+
+    /// decrements the count
+    ///
+    /// # Safety
+    ///
+    /// This is an escape hatch to decrement when a [AutoRefCounterGuard] can not be dropped.
+    /// The caller must ensure that decrementing the counter does not break any other external
+    /// safety guarantees
+    pub unsafe fn decrement(&self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
