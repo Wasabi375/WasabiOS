@@ -1,5 +1,5 @@
 #![allow(missing_docs)] // FIXME
-#![expect(unused_variables, dead_code)] // TODO remove
+#![expect(unused_variables)] // TODO remove
 
 use core::{
     arch::{asm, naked_asm},
@@ -32,12 +32,8 @@ use crate::{
     DEFAULT_STACK_SIZE,
     cpu::{
         self,
-        apic::{
-            Apic,
-            timer::{TimerConfig, TimerDivider, TimerMode},
-        },
+        apic::Apic,
         cpuid::{CPUCapabilities, cpuid},
-        interrupts::InterruptVector,
     },
     locals,
     mem::{MemError, page_allocator::PageAllocator, page_table::PageTable, structs::GuardedPages},
@@ -332,7 +328,7 @@ impl TaskSystem {
 
         let launch_interrupt_fake = TaskInterrupt {
             stack_frame: InterruptStackFrame::new(
-                VirtAddr::new(task_entry as usize as u64),
+                VirtAddr::new(task_entry as *mut () as usize as u64),
                 segments.code,
                 launch_rflags,
                 stack_end_minus_task,

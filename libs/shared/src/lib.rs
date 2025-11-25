@@ -7,7 +7,6 @@
     const_trait_impl,
     debug_closure_helpers,
     downcast_unchecked,
-    maybe_uninit_slice,
     negative_impls,
     step_trait,
     trusted_len

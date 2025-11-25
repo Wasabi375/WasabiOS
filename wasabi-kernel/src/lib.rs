@@ -11,7 +11,6 @@
     debug_closure_helpers,
     extern_types,
     maybe_uninit_array_assume_init,
-    maybe_uninit_slice,
     never_type,
     pointer_is_aligned_to,
     ptr_alignment_type,
