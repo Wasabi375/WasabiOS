@@ -73,10 +73,11 @@ pub unsafe fn init() {
             StaticLogger doesn't fit in 4KiB which causes tripple fault on boot"
     );
 
+    // TODO reduce the stack size requirements for logging
+
     let mut dispatch_logger = DispatchLogger::new()
         .with_level(LevelFilter::Info)
-        .with_module_level("wasabi_kernel::pci::nvme", LevelFilter::Debug)
-        .with_module_level("wasabi_kernel::pci::nvme::block_device", LevelFilter::Trace)
+        .with_module_level("wasabi_kernel::task", LevelFilter::Trace)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
     #[cfg(not(feature = "test"))]

@@ -10,6 +10,7 @@ use crate::{
     cpu::{self, apic::Apic, cpuid, gdt::GDTInfo, interrupts::InterruptHandlerState},
     crossbeam_epoch::LocalEpochHandle,
     prelude::UnwrapTicketLock,
+    task::TaskSystem,
 };
 use alloc::boxed::Box;
 use core::{
@@ -100,6 +101,9 @@ pub struct CoreStatics {
     /// Handle for crossbeam epoch
     pub epoch_handle: LocalEpochHandle,
 
+    /// The task system used for concurency on this core
+    pub task_system: UnwrapTicketLock<TaskSystem>,
+
     /// Core locals used by tests
     #[cfg(feature = "test")]
     pub test_local: TestCoreStatics,
@@ -126,6 +130,8 @@ impl CoreStatics {
             gdt: GDTInfo::new_uninit(),
 
             epoch_handle: LocalEpochHandle::new_uninit(),
+
+            task_system: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
 
             initialized: false,
 

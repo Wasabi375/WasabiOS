@@ -1,17 +1,13 @@
+//! Auto generated default interupt handlers
+#![allow(missing_docs)]
+
 use interrupt_fn_builder::{
-    exception_page_fault_fn, panic_diverging_exception, panic_diverging_exception_with_error,
-    panic_exception, panic_exception_with_error,
+    panic_diverging_exception, panic_diverging_exception_with_error, panic_exception,
+    panic_exception_with_error,
 };
-use x86_64::{
-    registers::control::Cr2,
-    structures::{
-        idt::{InterruptDescriptorTable, InterruptStackFrame},
-        paging::{Translate, mapper::TranslateResult},
-    },
-};
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 
 use super::interrupt_handler;
-use crate::mem::page_table::PageTable;
 
 panic_exception!(divide_error);
 panic_exception!(debug);
@@ -35,30 +31,6 @@ panic_exception_with_error!(alignment_check);
 panic_exception_with_error!(vmm_communication_exception);
 panic_exception_with_error!(security_exception);
 
-// NOTE: page_fault is pub(super) in order to set stack index
-exception_page_fault_fn!(pub(super) page_fault_handler, stack_frame, page_fault, {
-    use shared::sync::lockcell::LockCellInternal;
-    let page_table = unsafe {
-        // TODO this is not save, but otherwise we might deadlock and I only want to read right
-        // now, so this should be fine :shrug:
-        PageTable::get_for_kernel().lockcell.get_mut().assume_init_mut()
-    };
-    let vaddr = Cr2::read().expect("Cr2 is not a valid addr");
-    log::info!("cr2: {vaddr:p}");
-    if let TranslateResult::Mapped { frame, offset, flags } = page_table.translate(vaddr) {
-        log::warn!(
-            "PAGE FAULT: {:p}: frame: {:?}, offset: {:#X}, flags: {:?}",
-            vaddr,
-            frame,
-            offset,
-            flags
-        );
-    }
-    panic!(
-        "PAGE FAULT:\nAccessed Address: {vaddr:p}\nError code: {page_fault:?}\n{stack_frame:#?}"
-    );
-});
-
 use paste::paste;
 
 macro_rules! int_handler_fn {
@@ -67,7 +39,6 @@ macro_rules! int_handler_fn {
             /// interrupt handler, that calls [interrupt_handler] with the
             /// correct `interrupt_vector`.
             extern "x86-interrupt" fn [<interrupt $int_vector>](isf: InterruptStackFrame) {
-                let _guard = crate::locals!().inc_interrupt();
                 let int_vector: u8 = $int_vector;
                 interrupt_handler(int_vector, isf);
             }

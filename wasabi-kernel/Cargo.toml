@@ -29,6 +29,7 @@ gpt.workspace = true
 
 bitflags.workspace = true
 bit_field.workspace = true
+const-default.workspace = true
 crossbeam-epoch.workspace = true
 bootloader_api.workspace = true
 derive_builder.workspace = true

@@ -6,7 +6,7 @@ use log::{debug, info, trace};
 use shared::sync::lockcell::LockCell;
 use x86_64::{
     instructions::tables::load_tss,
-    registers::segmentation::{Segment, CS, SS},
+    registers::segmentation::{CS, SS, Segment},
     structures::{
         gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector},
         paging::Size4KiB,
@@ -16,21 +16,26 @@ use x86_64::{
 
 use crate::{
     cpu::interrupts::{DOUBLE_FAULT_STACK_PAGE_COUNT, PAGE_FAULT_STACK_PAGE_COUNT},
-    mem::{page_allocator::PageAllocator, structs::GuardedPages, MemError},
+    mem::{MemError, page_allocator::PageAllocator, structs::GuardedPages},
+    task::CONTEXT_SWITCH_STACK_PAGE_COUNT,
 };
 
-/// IST INDEX used to access separate stack for double fault exceptions
+/// IST INDEX used to access a separate stack for double fault exceptions
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 
-/// IST INDEX used to access sparate stack for page fault exceptions
+/// IST INDEX used to access a separate stack for page fault exceptions
 pub const PAGE_FAULT_IST_INDEX: u16 = 1;
 
-/// wrappwer around the segements used by this kernel
-struct Segments {
+/// IST INDEX used to access a separate stack for context switch interrupts
+pub const CONTEXT_SWITCH_IST_INDEX: u16 = 2;
+
+/// wrapper around the segements used by this kernel
+#[derive(Clone)]
+pub struct Segments {
     /// kernel code segment
-    code: SegmentSelector,
+    pub code: SegmentSelector,
     /// tss segment
-    tss: SegmentSelector,
+    pub tss: SegmentSelector,
 }
 
 /// container for data related to GDT
@@ -99,10 +104,22 @@ impl GDTInfo {
         }
     }
 
+    /// The [Segments] used for kernel code
+    pub fn kernel_segments(&self) -> Segments {
+        unsafe {
+            // Safety: We just assume this is after processor startup and therefor no longer
+            // mutably accessed
+            let inner = &*self.inner.get();
+            // Safety: same reason, therefor initialized
+            inner.segments.assume_init_ref().clone()
+        }
+    }
+
     fn init_gdt(tss: &'static TaskStateSegment) -> (GlobalDescriptorTable, Segments) {
         let mut gdt = GlobalDescriptorTable::new();
         let code = gdt.append(Descriptor::kernel_code_segment());
         let tss = gdt.append(Descriptor::tss_segment(&tss));
+        log::warn!("code: {code:?}, tss: {tss:?}"); // TODO temp
         (gdt, Segments { code, tss })
     }
 
@@ -117,6 +134,12 @@ impl GDTInfo {
         tss.interrupt_stack_table[PAGE_FAULT_IST_INDEX as usize] = {
             let stack = Self::allocate_stack(PAGE_FAULT_STACK_PAGE_COUNT)
                 .expect("failed to allocate stack for page faults");
+
+            stack.end_addr().align_down(16u64)
+        };
+        tss.interrupt_stack_table[CONTEXT_SWITCH_IST_INDEX as usize] = {
+            let stack = Self::allocate_stack(CONTEXT_SWITCH_STACK_PAGE_COUNT)
+                .expect("failed to allocate stack for context switch interrupt");
 
             stack.end_addr().align_down(16u64)
         };

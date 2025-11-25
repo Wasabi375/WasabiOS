@@ -15,6 +15,7 @@
     never_type,
     pointer_is_aligned_to,
     ptr_alignment_type,
+    ptr_metadata,
     stmt_expr_attributes
 )]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
@@ -33,6 +34,7 @@ pub mod panic;
 pub mod pci;
 pub mod prelude;
 pub mod serial;
+pub mod task;
 pub mod time;
 pub mod utils;
 
@@ -60,6 +62,7 @@ use x86_64::{
 use crate::{
     core_local::core_boot,
     cpu::{acpi::ACPI, apic, cpuid, halt, interrupts},
+    task::TaskSystem,
 };
 use bootloader_api::{BootInfo, config::Mapping, info::Optional};
 use core::{
@@ -75,6 +78,9 @@ static KERNEL_MAIN_BARRIER: AtomicU8 = AtomicU8::new(0);
 /// Returns true after the kernel is initialized and has entered it's main
 /// function
 pub fn in_kernel_main() -> bool {
+    // TODO this can report false positives if this is called during processor_init before
+    // core_local::init. I think I am fine with this, but maybe I am not?
+    // Do I even need this if it is this flaky?
     KERNEL_MAIN_BARRIER.load(Ordering::Acquire) == get_ready_core_count(Ordering::Acquire)
 }
 
@@ -162,6 +168,10 @@ pub unsafe fn processor_init() {
         cpuid::check_cpuid_usable();
 
         if core_id.is_bsp() {
+            // Safety: called during bsp start after check_cpuid_usable and
+            // we have no references to the result of get
+            cpuid::CPUCapabilities::load();
+
             // Safety: bsp during `init` and locks and logging are working
             mem::init();
             // Safety: bsp during `init` right after mem is initialized
@@ -201,6 +211,11 @@ pub unsafe fn processor_init() {
     }
 
     apic::init().unwrap();
+
+    unsafe {
+        // TODO Safety
+        TaskSystem::init();
+    }
 }
 
 /// The default stack size used by the kernel

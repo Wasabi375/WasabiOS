@@ -9,22 +9,17 @@ extern crate alloc;
 #[macro_use]
 extern crate wasabi_kernel;
 
+use core::arch::asm;
+
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
 use bootloader_api::BootInfo;
 use wasabi_kernel::{
     KernelConfig, bootloader_config_common,
-    cpu::{
-        self,
-        apic::{
-            Apic,
-            ipi::{self, Ipi},
-        },
-        interrupts::{InterruptVector, register_interrupt_handler},
-    },
+    cpu::interrupts::InterruptVector,
     default_kernel_config,
-    prelude::LockCell,
+    task::{TaskDefinition, TaskSystem},
     time::{self},
 };
 
@@ -33,7 +28,6 @@ use wasabi_kernel::mem::{
     frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
     page_table::PageTable,
 };
-use x86_64::structures::idt::InterruptStackFrame;
 
 /// the main entry point for the kernel. Called by the bootloader.
 fn kernel_main() -> ! {
@@ -45,7 +39,6 @@ fn kernel_main() -> ! {
 
     if locals!().is_bsp() {
         // wasabi_kernel::pci::pci_experiment();
-
         context_switch_experiment();
     }
 
@@ -64,51 +57,38 @@ fn kernel_main() -> ! {
         PageTable::get_for_kernel().lock().stats().log(level);
     }
 
-    info!("OS Done!\tcpu::halt()");
-    cpu::halt();
+    info!("OS core cpu task is done!\t");
+
+    // TODO move into lib. Change kernel_main to return unit
+    unsafe {
+        // Safety: cpu-core task has a static lifetime stack
+        TaskSystem::terminate_task();
+    }
 }
 
 fn context_switch_experiment() {
-    {
-        register_interrupt_handler(InterruptVector::Test, context_switch_interrupt).unwrap();
+    unsafe {
+        let foo = 5u64;
+        let bar = 5u64;
+        // Safety: tasks do not share stack references
+        TaskSystem::launch_task(TaskDefinition::new(move || info!("foobar: {}", foo + bar)))
+            .unwrap();
+        TaskSystem::launch_task(TaskDefinition::new(count_task)).unwrap();
     }
 
-    assert!(!locals!().in_interrupt());
-
-    let ipi = Ipi {
-        mode: ipi::DeliveryMode::Fixed(InterruptVector::Test),
-        destination: ipi::Destination::SelfOnly,
-    };
-    info!("about to send ipi");
-    locals!().apic.lock().send_ipi(ipi);
-
-    info!("interrupt returned");
-
-    assert!(!locals!().in_interrupt());
-    info!("everything good and normal");
+    warn!("about to context switch");
+    unsafe {
+        asm!(
+            "int {iv}",
+            iv = const InterruptVector::ContextSwitch as u8,
+        );
+    }
 }
 
-fn context_switch_interrupt(
-    vector: InterruptVector,
-    stack_frame: InterruptStackFrame,
-) -> Result<(), ()> {
-    assert_eq!(vector, InterruptVector::Test);
-
-    info!("test interrupt triggered!");
-
-    info!("calling iretq");
-    unsafe {
-        // Safety:
-        // manually handle eoi as we iretq and therefor interrupt_handler wrapper is not able
-        // to do this
-        Apic::eoi();
-
-        // Safety: the decrement guard is never dropped, because of the iretq call. Manually
-        // decrement instead
-        locals!().interrupt_count.decrement();
-
-        // Safety: valid stack frame
-        stack_frame.iretq();
+fn count_task() {
+    info!("in count task");
+    for i in 0..100 {
+        info!("{i}");
     }
 }
 
