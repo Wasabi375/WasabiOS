@@ -13,8 +13,6 @@
     vec_push_within_capacity
 )]
 
-// FIXME #![warn(missing_docs)]
-
 use block_device::block_size_types;
 use shared::KiB;
 

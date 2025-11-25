@@ -3,8 +3,6 @@
 //! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //TODO move this module out of pci?
 
-#![allow(missing_docs)] // FIXME temp
-
 pub mod admin_commands;
 pub mod block_device;
 pub mod capabilities;

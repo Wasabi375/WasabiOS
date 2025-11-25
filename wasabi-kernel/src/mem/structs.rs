@@ -363,7 +363,7 @@ mod test {
             unsafe {
                 // Safety: addr is a valid addr in an mapped page, and
                 // any ptr is alliged for u8
-                let mut ptr = UntypedPtr::new(addr_in_page)
+                let ptr = UntypedPtr::new(addr_in_page)
                     .unwrap()
                     .as_volatile_ptr_mut::<u8>();
                 ptr.write(12);

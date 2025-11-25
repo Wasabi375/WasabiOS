@@ -82,7 +82,7 @@ fn copy_files(
     target_dir: FileId,
     total_file_count: &mut usize,
 ) -> Result<()> {
-    // const COPY_BLOCK_SIZE: usize = 512; FIXME this triggers an insert in fuse::BlockDevice
+    // const COPY_BLOCK_SIZE: usize = 512; FIXME this triggers an assert in fuse::BlockDevice
     const COPY_BLOCK_SIZE: usize = wfs::BLOCK_SIZE;
 
     for file in std::fs::read_dir(src_path)? {
