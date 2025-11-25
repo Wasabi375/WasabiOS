@@ -174,7 +174,7 @@ impl fmt::Display for InterruptVector {
     }
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Debug, PartialEq, Eq, Clone)]
 #[allow(missing_docs)]
 pub enum InterruptRegistrationError {
     #[error("Interrupt vector({0}) was already registered")]
@@ -187,12 +187,12 @@ pub enum InterruptRegistrationError {
 
 /// registers a new `handler` for the interrupt `vector`.
 ///
-/// Fails with [InterruptRegistrationError::InterruptVectorInUse] if a handler is already
+/// Returns the old hanlder if a handler is already
 /// registered for this `vector`
 pub fn register_interrupt_handler(
     vector: InterruptVector,
     handler: InterruptFn,
-) -> Result<(), InterruptRegistrationError> {
+) -> Option<InterruptFn> {
     check_interrupt_vector(vector);
 
     // TODO Fail on special use InterruptVectors, e.g. TaskSystem's ContextSwitch
@@ -202,13 +202,11 @@ pub fn register_interrupt_handler(
 
     let index = (vector as u8 - 32) as usize;
 
-    if handlers[index].is_some() {
-        return Err(InterruptRegistrationError::InterruptVectorInUse(vector));
-    }
+    let old = handlers[index];
 
     handlers[index] = Some(handler);
 
-    Ok(())
+    old
 }
 
 /// unregisteres the previously registered handler for `vector`.
@@ -299,8 +297,8 @@ fn interrupt_handler(interrupt_vector: u8, int_stack_frame: InterruptStackFrame)
                     Apic::eoi();
                 }
             },
-            Err(err) => {
-                panic!("interrupt handler for {interrupt_vector} failed with {err:?}");
+            Err(()) => {
+                panic!("interrupt handler for {interrupt_vector} failed.");
             }
         }
     } else {

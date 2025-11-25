@@ -1,10 +1,13 @@
 //! The timer provided by the APIC
 use bit_field::BitField;
-use log::{info, trace};
-use shared::{cpu::time::timestamp_now_tsc, types::TscTimestamp};
+use log::{error, info, trace, warn};
+use shared::{cpu::time::timestamp_now_tsc, sync::lockcell::LockCell, types::TscTimestamp};
+use thiserror::Error;
+use x86_64::structures::idt::InterruptStackFrame;
 
 use crate::{
     cpu::interrupts::{self, InterruptFn, InterruptRegistrationError, InterruptVector},
+    locals,
     time::calibration_tick,
 };
 
@@ -13,7 +16,7 @@ use super::{Apic, Offset, cpuid};
 use core::ops::RangeInclusive;
 
 /// The different modes the apic timer can be in
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimerMode {
     /// the timer is not running
     Stopped,
@@ -134,6 +137,10 @@ pub struct TimerData {
     startup_tsc_time: TscTimestamp,
     /// `true` if the hardware supports deadline mode
     supports_tsc_deadline: bool,
+
+    is_running: bool,
+
+    one_shot_inner_handler: Option<InterruptFn>,
 }
 
 /// A reference to the apic timer
@@ -150,6 +157,18 @@ impl core::fmt::Debug for Timer<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("").field(&self.apic.timer).finish()
     }
+}
+
+/// enum for all timer related errors
+#[derive(Error, Debug, PartialEq, Eq, Clone)]
+#[allow(missing_docs)]
+pub enum TimerError {
+    #[error("Timer is missing an interrupt vector")]
+    MissingInterruptVector,
+    #[error("This operation is not allowed while the timer is running")]
+    TimerRunning,
+    #[error("{0}")]
+    InterruptRegistration(#[from] InterruptRegistrationError),
 }
 
 impl Timer<'_> {
@@ -172,11 +191,7 @@ impl Timer<'_> {
 
     /// `true` if the timer is running and can cause interrupts
     pub fn is_running(&self) -> bool {
-        // TODO how does is_running interact with one_shot timers
-        // FIXME this is wrong in combination with enable_interrupt_handler
-        //  this reports the timer as running, if a handler is registered
-        //  even without calling start.
-        self.apic.timer.interrupt_vector.is_some()
+        self.apic.timer.is_running
     }
 
     /// `true` if the hardware supports tsc-deadline mode
@@ -186,26 +201,29 @@ impl Timer<'_> {
 
     /// register an interrupt handler for the timer to call.
     ///
-    /// # Errors
-    /// see [interrupts::register_interrupt_handler]
+    /// returns the last used vector and handler if there are any set
     pub fn register_interrupt_handler(
         &mut self,
         vector: InterruptVector,
         handler: InterruptFn,
-    ) -> Result<Option<InterruptVector>, InterruptRegistrationError> {
-        interrupts::register_interrupt_handler(vector, handler)?;
+    ) -> Result<(Option<InterruptVector>, Option<InterruptFn>), TimerError> {
+        if self.is_running() {
+            return Err(TimerError::TimerRunning);
+        }
+        let old_handler = interrupts::register_interrupt_handler(vector, handler);
 
-        Ok(self.enable_interrupt_hander(vector))
+        Ok((self.enable_interrupt_hander(vector)?, old_handler))
     }
 
     /// unregister the current interrupt for the timer
     ///
     /// # Errors
     /// see [interrupts::unregister_interrupt_handler]
-    pub fn unregister_interrupt_handler(
-        &mut self,
-    ) -> Result<Option<InterruptVector>, InterruptRegistrationError> {
-        let old_vector = self.disable_interrupt_handler();
+    pub fn unregister_interrupt_handler(&mut self) -> Result<Option<InterruptVector>, TimerError> {
+        if self.is_running() {
+            return Err(TimerError::TimerRunning);
+        }
+        let old_vector = self.disable_interrupt_handler()?;
         let vector = self
             .apic
             .timer
@@ -218,7 +236,13 @@ impl Timer<'_> {
     }
 
     /// enables an existing interrupt handler to handle timers
-    pub fn enable_interrupt_hander(&mut self, vector: InterruptVector) -> Option<InterruptVector> {
+    pub fn enable_interrupt_hander(
+        &mut self,
+        vector: InterruptVector,
+    ) -> Result<Option<InterruptVector>, TimerError> {
+        if self.is_running() {
+            return Err(TimerError::TimerRunning);
+        }
         let old_vector = self.apic.timer.interrupt_vector.replace(vector);
 
         self.apic
@@ -229,11 +253,15 @@ impl Timer<'_> {
                 vte
             });
 
-        old_vector
+        Ok(old_vector)
     }
 
     /// disables the currently enabled timer interrupt handler
-    pub fn disable_interrupt_handler(&mut self) -> Option<InterruptVector> {
+    pub fn disable_interrupt_handler(&mut self) -> Result<Option<InterruptVector>, TimerError> {
+        if self.is_running() {
+            return Err(TimerError::TimerRunning);
+        }
+
         log::trace!("disable timer handler");
         self.apic
             .offset_mut(Offset::TimerLocalVectorTableEntry)
@@ -242,19 +270,30 @@ impl Timer<'_> {
                 vte.set_bits(Timer::VECTOR_BITS, 0);
                 vte
             });
-        self.apic.timer.interrupt_vector.take()
+        Ok(self.apic.timer.interrupt_vector.take())
     }
 
     /// starts the timer
-    pub fn start(&mut self, mode: TimerMode) {
+    pub fn start(&mut self, mode: TimerMode) -> Result<(), TimerError> {
+        if self.is_running() {
+            return Err(TimerError::TimerRunning);
+        }
+
         let apic = &mut self.apic;
         match mode {
             TimerMode::Stopped => self.stop(),
             TimerMode::OneShot(config) | TimerMode::Periodic(config) => {
-                let has_vector = apic.timer.interrupt_vector.is_some();
-                if !has_vector {
-                    log::warn!("start timer without vector!");
+                let Some(int_vector) = apic.timer.interrupt_vector else {
+                    return Err(TimerError::MissingInterruptVector);
+                };
+
+                if matches!(mode, TimerMode::OneShot(_)) {
+                    apic.timer.one_shot_inner_handler = interrupts::register_interrupt_handler(
+                        int_vector,
+                        Self::one_shot_interrupt_handler,
+                    );
                 }
+
                 apic.offset_mut(Offset::TimerDivideConfiguration)
                     .update(|mut div| {
                         div.set_bits(Timer::DIVIDER_BITS, config.divider.into());
@@ -262,16 +301,10 @@ impl Timer<'_> {
                     });
                 apic.offset_mut(Offset::TimerLocalVectorTableEntry)
                     .update(|mut tlvte| {
-                        tlvte.set_bit(Timer::MASK_BIT, !has_vector);
+                        tlvte.set_bit(Timer::MASK_BIT, false);
                         tlvte.set_bits(Timer::MODE_BITS, mode.vector_table_entry_bits());
                         tlvte
                     });
-                assert_eq!(
-                    apic.offset(Offset::TimerLocalVectorTableEntry)
-                        .read()
-                        .get_bit(Timer::MASK_BIT),
-                    !has_vector
-                );
                 apic.offset_mut(Offset::TimerInitialCount)
                     .write(config.duration);
                 apic.timer.mode = mode;
@@ -279,11 +312,13 @@ impl Timer<'_> {
             TimerMode::TscDeadline => {
                 assert!(
                     self.apic.timer.supports_tsc_deadline,
-                    "TscDeadline mode not supported"
+                    "TscDeadline mode not supported by apic"
                 );
                 todo!("implement tsc deadline mode");
             }
         }
+        self.apic.timer.is_running = !matches!(mode, TimerMode::Stopped);
+        Ok(())
     }
 
     /// debug logs the current timer register states
@@ -321,6 +356,10 @@ impl Timer<'_> {
     ///
     /// This will panic if the timer is not in Periodic or OneShot mode.
     pub fn restart(&mut self, reset: u32) {
+        if self.is_running() {
+            warn!("Resetting timer while timer is running");
+        }
+
         match self.apic.timer.mode {
             TimerMode::OneShot(_) | TimerMode::Periodic(_) => {
                 self.apic.offset_mut(Offset::TimerInitialCount).write(reset);
@@ -334,11 +373,15 @@ impl Timer<'_> {
 
     /// Stops the apic timer
     pub fn stop(&mut self) {
+        if !self.is_running() {
+            warn!("Timer not running. stop timer does nothing.");
+        }
         let apic = &mut self.apic;
         // set initial count to 0 to stop the timer
         apic.offset_mut(Offset::TimerInitialCount).write(0);
 
         apic.timer.mode = TimerMode::Stopped;
+        apic.timer.is_running = false;
     }
 
     /// calibrates the apic timer rate based on the PIT timer.
@@ -349,12 +392,15 @@ impl Timer<'_> {
     /// #See
     /// [time::calibration_tick]
     pub fn calibrate(&mut self) {
+        assert!(!self.is_running());
         assert_eq!(self.apic.timer.mode, TimerMode::Stopped);
         assert!(self.apic.timer.interrupt_vector.is_none());
 
         info!("calibrating apic timer");
 
-        let old_vector = self.enable_interrupt_hander(InterruptVector::Nop);
+        let old_vector = self
+            .enable_interrupt_hander(InterruptVector::Nop)
+            .expect("Timer is not running");
 
         self.apic.timer.startup_tsc_time = timestamp_now_tsc();
         self.apic.timer.supports_tsc_deadline = cpuid(0x1, None).ecx.get_bit(24);
@@ -367,7 +413,8 @@ impl Timer<'_> {
         });
 
         // start the calibration timer
-        self.start(calibration);
+        self.start(calibration)
+            .expect("calibration timer correctly setup");
 
         // wait for elapsed seconds
         let elapsed_seconds = calibration_tick();
@@ -381,9 +428,11 @@ impl Timer<'_> {
         self.stop();
 
         if let Some(vector) = old_vector {
-            self.enable_interrupt_hander(vector);
+            self.enable_interrupt_hander(vector)
+                .expect("calibration timer is stopped");
         } else {
-            self.disable_interrupt_handler();
+            self.disable_interrupt_handler()
+                .expect("calibration timer is stopped");
         }
 
         trace!(
@@ -396,5 +445,34 @@ impl Timer<'_> {
 
         // round rate to nearest 100MHz and store it
         self.apic.timer.mhz = (((rate / 100.0) + 0.5) as u64) * 100;
+    }
+
+    fn one_shot_interrupt_handler(
+        int_vec: InterruptVector,
+        stack_frame: InterruptStackFrame,
+    ) -> Result<(), ()> {
+        let mut apic = locals!().apic.lock();
+        let timer = &mut apic.timer;
+
+        assert_eq!(Some(int_vec), timer.interrupt_vector);
+
+        timer.is_running = false;
+
+        let inner_handler = timer.one_shot_inner_handler.take();
+        drop(apic);
+
+        if let Some(inner_handler) = inner_handler {
+            // register the inner_handler as the "real" interrupt handler again
+            interrupts::register_interrupt_handler(int_vec, inner_handler);
+
+            inner_handler(int_vec, stack_frame)
+        } else {
+            error!("OneShot timer triggered without an interrupt defined");
+            // unregister the one_shot interrupt handler
+            if let Err(e) = interrupts::unregister_interrupt_handler(int_vec) {
+                error!("failed to unregister one shot handler: {e}");
+            }
+            Err(())
+        }
     }
 }
