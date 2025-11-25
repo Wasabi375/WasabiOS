@@ -3,10 +3,11 @@ use crate::{
     latest_path, run,
     test::test,
 };
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use cargo_toml::Manifest;
+use log::info;
 use std::{
-    fs::{remove_dir_all, File},
+    fs::{File, remove_dir_all},
     io::Write,
     path::{Path, PathBuf},
     process::Stdio,
@@ -91,6 +92,8 @@ pub async fn emit_asm(img: &Path, asm_file_path: &Path) -> Result<()> {
     asm_file
         .write(&output.stdout)
         .context(format!("Writing asm file failed {:?}", &asm_file_path))?;
+
+    info!("dump asm to {}", asm_file_path.display());
 
     Ok(())
 }
