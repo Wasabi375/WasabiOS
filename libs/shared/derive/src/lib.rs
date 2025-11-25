@@ -1,12 +1,18 @@
 extern crate proc_macro;
 
+mod atomic_wrapper;
+
 use paste::paste;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Expr, ExprLit, Lit, parse_macro_input};
 
-// TODO replace paste with concat from rust. See: https://doc.rust-lang.org/stable/unstable-book/language-features/macro-metavar-expr-concat.html
+#[proc_macro_derive(AtomicWrapper)]
+pub fn derive_atomic_wrapper(input: TokenStream) -> TokenStream {
+    atomic_wrapper::derive_atomic_wrapper(input)
+}
 
+// TODO replace paste with concat from rust. See: https://doc.rust-lang.org/stable/unstable-book/language-features/macro-metavar-expr-concat.html
 // TODO support Other variant. That is valid over all unused discriminants
 macro_rules! primitive_enum {
     ($type:ident) => {
