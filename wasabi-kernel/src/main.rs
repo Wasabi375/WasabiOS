@@ -15,7 +15,7 @@ use log::{debug, error, info, trace, warn};
 use bootloader_api::BootInfo;
 use wasabi_kernel::{
     KernelConfig, bootloader_config_common, default_kernel_config,
-    task::{TaskDefinition, TaskSystem},
+    task::TaskDefinition,
     time::{self},
 };
 
@@ -26,7 +26,7 @@ use wasabi_kernel::mem::{
 };
 
 /// the main entry point for the kernel. Called by the bootloader.
-fn kernel_main() -> ! {
+fn kernel_main() {
     if locals!().is_bsp() {
         let startup_time = time::time_since_startup().to_millis();
         info!("tsc clock rate {}MHz", time::tsc_tickrate());
@@ -56,12 +56,6 @@ fn kernel_main() -> ! {
 
     info!("OS core cpu task is done!\t");
     assert!(!locals!().in_interrupt());
-
-    // TODO move into lib. Change kernel_main to return unit
-    unsafe {
-        // Safety: cpu-core task has a static lifetime stack
-        TaskSystem::terminate_task();
-    }
 }
 
 fn context_switch_experiment() {

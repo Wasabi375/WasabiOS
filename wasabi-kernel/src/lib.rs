@@ -60,7 +60,8 @@ use x86_64::{
 
 use crate::{
     core_local::core_boot,
-    cpu::{acpi::ACPI, apic, cpuid, halt, interrupts},
+    cpu::{acpi::ACPI, apic, cpuid, interrupts},
+    task::TaskSystem,
 };
 use bootloader_api::{BootInfo, config::Mapping, info::Optional};
 use core::{
@@ -68,8 +69,12 @@ use core::{
     sync::atomic::{AtomicU8, Ordering},
 };
 
+/// Function type for the main kernel function
+pub type KernelMainFn = fn() -> ();
+
 /// The main function called for each Core after the kernel is initialized
-static mut KERNEL_MAIN: fn() -> ! = halt;
+static mut KERNEL_MAIN: KernelMainFn = empty_main;
+fn empty_main() {}
 
 static KERNEL_MAIN_BARRIER: AtomicU8 = AtomicU8::new(0);
 
@@ -107,7 +112,12 @@ pub unsafe fn enter_kernel_main() -> ! {
     unsafe {
         // Safety: this is only written once during bsp start.
         // There is no way this is currently being modified
-        KERNEL_MAIN()
+        KERNEL_MAIN();
+    }
+
+    unsafe {
+        // Safety: kernel_main exited. Stack has a static lifetime
+        TaskSystem::terminate_task();
     }
 }
 
@@ -115,7 +125,7 @@ pub unsafe fn enter_kernel_main() -> ! {
 pub fn kernel_bsp_entry(
     boot_info: &'static mut BootInfo,
     kernel_config: KernelConfig,
-    kernel_start: fn() -> !,
+    kernel_start: KernelMainFn,
 ) -> ! {
     unsafe {
         // Saftey: This is the first function ever called
@@ -316,7 +326,7 @@ macro_rules! entry_point {
         #[doc(hidden)]
         fn __impl_kernel_start(boot_info: &'static mut BootInfo) -> ! {
             let kernel_conf: $crate::KernelConfig = $k_conf;
-            let kernel_main: fn() -> ! = $path;
+            let kernel_main: $crate::KernelMainFn = $path;
             $crate::kernel_bsp_entry(boot_info, kernel_conf, kernel_main);
         }
         bootloader_api::entry_point!(__impl_kernel_start, config = $b_conf);

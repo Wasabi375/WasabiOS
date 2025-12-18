@@ -211,7 +211,7 @@ fn init_mp() {
 }
 
 /// the main entry point for the kernel in test mode
-fn kernel_test_main() -> ! {
+fn kernel_test_main() {
     unsafe {
         locals!().disable_interrupts_guardless();
     }
