@@ -77,8 +77,6 @@ staticvec = { path = "forked-libs/staticvec" }
 anyhow =  "1.0.94"
 bit_field = "0.10.2"
 bitflags = "2.6.0"
-bootloader = {  version = "0.11.12", default-features = false, features = ["uefi"] }
-bootloader_api = {  version = "0.11.12" }
 const-default = { version = "1.0", features = ["derive"] }
 crc32fast = { version = "1.5.0", default-features = false }
 crossbeam-epoch = { version = "0.9.18", default-features = false, features = ["alloc"] }
@@ -101,14 +99,16 @@ uuid = { version = "1.11.0", default-features = false }
 volatile = "0.6"
 walkdir = "2.5"
 
-# TODO use upstream version once merged and released
+# TODO use upstream once new version is released
+
+bootloader = {  version = "0.11.12", default-features = false, features = ["uefi"], git = "https://github.com/rust-osdev/bootloader", rev = "31a607120a828a6c25ff8bfb3da7497eda16a047" }
+bootloader_api = {  version = "0.11.12", git = "https://github.com/rust-osdev/bootloader", rev = "31a607120a828a6c25ff8bfb3da7497eda16a047" }
+
 # TODO create PR for nonmax
 simple_endian = { version = "0.3.2", git = "https://github.com/Wasabi375/simple-endian-rs.git", branch = "non_zero"}
 
-#  TODO use upstream once new version is released
 derive_builder = { version = "0.20.0", git = "https://github.com/Wasabi375/rust-derive-builder", branch = "owned_custom_default", default-features = false}
 
-# TODO use upstream once new version is released
 # x86_64 = 0.16"
 x86_64 = { version = "0.15.1", git = "https://github.com/Wasabi375/x86_64", branch = "patched" }
 

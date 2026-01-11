@@ -80,6 +80,11 @@ impl<S: PageSize> Pages<S> {
             offset,
         )
     }
+
+    /// Returns `true` if the `vaddr` is contained within `self`
+    pub fn contains(&self, vaddr: VirtAddr) -> bool {
+        self.start_addr() <= vaddr && vaddr <= self.end_addr()
+    }
 }
 
 /// a number of consecutive pages in virtual memory with 2 additional optional guard pages

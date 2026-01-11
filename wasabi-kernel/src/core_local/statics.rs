@@ -2,6 +2,10 @@
 
 #[allow(unused_imports)]
 use log::{debug, info, trace, warn};
+use x86_64::{
+    VirtAddr,
+    structures::paging::{Page, Size4KiB},
+};
 
 #[cfg(feature = "test")]
 use crate::testing::core_local::TestCoreStatics;
@@ -9,6 +13,7 @@ use crate::testing::core_local::TestCoreStatics;
 use crate::{
     cpu::{self, apic::Apic, cpuid, gdt::GDTInfo, interrupts::InterruptHandlerState},
     crossbeam_epoch::LocalEpochHandle,
+    mem::structs::Pages,
     prelude::UnwrapTicketLock,
     task::TaskSystem,
 };
@@ -52,6 +57,9 @@ pub struct CoreStatics {
     /// A unique id of this core. Each core has sequential ids starting from 0 and ending
     /// at [get_started_core_count].
     pub core_id: CoreId,
+
+    /// The pages used for the main stack on this core
+    pub stack: Pages<Size4KiB>,
 
     /// The core local apic id. This is assigned by the hardware and is not necessarially
     /// equal to the core id.
@@ -115,6 +123,11 @@ impl CoreStatics {
         Self {
             self_ptr: NonNull::dangling(),
             core_id: CoreId(0),
+            stack: Pages {
+                // Safety: zero is properly aligned to page boundary
+                first_page: unsafe { Page::from_start_address_unchecked(VirtAddr::zero()) },
+                count: 0,
+            },
             apic_id: CoreId(0),
             interrupt_count: AutoRefCounter::new(0),
             exception_count: AutoRefCounter::new(0),
@@ -153,7 +166,12 @@ impl CoreStatics {
     /// The caller must ensure that there are no references into [BOOT_CORE_LOCALS]
     /// either via the static ref, the [super::locals] macro or in any other way.
     /// This should be guranteed by the `boot_locals` parameter.
-    unsafe fn initialize(boot_locals: &mut Self, core_id: CoreId, apic_id: CoreId) -> Box<Self> {
+    unsafe fn initialize(
+        boot_locals: &mut Self,
+        core_id: CoreId,
+        apic_id: CoreId,
+        stack: Pages<Size4KiB>,
+    ) -> Box<Self> {
         trace!("CoreStatic::initialize");
 
         assert_eq!(boot_locals.interrupt_count.count(), 0);
@@ -177,6 +195,7 @@ impl CoreStatics {
         let mut core_statics = Box::new(CoreStatics {
             self_ptr: NonNull::dangling(),
             core_id,
+            stack,
             apic_id,
             interrupt_count: AutoRefCounter::new(0),
             exception_count: AutoRefCounter::new(0),
@@ -367,7 +386,7 @@ pub unsafe fn core_boot() -> CoreId {
 /// The caller must also ensure that no references or pointers to [super::locals] is held
 /// past this function call, as the result of the macro is invalidated and reinitialized by
 /// this function
-pub unsafe fn init(core_id: CoreId) {
+pub unsafe fn init(core_id: CoreId, stack: Pages<Size4KiB>) {
     trace!("init({core_id:?})");
     let apic_id = cpuid::apic_id().into();
 
@@ -379,7 +398,7 @@ pub unsafe fn init(core_id: CoreId) {
 
     let core_local = unsafe {
         // Safety: during `init` call and `boot_locals` is properly constructed uniuqe reference.
-        CoreStatics::initialize(boot_locals, core_id, apic_id)
+        CoreStatics::initialize(boot_locals, core_id, apic_id, stack)
     };
 
     unsafe {

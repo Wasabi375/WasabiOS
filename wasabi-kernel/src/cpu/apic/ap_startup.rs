@@ -17,27 +17,27 @@ use shared::{
 use static_assertions::const_assert;
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
     PhysAddr, VirtAddr,
+    structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
 };
 
 #[allow(unused)]
 use log::{debug, error, info, trace, warn};
 
 use crate::{
+    DEFAULT_STACK_PAGE_COUNT,
     core_local::{get_ready_core_count, get_started_core_count},
     cpu::apic::ipi::{self, Ipi},
     enter_kernel_main, locals,
     mem::{
+        MemError,
         frame_allocator::{FrameAllocator, PhysAllocator},
         page_allocator::PageAllocator,
         page_table::PageTable,
-        structs::GuardedPages,
-        MemError,
+        structs::{GuardedPages, Pages},
     },
     processor_init,
     time::{sleep_tsc, time_since_tsc},
-    DEFAULT_STACK_PAGE_COUNT, DEFAULT_STACK_SIZE,
 };
 
 mod bsp_ctrl_regs {
@@ -237,7 +237,9 @@ pub fn ap_startup() {
         let ready_count = get_ready_core_count(Ordering::SeqCst);
         if ready_count < known_started {
             if time_since_tsc(timer) > WAIT_FOR_READY_TIMEOUT {
-                panic!("Only {ready_count} cores are ready after timeout, but {known_started} cores weres started");
+                panic!(
+                    "Only {ready_count} cores are ready after timeout, but {known_started} cores weres started"
+                );
             } else {
                 spin_loop()
             }
@@ -272,18 +274,20 @@ impl From<MemError> for ApStackError {
 impl ApStack {
     const STACK_ALIGN: u64 = 16;
 
+    const fn page_count() -> u64 {
+        DEFAULT_STACK_PAGE_COUNT
+    }
+
     fn alloc() -> Result<Self, ApStackError> {
         trace!("Allocate ap stack");
         let pages = PageAllocator::get_for_kernel()
             .lock()
-            .allocate_guarded_pages(DEFAULT_STACK_PAGE_COUNT, true, true)
+            .allocate_guarded_pages(Self::page_count(), true, true)
             .map_err(ApStackError::from)?;
         let pages = unsafe {
             // Safety: pages was just allocated
             pages.map().map_err(ApStackError::from)?
         };
-
-        assert_eq!(pages.size(), DEFAULT_STACK_SIZE);
 
         let start = pages.start_addr();
         let end = pages.end_addr().align_down(Self::STACK_ALIGN);
@@ -312,14 +316,14 @@ impl ApStack {
                     "There is an existing ap stack pointing to {:#016x}, can't create new one.",
                     exitsing
                 );
-                Self::free(pages);
+                Self::unmap_and_free(pages);
                 Err(ApStackError::StackAlreadyExists)
             }
         }
     }
 
     /// frees the pages of the AP stack.
-    fn free(pages: GuardedPages<Size4KiB>) {
+    fn unmap_and_free(pages: GuardedPages<Size4KiB>) {
         let unmapped = unsafe {
             // Safety:
             //  we never gave await the address to this memory and we
@@ -354,7 +358,7 @@ impl Drop for ApStack {
         match AP_STACK_PTR.compare_exchange(end.as_u64(), 0, Ordering::SeqCst, Ordering::SeqCst) {
             Ok(_) => {
                 debug!("Freeing unused ap stack");
-                ApStack::free(self.0);
+                ApStack::unmap_and_free(self.0);
             }
             Err(_) => {
                 trace!("Ap stack was taken by core, so do nothing on drop");
@@ -364,15 +368,34 @@ impl Drop for ApStack {
 }
 
 #[allow(unused)]
-unsafe extern "C" fn ap_entry() -> ! {
+unsafe extern "C" fn ap_entry(stack_end: u64) -> ! {
+    fn find_stack(stack_end: VirtAddr) -> Pages<Size4KiB> {
+        let page_after_last = stack_end.align_up(Size4KiB::SIZE);
+        let page_after_last = Page::<Size4KiB>::from_start_address(page_after_last)
+            .expect("we just aligned the vaddr to page bounds");
+
+        let start_page = page_after_last - ApStack::page_count();
+
+        let end_page = Page::<Size4KiB>::containing_address(stack_end);
+
+        Pages::<Size4KiB> {
+            first_page: start_page,
+            count: ApStack::page_count(),
+        }
+    }
+
     unsafe {
         // Safety: this is safe during ap_startup
         bsp_ctrl_regs::set_regs();
 
+        let stack = find_stack(VirtAddr::new(stack_end));
         // Saftey: only called once for each ap, right here
-        processor_init();
+        processor_init(stack);
 
         info!("Core {} online", locals!().core_id);
+
+        // TODO find stack-start and store in core statics
+        warn!("stack at {stack_end:?}");
 
         // Safety: core is initialized
         enter_kernel_main();

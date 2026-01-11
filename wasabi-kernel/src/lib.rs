@@ -54,13 +54,14 @@ use shared::{
 use static_assertions::const_assert;
 use time::time_since_tsc;
 use x86_64::{
-    PhysAddr,
-    structures::paging::{PageSize, Size4KiB},
+    PhysAddr, VirtAddr,
+    structures::paging::{Page, PageSize, Size4KiB},
 };
 
 use crate::{
     core_local::core_boot,
     cpu::{acpi::ACPI, apic, cpuid, interrupts},
+    mem::structs::Pages,
     task::TaskSystem,
 };
 use bootloader_api::{BootInfo, config::Mapping, info::Optional};
@@ -127,6 +128,11 @@ pub fn kernel_bsp_entry(
     kernel_config: KernelConfig,
     kernel_start: KernelMainFn,
 ) -> ! {
+    // NOTE it is not save to use KernelInfo::get before processor_init is finished
+    // as it will take a mutable reference to the underlying data. Therefore we
+    // copy the data we require before moving BootInfo into KernelInfo
+    let kernel_stack_bottom = boot_info.kernel_stack_bottom;
+    let kernel_stack_len = boot_info.kernel_stack_len;
     unsafe {
         // Saftey: This is the first function ever called
         KernelInfo::init(boot_info);
@@ -137,8 +143,13 @@ pub fn kernel_bsp_entry(
 
     time::calibrate_tsc();
 
+    let stack = Pages::<Size4KiB> {
+        first_page: Page::from_start_address(VirtAddr::new(kernel_stack_bottom))
+            .expect("Bootloader should always start stack at a 4KiB page"),
+        count: pages_required_for!(Size4KiB, kernel_stack_len),
+    };
     unsafe {
-        processor_init();
+        processor_init(stack);
     }
 
     if kernel_config.start_aps {
@@ -156,7 +167,7 @@ pub fn kernel_bsp_entry(
 
 /// Safety: should only be called once, right at the start
 /// of the start of the processor
-pub unsafe fn processor_init() {
+pub unsafe fn processor_init(stack: Pages<Size4KiB>) {
     let core_id: CoreId;
     unsafe {
         // Safety: `init` is only called once per core and `core_boot`
@@ -187,7 +198,7 @@ pub unsafe fn processor_init() {
         }
         // Safety:
         // this is called after `core_boot()` and we have initialized memory and logging
-        core_local::init(core_id);
+        core_local::init(core_id, stack);
 
         // Safety: called during `init` after `crossbeam_epoch::bsp_init` and `core_local::init`
         crossbeam_epoch::processor_init();

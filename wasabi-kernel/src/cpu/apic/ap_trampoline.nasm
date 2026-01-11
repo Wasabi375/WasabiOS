@@ -86,7 +86,7 @@ wait_for_stack
     ;; we have taken ownership 
     mov rsp, rax
     
-    mov rbx, [trampoline.ap_entry]
+    mov rdi, rax ; pass stack_end as first argument
     jmp [trampoline.ap_entry]
 
 halt_loop:

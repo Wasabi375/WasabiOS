@@ -4,16 +4,17 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["log-task-name"]
+default = ["log-task-name", "task-stack-history"]
 
 fixed-kernel-vaddr = []
+freeze-heap = ["mem-stats"]
+log-task-name = []
+mem-backed-guard-page = []  
+mem-stats = [ "dep:histogram" ]
 no-color = ["logger/no-color"]  
 no-unicode-log = ["shared/no-unicode-log"]
-log-task-name = []
-mem-stats = [ "dep:histogram" ]
+task-stack-history = []
 test = ["dep:testing"]
-mem-backed-guard-page = []  
-freeze-heap = ["mem-stats"]
 
 
 [dependencies]

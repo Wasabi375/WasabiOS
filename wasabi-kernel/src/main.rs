@@ -12,6 +12,7 @@ extern crate wasabi_kernel;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
+use alloc::{format, string::String};
 use bootloader_api::BootInfo;
 use wasabi_kernel::{
     KernelConfig, bootloader_config_common, default_kernel_config,
@@ -40,7 +41,7 @@ fn kernel_main() {
 
     #[cfg(feature = "mem-stats")]
     if locals!().is_bsp() {
-        // TODO figure out how I can to this at the end of the kernel, with a running Task System
+        // TODO figure out how I can do this at the end of the kernel, with a running Task System
         let level = log::Level::Info;
         KernelHeap::get().lock().stats().log(level);
         PageAllocator::get_for_kernel()
@@ -55,7 +56,6 @@ fn kernel_main() {
     }
 
     info!("OS core cpu task is done!\t");
-    assert!(!locals!().in_interrupt());
 }
 
 fn context_switch_experiment() {
@@ -74,17 +74,26 @@ fn context_switch_experiment() {
             .launch_task(TaskDefinition::with_name(count_task, "count"))
             .unwrap();
 
-        task_sytem
-            .launch_task(TaskDefinition::with_name(calc_pi, "pi"))
-            .unwrap();
-        task_sytem
-            .launch_task(TaskDefinition::with_name(find_primes, "primes"))
-            .unwrap();
+        for i in 0..25 {
+            task_sytem
+                .launch_task(TaskDefinition::with_name(
+                    calc_pi,
+                    String::leak(format!("pi {i}")),
+                ))
+                .unwrap();
+            task_sytem
+                .launch_task(TaskDefinition::with_name(
+                    find_primes,
+                    String::leak(format!("primes {i}")),
+                ))
+                .unwrap();
+        }
     }
 
     task_sytem.start().expect("Timer not in use");
 }
 
+#[allow(unused)]
 fn count_task() {
     info!("in count task");
     for i in 0..100 {
@@ -92,6 +101,7 @@ fn count_task() {
     }
 }
 
+#[allow(unused)]
 fn find_primes() {
     fn is_prime(x: u64) -> bool {
         if x == 2 {
@@ -120,11 +130,11 @@ fn find_primes() {
             }
             last_prime = i;
         } else {
-            // info!("{i} is not prime");
         }
     }
 }
 
+#[allow(unused)]
 fn calc_pi() {
     let mut sum = 0.0;
     let mut sign = 1;
