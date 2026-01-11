@@ -77,13 +77,13 @@ pub unsafe fn init() {
 
     let mut dispatch_logger = DispatchLogger::new()
         .with_level(LevelFilter::Info)
-        .with_module_level("wasabi_kernel::task", LevelFilter::Trace)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
     #[cfg(not(feature = "test"))]
     #[allow(dead_code)]
     {
         dispatch_logger = dispatch_logger
+            // .with_module_level("wasabi_kernel::task", LevelFilter::Trace)
             // .with_module_level("GlobalAlloc", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)

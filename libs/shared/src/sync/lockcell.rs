@@ -403,7 +403,10 @@ impl<I: InterruptState> UnsafeTicketLock<I> {
             if owner != !0 && owner == I::s_core_id().0 as u16 {
                 panic!("Deadlock detected. Lock already taken by this core");
             }
-            spin_loop();
+
+            while self.current_ticket.load(Ordering::Relaxed) != ticket {
+                spin_loop();
+            }
         }
 
         self.owner.store(I::s_core_id().0 as u16, Ordering::Release);

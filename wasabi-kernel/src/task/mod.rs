@@ -347,7 +347,7 @@ impl TaskSystem {
         })
     }
 
-    /// Get the number of tasks
+    /// Get the number of tasks in the system
     pub fn get_task_count(&self) -> usize {
         let data = self.data.lock();
         data.tasks.len()
@@ -678,11 +678,13 @@ fn verify_interrupt_frame<L: LockCell<SystemData>>(
         "interrupt with stack pointer not pointing into the stack of it's task!
         task name: {}
         stack ptr: {:p}
-        stack: {:p}-{:p}",
+        stack: {:p}-{:p}
+        instruction ptr: {:p}",
         task.name.unwrap_or(""),
         stack_ptr,
         stack.start_addr(),
-        stack.end_addr()
+        stack.end_addr(),
+        stack_frame.instruction_pointer,
     );
 
     #[cfg(feature = "task-stack-history")]
@@ -692,20 +694,24 @@ fn verify_interrupt_frame<L: LockCell<SystemData>>(
             interrupted task: {}
             stack owner: {}
             stack pointer: {:p}
-            stack: {:p}-{:p}",
+            stack: {:p}-{:p}
+            instruction ptr: {:p}",
             task.name.unwrap_or(""),
             owner,
             stack_ptr,
             stack.start_addr(),
             stack.end_addr(),
+            stack_frame.instruction_pointer,
         );
     } else {
         error!(
             "Could not find stack for stack pointer.
             interrupted task: {}
-            stack pointer: {:p}",
+            stack pointer: {:p}
+            instruction ptr: {:p}",
             task.name.unwrap_or(""),
-            stack_ptr
+            stack_ptr,
+            stack_frame.instruction_pointer,
         );
     }
 
@@ -733,19 +739,24 @@ impl TaskInterrupt {
             }
         }
 
+        #[inline]
+        extern "C" fn drop_guard(guard: *mut InternalGuard) {
+            unsafe {
+                // Safety: ensure to keep track of interrupt counters
+                // drop manually as the assembly exits the function without automatically dorpping
+                (*guard).keep_ints_disabled();
+                // Safety: guard no longer used after "resume" and we are calling
+                // this from noreturn asm
+                core::ptr::drop_in_place(guard);
+            }
+        }
+
         let (xsave_area_size, xsave_area) = if let Some(xsave_area) = self.xsave_area {
             (xsave_area.len(), Box::leak(xsave_area).as_mut_ptr())
         } else {
             (0, core::ptr::null_mut())
         };
         assert!(xsave_area.is_aligned_to(64));
-
-        // ensure to keep track of interrupt counters
-        // drop manually as the assembly exits the function without automatically dorpping
-        unsafe {
-            int_guard.keep_ints_disabled();
-        }
-        drop(int_guard);
 
         unsafe {
             // Saftey: this has to be done in assembly
@@ -772,6 +783,9 @@ impl TaskInterrupt {
                 // arguments already loaded into rsi, rdi
                 "call {dealloc_xsave}",
                 "2:",
+
+                "mov rdi, {guard_ptr}
+                call {drop_guard}",
 
                 // ensure that this task switch is not interupted between eoi and iretq
                 "cli",
@@ -811,7 +825,9 @@ impl TaskInterrupt {
                 in("rdx") -1,
                 in("rdi") xsave_area,
                 in("rsi") xsave_area_size,
+
                 dealloc_xsave = sym dealloc_xsave_area,
+                drop_guard = sym drop_guard,
 
                 eoi = sym Apic::eoi,
 
@@ -822,6 +838,8 @@ impl TaskInterrupt {
                 new_stack_pointer = in(reg) self.stack_frame.stack_pointer.as_u64(),
                 code_segment = in(reg) self.stack_frame.code_segment.0,
                 stack_segment = in(reg) self.stack_frame.stack_segment.0,
+
+                guard_ptr = in(reg) &mut int_guard,
 
                 clobber_abi("C"),
                 options(noreturn)
@@ -889,6 +907,10 @@ impl InternalGuard {
     ///
     /// Caller ensures that it is save to keep interrupts disabled.
     /// Caller ensures that the interrupt flag is properly set sometime after this call
+    ///
+    /// There is a high chance of race conditions when using this, as random functions might
+    /// reenable interrupts before the caller expects them to be enabled,
+    ///     e.g any memory alloc/free uses a lock which will potentially modify the Interrupt flag
     unsafe fn keep_ints_disabled(&mut self) {
         if let Some(guard) = self.int_disable_guard.take() {
             core::mem::forget(guard);
