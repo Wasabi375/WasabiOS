@@ -77,7 +77,7 @@ pub struct CoreStatics {
 
     /// A count of how many times [Self::disable_interrupts] has been called. We only reenable
     /// interrupts once this hits 0. This is decremented in [Self::enable_interrupts].
-    interrupts_disable_count: AtomicU64,
+    interrupts_disable_count: AtomicU64, // TODO why is this a u64
 
     /// Interrupt state related to handling interrupts
     pub interrupt_state: InterruptHandlerState,
@@ -266,6 +266,22 @@ impl CoreStatics {
                 cpu::enable_interrupts();
             }
         }
+    }
+
+    /// Decrements the counter that tracks how often interrupts have been disabled.
+    ///
+    /// This should nearly never be used. Instead [Self::enable_interrupts] or even better
+    /// the guard from [Self::disable_interrupts] should do this.
+    ///
+    /// This is only intended in combination with manual assembly.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the interrupt enable count has been previously incremented
+    /// and won't be decremented in another way (for that increment).
+    /// Caller also ensures that it is save to enable interrupts after this call.
+    pub unsafe fn decrement_interrupt_disable_count(&self) -> u64 {
+        self.interrupts_disable_count.fetch_sub(1, Ordering::SeqCst)
     }
 
     /// Disable interrupts and increment [Self::interrupts_disable_count]

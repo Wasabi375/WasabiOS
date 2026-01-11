@@ -25,6 +25,7 @@ use wasabi_kernel::mem::{
     frame_allocator::FrameAllocator, kernel_heap::KernelHeap, page_allocator::PageAllocator,
     page_table::PageTable,
 };
+use x86_64::registers::rflags::{self, RFlags};
 
 /// the main entry point for the kernel. Called by the bootloader.
 fn kernel_main() {
@@ -59,29 +60,30 @@ fn kernel_main() {
 }
 
 fn context_switch_experiment() {
-    let task_sytem = &locals!().task_system;
+    assert!(interrupts_enabled());
+    let task_system = &locals!().task_system;
     // // Safety: tasks do not share stack references
     unsafe {
         let foo = 5u64;
         let bar = 5u64;
-        task_sytem
+        task_system
             .launch_task(TaskDefinition::with_name(
                 move || info!("foobar: {}", foo + bar),
                 "foobar",
             ))
             .unwrap();
-        task_sytem
+        task_system
             .launch_task(TaskDefinition::with_name(count_task, "count"))
             .unwrap();
 
         for i in 0..25 {
-            task_sytem
+            task_system
                 .launch_task(TaskDefinition::with_name(
                     calc_pi,
                     String::leak(format!("pi {i}")),
                 ))
                 .unwrap();
-            task_sytem
+            task_system
                 .launch_task(TaskDefinition::with_name(
                     find_primes,
                     String::leak(format!("primes {i}")),
@@ -90,7 +92,13 @@ fn context_switch_experiment() {
         }
     }
 
-    task_sytem.start().expect("Timer not in use");
+    info!("task count: {}", task_system.get_task_count());
+    task_system.start().expect("Timer not in use");
+}
+
+fn interrupts_enabled() -> bool {
+    let flags = rflags::read();
+    flags.contains(RFlags::INTERRUPT_FLAG)
 }
 
 #[allow(unused)]
@@ -104,6 +112,7 @@ fn count_task() {
 #[allow(unused)]
 fn find_primes() {
     fn is_prime(x: u64) -> bool {
+        assert!(interrupts_enabled());
         if x == 2 {
             return true;
         }

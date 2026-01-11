@@ -347,6 +347,12 @@ impl TaskSystem {
         })
     }
 
+    /// Get the number of tasks
+    pub fn get_task_count(&self) -> usize {
+        let data = self.data.lock();
+        data.tasks.len()
+    }
+
     /// Enable the task system and starts the timer
     ///
     /// While running the task system can interrupt
@@ -717,7 +723,7 @@ struct TaskInterrupt {
 
 impl TaskInterrupt {
     /// resumes the interrupted task
-    fn resume(self, int_guard: InternalGuard) -> ! {
+    fn resume(self, mut int_guard: InternalGuard) -> ! {
         // NOTE: logging here causes deadlock
         #[inline]
         extern "C" fn dealloc_xsave_area(ptr: *mut u8, len: usize) {
@@ -736,6 +742,9 @@ impl TaskInterrupt {
 
         // ensure to keep track of interrupt counters
         // drop manually as the assembly exits the function without automatically dorpping
+        unsafe {
+            int_guard.keep_ints_disabled();
+        }
         drop(int_guard);
 
         unsafe {
@@ -763,6 +772,9 @@ impl TaskInterrupt {
                 // arguments already loaded into rsi, rdi
                 "call {dealloc_xsave}",
                 "2:",
+
+                // ensure that this task switch is not interupted between eoi and iretq
+                "cli",
 
                 // issue end of interrupt
                 // TODO is this needed in all cases?
@@ -826,7 +838,7 @@ impl TaskInterrupt {
 /// * stop logger from accessing task state (deadlock prevention)
 struct InternalGuard {
     _int_count_guard: Option<AutoRefCounterGuard<'static>>,
-    _int_disable_guard: Option<InterruptDisableGuard>,
+    int_disable_guard: Option<InterruptDisableGuard>,
 }
 
 impl InternalGuard {
@@ -846,7 +858,7 @@ impl InternalGuard {
 
         Self {
             _int_count_guard: Some(locals!().interrupt_count.increment()),
-            _int_disable_guard: None,
+            int_disable_guard: None,
         }
     }
 
@@ -867,7 +879,23 @@ impl InternalGuard {
         let disable = unsafe { locals!().disable_interrupts() };
         Self {
             _int_count_guard: None,
-            _int_disable_guard: Some(disable),
+            int_disable_guard: Some(disable),
+        }
+    }
+
+    /// Ensures that dropping this does not reenable interrupts
+    ///
+    /// # Safety
+    ///
+    /// Caller ensures that it is save to keep interrupts disabled.
+    /// Caller ensures that the interrupt flag is properly set sometime after this call
+    unsafe fn keep_ints_disabled(&mut self) {
+        if let Some(guard) = self.int_disable_guard.take() {
+            core::mem::forget(guard);
+            unsafe {
+                // Safety: we just dropped the guard
+                locals!().decrement_interrupt_disable_count();
+            }
         }
     }
 }
@@ -907,6 +935,9 @@ pub extern "x86-interrupt" fn context_switch_handler(_int_stack_frame: Interrupt
                 xsave_area_size,
             ))
         };
+
+        assert!(stack_frame.cpu_flags.contains(RFlags::INTERRUPT_FLAG));
+
         let interrupt = TaskInterrupt {
             stack_frame: *stack_frame,
             registers: registers.clone(),

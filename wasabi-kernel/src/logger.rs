@@ -84,6 +84,7 @@ pub unsafe fn init() {
     #[allow(dead_code)]
     {
         dispatch_logger = dispatch_logger
+            // .with_module_level("GlobalAlloc", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu::acpi", LevelFilter::Trace)
