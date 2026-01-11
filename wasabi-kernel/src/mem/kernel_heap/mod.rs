@@ -20,6 +20,7 @@ use crate::{
         MemError, Result, frame_allocator::FrameAllocator, page_allocator::PageAllocator,
         page_table::PageTable,
     },
+    pages_required_for,
     prelude::{LockCell, TicketLock, UnwrapTicketLock},
 };
 
@@ -31,18 +32,18 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use linked_list_allocator::Heap as LinkedHeap;
-use shared::KiB;
+use shared::{GiB, KiB};
 use x86_64::structures::paging::{PageSize, PageTableFlags, Size4KiB};
 
 /// the size of the kernel heap in bytes
-pub const KERNEL_HEAP_SIZE: usize =
-    KernelHeapPageSize::SIZE as usize * KERNEL_HEAP_PAGE_COUNT as usize;
+pub const KERNEL_HEAP_SIZE: usize = GiB!(1);
 
 /// the size of a single page in the kernel heap
 type KernelHeapPageSize = Size4KiB;
 
 /// number of memory pages used by the kernel heap
-const KERNEL_HEAP_PAGE_COUNT: u64 = 250;
+const KERNEL_HEAP_PAGE_COUNT: u64 =
+    pages_required_for!(KernelHeapPageSize, KERNEL_HEAP_SIZE as u64);
 
 /// the [KernelHeap]
 // Safety: initialized by [init] before it we use allocated types
