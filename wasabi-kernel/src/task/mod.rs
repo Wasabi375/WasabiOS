@@ -1,14 +1,9 @@
 //! A task system that allows per-core concurency
 //!
 //! TODO implement task stealing between cores
-//! FIXME when the timer is to fast I somehow get a page-fault
-//!     I think the issue is that the timer interrupts during
-//!     the interrupt handler, thereby getting a memory access to a
-//!     stack of a wrong task. When that task terminates and drops the stack
-//!     this leads to the page fault.
-//!     I need to look into how interrupts of the same type can stack.
-//!     Otherwise maybe I can cli sti, but that might interfere with my
-//!     interrupt counter.
+
+#[cfg(feature = "task-stack-history")]
+mod stack_history;
 
 use core::{
     arch::{asm, naked_asm},
@@ -82,6 +77,10 @@ impl Drop for Task {
             debug!("dropping unnamed task");
         }
         if let Some(stack) = self.stack.take() {
+            debug_assert!(
+                stack.contains(shared::read_instruction_pointer!()),
+                "trying to drop stack while current ip points into it"
+            );
             debug!(
                 "dropping stack: {:p} - {:p}",
                 stack.start_addr(),
@@ -131,6 +130,12 @@ pub struct TaskDefinition<F> {
     /// Whether to create a guard page for the stack
     pub stack_tail_guard: bool,
 }
+
+/// The debug name for the core task of each CPU
+///
+/// This is the task that is started directly by the bootloader/ap_startup which
+/// is responsible for initializing the cpu and starting the task system
+pub const CPU_CORE_TASK_NAME: &'static str = "cpu-core";
 
 impl<F> TaskDefinition<F> {
     /// Create a new [TaskDefinition]
@@ -229,6 +234,10 @@ struct SystemData {
     /// Dropping [Task] is not always save, as we need to ensure that dropping does not free
     /// the stack that is used while dropping.
     terminated: Vec<Task>,
+
+    /// A History of stacks used by tasks and their name
+    #[cfg(feature = "task-stack-history")]
+    stack_history: stack_history::StackHistory,
 }
 
 impl TaskSystem {
@@ -264,17 +273,24 @@ impl TaskSystem {
         tasks.insert(
             current_task,
             Task {
-                name: Some("cpu-core"),
+                name: Some(CPU_CORE_TASK_NAME),
                 last_interrupt: None,
                 stack: None,
             },
         );
 
-        let system_data = SystemData {
+        let mut system_data = SystemData {
             tasks,
             interrupted: VecDeque::new(),
             terminated: Vec::new(),
+            #[cfg(feature = "task-stack-history")]
+            stack_history: stack_history::StackHistory::new(),
         };
+        #[cfg(feature = "task-stack-history")]
+        system_data
+            .stack_history
+            .register_task(locals!().stack, CPU_CORE_TASK_NAME);
+
         self.data.lock_uninit().write(system_data);
         self.current_task.store(current_task, Ordering::Release);
 
@@ -498,6 +514,10 @@ impl TaskSystem {
         let mut data = self.data.lock();
         let _guard = unsafe { InternalGuard::non_interrupt_enter() };
 
+        #[cfg(feature = "task-stack-history")]
+        data.stack_history
+            .register_task(stack.pages, task.name.unwrap_or(""));
+
         let new_handle = TaskHandle::take_next();
         let old_task_value = data.tasks.insert(new_handle, task);
         assert!(old_task_value.is_none());
@@ -533,9 +553,7 @@ impl TaskSystem {
     /// Caller must ensure that there are no active references into the stack if
     /// the task was spawned with an owned stack.
     pub unsafe fn terminate_task() -> ! {
-        // FIXME somehwo we are terminating 1 additional task
-        // FIXME why are we in an interrupt?
-        // assert!(!locals!().in_interrupt());
+        assert!(!locals!().in_interrupt());
 
         // Safety: enter context switch from outside interrupt
         let int_guard = unsafe { InternalGuard::non_interrupt_enter() };
@@ -587,9 +605,16 @@ impl TaskSystem {
         // to have some kind of cleanup task. But this works for now
         // TODO I should be able to change PageTable/PageAlloc/PhysAlloc locks to be preemtable
         // once this is no longer in the context-switch path
-        data.terminated.clear();
+        // data.terminated.clear();
 
         let current_handle = this.current_task.load(Ordering::Acquire);
+
+        debug_assert!(verify_interrupt_frame(
+            interrupt.stack_frame,
+            &data.tasks[&current_handle],
+            &data
+        ));
+
         let current_task = data
             .tasks
             .get_mut(&current_handle)
@@ -629,6 +654,56 @@ impl TaskSystem {
 
         next_task_interrupt.resume(int_guard)
     }
+}
+
+fn verify_interrupt_frame<L: LockCell<SystemData>>(
+    stack_frame: InterruptStackFrame,
+    task: &Task,
+    system_data: &LockCellGuard<'_, SystemData, L>,
+) -> bool {
+    let Some(stack) = task.stack else { return true };
+
+    let stack_ptr = stack_frame.stack_pointer;
+    if stack.pages.contains(stack_ptr) {
+        return true;
+    }
+
+    error!(
+        "interrupt with stack pointer not pointing into the stack of it's task!
+        task name: {}
+        stack ptr: {:p}
+        stack: {:p}-{:p}",
+        task.name.unwrap_or(""),
+        stack_ptr,
+        stack.start_addr(),
+        stack.end_addr()
+    );
+
+    #[cfg(feature = "task-stack-history")]
+    if let Some((stack, owner)) = system_data.stack_history.find(stack_ptr) {
+        error!(
+            "It looks like the stack pointer, points into the stack of another task
+            interrupted task: {}
+            stack owner: {}
+            stack pointer: {:p}
+            stack: {:p}-{:p}",
+            task.name.unwrap_or(""),
+            owner,
+            stack_ptr,
+            stack.start_addr(),
+            stack.end_addr(),
+        );
+    } else {
+        error!(
+            "Could not find stack for stack pointer.
+            interrupted task: {}
+            stack pointer: {:p}",
+            task.name.unwrap_or(""),
+            stack_ptr
+        );
+    }
+
+    false
 }
 
 /// The state of an interrupted [Task]
