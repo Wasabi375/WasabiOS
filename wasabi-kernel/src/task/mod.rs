@@ -51,7 +51,7 @@ use crate::{
 /// A Task in the [TaskSystem]
 struct Task {
     /// Optional debug name for the task
-    name: Option<&'static str>,
+    name: Box<str>,
 
     /// the stack used by the task
     ///
@@ -71,11 +71,7 @@ struct Task {
 
 impl Drop for Task {
     fn drop(&mut self) {
-        if let Some(name) = self.name {
-            debug!("dropping task: {name}");
-        } else {
-            debug!("dropping unnamed task");
-        }
+        debug!("dropping task: {}", self.name);
         if let Some(stack) = self.stack.take() {
             debug_assert!(
                 stack.contains(shared::read_instruction_pointer!()),
@@ -96,8 +92,8 @@ impl Drop for Task {
                             .free_guarded_pages(unmapped);
                     }
                     Err(e) => error!(
-                        "Failed to unmap stack for task {}. Leaking memory\n{e}",
-                        self.name.unwrap_or("")
+                        "Failed to unmap stack for task \"{}\". Leaking memory\n{e}",
+                        self.name
                     ),
                 }
             }
@@ -111,7 +107,7 @@ pub struct TaskInfo {
     /// The [TaskHandle]
     pub handle: TaskHandle,
     /// A debug name for the task
-    pub name: Option<&'static str>,
+    pub name: Box<str>,
 }
 
 /// Describes a Task that can be launched
@@ -121,7 +117,7 @@ pub struct TaskDefinition<F> {
     pub task: F,
 
     /// A debug name for the task
-    pub debug_name: Option<&'static str>,
+    pub name: Box<str>,
 
     /// The stack size for the task stack.
     pub stack_size: u64,
@@ -139,21 +135,13 @@ pub const CPU_CORE_TASK_NAME: &'static str = "cpu-core";
 
 impl<F> TaskDefinition<F> {
     /// Create a new [TaskDefinition]
-    pub const fn new(task: F) -> Self {
+    pub const fn new<I>(task: F, name: I) -> Self
+    where
+        I: [const] Into<Box<str>>,
+    {
         Self {
             task,
-            debug_name: None,
-            stack_size: DEFAULT_STACK_SIZE,
-            stack_head_guard: true,
-            stack_tail_guard: true,
-        }
-    }
-
-    /// Create a new [TaskDefinition]
-    pub const fn with_name(task: F, name: &'static str) -> Self {
-        Self {
-            task,
-            debug_name: Some(name),
+            name: name.into(),
             stack_size: DEFAULT_STACK_SIZE,
             stack_head_guard: true,
             stack_tail_guard: true,
@@ -273,7 +261,7 @@ impl TaskSystem {
         tasks.insert(
             current_task,
             Task {
-                name: Some(CPU_CORE_TASK_NAME),
+                name: CPU_CORE_TASK_NAME.into(),
                 last_interrupt: None,
                 stack: None,
             },
@@ -289,7 +277,7 @@ impl TaskSystem {
         #[cfg(feature = "task-stack-history")]
         system_data
             .stack_history
-            .register_task(locals!().stack, CPU_CORE_TASK_NAME);
+            .register_task(locals!().stack, CPU_CORE_TASK_NAME.into());
 
         self.data.lock_uninit().write(system_data);
         self.current_task.store(current_task, Ordering::Release);
@@ -343,7 +331,7 @@ impl TaskSystem {
 
         Some(TaskInfo {
             handle,
-            name: task.name,
+            name: task.name.clone(),
         })
     }
 
@@ -512,7 +500,7 @@ impl TaskSystem {
         };
 
         let task = Task {
-            name: task_definition.debug_name,
+            name: task_definition.name,
             stack: Some(stack),
             last_interrupt: Some(launch_interrupt_fake),
         };
@@ -522,7 +510,7 @@ impl TaskSystem {
 
         #[cfg(feature = "task-stack-history")]
         data.stack_history
-            .register_task(stack.pages, task.name.unwrap_or(""));
+            .register_task(stack.pages, task.name.clone());
 
         let new_handle = TaskHandle::take_next();
         let old_task_value = data.tasks.insert(new_handle, task);
@@ -575,10 +563,7 @@ impl TaskSystem {
             .expect("Current task should always exist");
 
         assert!(current_task.last_interrupt.is_none());
-        warn!(
-            "terminate task {current_handle:?} {}",
-            current_task.name.unwrap_or("")
-        );
+        warn!("terminate task {current_handle:?} {}", current_task.name);
 
         // NOTE can't drop current_task right now, this function uses the stack
         // owned by it. Dropping it now would also unmap the stack. Instead we
@@ -680,7 +665,7 @@ fn verify_interrupt_frame<L: LockCell<SystemData>>(
         stack ptr: {:p}
         stack: {:p}-{:p}
         instruction ptr: {:p}",
-        task.name.unwrap_or(""),
+        task.name,
         stack_ptr,
         stack.start_addr(),
         stack.end_addr(),
@@ -696,7 +681,7 @@ fn verify_interrupt_frame<L: LockCell<SystemData>>(
             stack pointer: {:p}
             stack: {:p}-{:p}
             instruction ptr: {:p}",
-            task.name.unwrap_or(""),
+            task.name,
             owner,
             stack_ptr,
             stack.start_addr(),
@@ -709,9 +694,7 @@ fn verify_interrupt_frame<L: LockCell<SystemData>>(
             interrupted task: {}
             stack pointer: {:p}
             instruction ptr: {:p}",
-            task.name.unwrap_or(""),
-            stack_ptr,
-            stack_frame.instruction_pointer,
+            task.name, stack_ptr, stack_frame.instruction_pointer,
         );
     }
 

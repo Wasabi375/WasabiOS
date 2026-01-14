@@ -8,6 +8,8 @@
     ascii_char,
     assert_matches,
     box_into_inner,
+    const_convert,
+    const_trait_impl,
     debug_closure_helpers,
     extern_types,
     maybe_uninit_array_assume_init,

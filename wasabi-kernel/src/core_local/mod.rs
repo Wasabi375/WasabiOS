@@ -134,12 +134,8 @@ impl CoreInfo for CoreInterruptState {
                 return Ok(());
             };
 
-            if let Some(name) = info.name {
-                writer.write_str(": ")?;
-                writer.write_str(name)?;
-            } else {
-                writer.write_str(": unknown")?;
-            }
+            writer.write_str(": ")?;
+            writer.write_str(&info.name)?;
         }
 
         writer.write_char(')')?;

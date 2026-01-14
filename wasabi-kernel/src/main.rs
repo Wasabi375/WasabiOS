@@ -12,7 +12,7 @@ extern crate wasabi_kernel;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use alloc::{format, string::String};
+use alloc::format;
 use bootloader_api::BootInfo;
 use wasabi_kernel::{
     KernelConfig, bootloader_config_common, default_kernel_config,
@@ -67,27 +67,21 @@ fn context_switch_experiment() {
         let foo = 5u64;
         let bar = 5u64;
         task_system
-            .launch_task(TaskDefinition::with_name(
+            .launch_task(TaskDefinition::new(
                 move || info!("foobar: {}", foo + bar),
                 "foobar",
             ))
             .unwrap();
         task_system
-            .launch_task(TaskDefinition::with_name(count_task, "count"))
+            .launch_task(TaskDefinition::new(count_task, "count"))
             .unwrap();
 
         for i in 0..25 {
             task_system
-                .launch_task(TaskDefinition::with_name(
-                    calc_pi,
-                    String::leak(format!("pi {i}")),
-                ))
+                .launch_task(TaskDefinition::new(calc_pi, format!("pi {i}")))
                 .unwrap();
             task_system
-                .launch_task(TaskDefinition::with_name(
-                    find_primes,
-                    String::leak(format!("primes {i}")),
-                ))
+                .launch_task(TaskDefinition::new(find_primes, format!("primes {i}")))
                 .unwrap();
         }
     }

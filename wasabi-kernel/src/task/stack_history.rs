@@ -1,11 +1,11 @@
-use alloc::collections::vec_deque::VecDeque;
+use alloc::{boxed::Box, collections::vec_deque::VecDeque};
 use x86_64::{VirtAddr, structures::paging::Size4KiB};
 
 use crate::mem::structs::Pages;
 
 #[derive(Debug, Clone)]
 pub struct StackHistory {
-    history: VecDeque<(Pages<Size4KiB>, &'static str)>,
+    history: VecDeque<(Pages<Size4KiB>, Box<str>)>,
     max_capacity: usize,
 }
 
@@ -21,17 +21,19 @@ impl StackHistory {
         }
     }
 
-    pub fn register_task(&mut self, stack: Pages<Size4KiB>, name: &'static str) {
+    pub fn register_task(&mut self, stack: Pages<Size4KiB>, name: Box<str>) {
         self.history.push_front((stack, name));
 
         self.trim_to_max();
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (Pages<Size4KiB>, &'static str)> {
-        self.history.iter().cloned()
+    pub fn iter(&self) -> impl Iterator<Item = (Pages<Size4KiB>, &str)> {
+        self.history
+            .iter()
+            .map(|(page, name)| (page.clone(), name.as_ref()))
     }
 
-    pub fn find(&self, vaddr: VirtAddr) -> Option<(Pages<Size4KiB>, &'static str)> {
+    pub fn find(&self, vaddr: VirtAddr) -> Option<(Pages<Size4KiB>, &str)> {
         self.iter().find(|(stack, _)| stack.contains(vaddr))
     }
 
