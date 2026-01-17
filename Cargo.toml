@@ -34,6 +34,8 @@ members = [
     "libs/shared",
     "libs/shared/derive",
 
+    "modules/base",
+    "modules/pi-test",
     "modules/wasabi-fs",
     "modules/wasabi-fs/fuse",
 
@@ -59,6 +61,7 @@ shared = { path = "libs/shared" }
 shared-derive = { path = "libs/shared/derive" }
 
 # modules
+base = { path = "modules/base" }
 wfs = { path = "modules/wasabi-fs" }
 
 # testing libs
@@ -94,6 +97,7 @@ paste = "1.0.12"
 proc-macro2 = "1.0.92"
 quote = "1.0.37"
 simple_logger = { version = "5.1", default-features = false, features = ["colors"]}
+stabby = { version = "72.1.1", default-features = false, features = [ "alloc-rs" ] }
 static_assertions = "1.1"
 syn = { version = "2.0.90", features = ["full", "extra-traits"] }
 thiserror = { version = "2.0.4",  default-features = false }

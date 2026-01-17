@@ -1,0 +1,11 @@
+[package]
+name = "pi-test"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+base.workspace = true
+stabby.workspace = true
+
+[lib]
+crate-type = [ "cdylib" ]

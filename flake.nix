@@ -15,12 +15,7 @@
         rust-overlay.overlays.default
         (final: prev: {
           rustToolchain = let rust = prev.rust-bin;
-          in if builtins.pathExists ./rust-toolchain.toml then
-            rust.fromRustupToolchainFile ./rust-toolchain.toml
-          else
-            rust.stable.latest.default.override {
-              extensions = [ "rust-src" "rustfmt" "rust-analyzer" ];
-            };
+          in rust.fromRustupToolchainFile ./rust-toolchain.toml;
         })
       ];
       supportedSystems = [ "x86_64-linux" ];
