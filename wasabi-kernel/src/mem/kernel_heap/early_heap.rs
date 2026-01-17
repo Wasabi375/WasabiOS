@@ -24,6 +24,11 @@ use x86_64::align_up;
 /// This heap never frees memory and this value should be sized with that in mind.
 pub const EARLY_HEAP_SIZE: usize = KiB!(4);
 
+/// The expected usage size of the early heap
+///
+/// The kernel will log a warning if this is exceeded
+const EARLY_HEAP_EXPECTED_USAGE: usize = 700;
+
 /// The memory used for the early boot heap
 static mut EARLY_HEAP: Aligned4K<EARLY_HEAP_SIZE> = Aligned4K([0; EARLY_HEAP_SIZE]);
 
@@ -73,6 +78,11 @@ pub(super) unsafe fn alloc(layout: Layout) -> *mut u8 {
 pub(super) fn free(ptr: *mut u8, layout: Layout) {
     assert!(is_in_heap(ptr));
     EARLY_HEAP_FREED.fetch_add(layout.size(), Ordering::AcqRel);
+
+    unsafe {
+        // Safety: we are "freeing" the memory therefor we have unique access
+        core::ptr::write_bytes(ptr, 0xde, layout.size());
+    }
 }
 
 /// Returns if a pointer points into the early heap
@@ -104,4 +114,14 @@ pub fn freed() -> usize {
 /// This differs from [used], because this does not count alignment
 pub fn allocated() -> usize {
     EARLY_HEAP_ALLOCATED.load(Ordering::Acquire)
+}
+
+/// Check that the usage is as expected
+pub fn check_usage() {
+    if used() > EARLY_HEAP_EXPECTED_USAGE {
+        log::warn!(
+            "Early heap used {} bytes. Ensure this was intentional and update this check",
+            used()
+        );
+    }
 }

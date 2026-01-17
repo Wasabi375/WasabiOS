@@ -3,7 +3,7 @@
 use core::ptr::{addr_of, addr_of_mut};
 
 use log::{LevelFilter, Log, info};
-use logger::{LogSetup, RefLogger, dispatch::TargetLogger};
+use logger::{LogModuleLevelSetup, LogRenameModuleSetup, RefLogger, dispatch::TargetLogger};
 use uart_16550::SerialPort;
 
 use crate::{
@@ -13,15 +13,8 @@ use crate::{
 /// the max number of target loggers for the main dispatch logger
 pub const MAX_LOG_DISPATCHES: usize = 2;
 
-/// number of module filers allowed for the logger
-pub const MAX_LEVEL_FILTERS: usize = 100;
-
-/// number of module renames allowed for the logger
-pub const MAX_RENAME_MAPPINGS: usize = 100;
-
 /// See [logger::DispatchLogger]
-pub type DispatchLogger<'a, const N: usize, const L: usize> =
-    logger::DispatchLogger<'a, CoreInterruptState, N, L>;
+pub type DispatchLogger<'a> = logger::DispatchLogger<'a, CoreInterruptState>;
 
 /// the static logger used by the [log::log] macro
 ///
@@ -31,29 +24,22 @@ pub type DispatchLogger<'a, const N: usize, const L: usize> =
 /// this should not be modified outside of panics and [init].
 /// Accessing the [DispatchLogger] via shared ref is therefor safe.
 #[inline]
-pub fn static_logger()
--> Option<&'static DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> {
+pub fn static_logger() -> Option<&'static DispatchLogger<'static>> {
     unsafe { &*addr_of_mut!(LOGGER) }.as_ref()
 }
-static mut LOGGER: Option<DispatchLogger<'static, MAX_LOG_DISPATCHES, MAX_LEVEL_FILTERS>> = None;
+static mut LOGGER: Option<DispatchLogger<'static>> = None;
 
 /// the static serial logger.
 static mut SERIAL_LOGGER: Option<
-    RefLogger<
-        'static,
-        SerialPort,
-        UnwrapTicketLock<SerialPort>,
-        CoreInterruptState,
-        0,
-        MAX_RENAME_MAPPINGS,
-    >,
+    RefLogger<'static, SerialPort, UnwrapTicketLock<SerialPort>, CoreInterruptState>,
 > = None;
 
 /// setup module renames for any static logger
 pub fn setup_logger_module_rename<L>(logger: &mut L)
 where
-    L: LogSetup,
+    L: LogRenameModuleSetup,
 {
+    logger.reserve_renames_exact(3);
     logger
         .with_module_rename("wasabi_kernel::cpu::interrupts", "::cpu::int")
         .with_module_rename("wasabi_kernel::", "::")
@@ -67,24 +53,20 @@ where
 /// must only ever be called once at the start of the kernel boot proces and after
 /// [SERIAL1] is initialized
 pub unsafe fn init() {
-    assert!(
-        MAX_LEVEL_FILTERS + MAX_RENAME_MAPPINGS <= 253,
-        "MAX_LEVEL_FILTERS + MAX_RENAME_MAPPINGS must be <= 253 or else \
-            StaticLogger doesn't fit in 4KiB which causes tripple fault on boot"
-    );
-
     // TODO reduce the stack size requirements for logging
 
-    let mut dispatch_logger = DispatchLogger::new()
-        .with_level(LevelFilter::Info)
+    let mut dispatch_logger = DispatchLogger::new();
+    dispatch_logger
+        .reserve_module_levels(16)
         // comment to move ; to separate line - easy uncomment of module log levels
         ;
+
     #[cfg(not(feature = "test"))]
     #[allow(dead_code)]
     {
-        dispatch_logger = dispatch_logger
+        dispatch_logger
+            .with_level(LevelFilter::Info)
             // .with_module_level("wasabi_kernel::task", LevelFilter::Trace)
-            // .with_module_level("GlobalAlloc", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu::acpi", LevelFilter::Trace)
@@ -107,7 +89,7 @@ pub unsafe fn init() {
     #[cfg(feature = "test")]
     {
         // adjust log levels for tests
-        dispatch_logger = dispatch_logger
+        dispatch_logger
             .with_level(LevelFilter::Warn)
             .with_module_level("wasabi_test", LevelFilter::Info)
             // .with_module_level("wasabi_kernel::mem::page_table::test", LevelFilter::Info)
@@ -149,8 +131,6 @@ pub unsafe fn init() {
     {
         serial_println!("!!! Failed to init logger !!!!");
 
-        // Safety: this is fine, since we are in the kernel boot and this is only
-        // called once, meaning we ensure rust mutability guarantees
         panic!();
     }
 

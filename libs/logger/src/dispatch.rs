@@ -9,11 +9,10 @@ use shared::sync::{
     lockcell::{RWLockCell, ReadWriteCell},
     InterruptState,
 };
-use staticvec::StaticVec;
 
-use crate::{FlushError, TryLog};
+use crate::{FlushError, LogModuleLevelSetup, TryLog};
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use shared::alloc_ext::reforbox::RefOrBox;
 
 /// Contains a reference to a [TryLogger] and some additional metadata
@@ -97,32 +96,32 @@ impl<'a> TargetLogger<'a> {
 }
 
 /// A logger implementation that dispatches all log calls to multiple target loggers.
-pub struct DispatchLogger<'a, I, const N: usize = 2, const L: usize = 126> {
+pub struct DispatchLogger<'a, I> {
     /// The default logging level
     default_level: LevelFilter,
 
     /// the loggers this logger dispatches log calls to
-    loggers: ReadWriteCell<StaticVec<TargetLogger<'a>, N>, I>,
+    loggers: ReadWriteCell<Vec<TargetLogger<'a>>, I>,
 
     /// The specific logging level for each module
     ///
     /// This is used to override the default value for some specific modules.
     /// After initialization, the vector is sorted so that the first (prefix) match
     /// directly gives us the desired log level.
-    module_levels: StaticVec<(&'a str, LevelFilter), L>,
+    module_levels: Vec<(&'a str, LevelFilter)>,
 }
 
 // TODO implement TryLog for DispatchLogger
 //      should error where the current log impl panics
 //      and just silently log other erros
 
-impl<'a, const N: usize, const L: usize, I: InterruptState> DispatchLogger<'a, I, N, L> {
+impl<'a, I: InterruptState> DispatchLogger<'a, I> {
     /// Creates a new dispatch logger
     pub fn new() -> Self {
         DispatchLogger {
             default_level: LevelFilter::Info,
-            loggers: ReadWriteCell::new(StaticVec::new()),
-            module_levels: StaticVec::new(),
+            loggers: ReadWriteCell::new(Vec::new()),
+            module_levels: Vec::new(),
         }
     }
 
@@ -145,25 +144,6 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> DispatchLogger<'a, I
             .retain(|l| l as *const TargetLogger<'a> != target_logger as *const TargetLogger<'_>);
     }
 
-    /// Set the 'default' log level.
-    ///
-    /// You can override the default level for specific modules and their sub-modules using [`with_module_level`]
-    ///
-    /// [`with_module_level`]: #method.with_module_level
-    pub fn with_level(mut self, level: LevelFilter) -> Self {
-        self.default_level = level;
-        self
-    }
-
-    /// Set the log level for the specified target module.
-    pub fn with_module_level(mut self, target: &'static str, level: LevelFilter) -> Self {
-        if let Some(old_position) = self.module_levels.iter().position(|(t, _)| *t == target) {
-            self.module_levels.swap_remove(old_position);
-        }
-        self.module_levels.push((target, level));
-        self
-    }
-
     /// 'Init' the actual logger, instantiate it and configure it,
     pub fn init(&mut self) {
         /* Sort all module levels from most specific to least specific. The length of the module
@@ -174,7 +154,30 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> DispatchLogger<'a, I
     }
 }
 
-impl<'a, const N: usize, const L: usize, I: InterruptState> Log for DispatchLogger<'a, I, N, L> {
+impl<'a, I: InterruptState> LogModuleLevelSetup for DispatchLogger<'a, I> {
+    fn with_level(&mut self, level: LevelFilter) -> &mut Self {
+        self.default_level = level;
+        self
+    }
+
+    fn with_module_level(&mut self, target: &'static str, level: LevelFilter) -> &mut Self {
+        if let Some(old_position) = self.module_levels.iter().position(|(t, _)| *t == target) {
+            self.module_levels.swap_remove(old_position);
+        }
+        self.module_levels.push((target, level));
+        self
+    }
+
+    fn reserve_module_levels(&mut self, additional: usize) {
+        self.module_levels.reserve(additional);
+    }
+
+    fn reserve_module_levels_exact(&mut self, additional: usize) {
+        self.module_levels.reserve_exact(additional);
+    }
+}
+
+impl<'a, I: InterruptState> Log for DispatchLogger<'a, I> {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         let log_level = metadata.level().to_level_filter();
         let module_min_log_level = self
@@ -197,8 +200,8 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> Log for DispatchLogg
             return;
         }
 
-        let mut error_to_panic = StaticVec::<&'a str, N>::new();
-        let mut error_to_log = StaticVec::<&'a str, N>::new();
+        let mut error_to_panic = Vec::<&'a str>::new();
+        let mut error_to_log = Vec::<&'a str>::new();
 
         for logger in self.loggers.read().iter() {
             if logger.log(record).is_err() {
@@ -209,14 +212,14 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> Log for DispatchLogg
             }
         }
 
-        if error_to_log.is_not_empty() {
+        if !error_to_log.is_empty() {
             self.log_log_error(
                 format_args!("to log {} message", record.level()),
                 &error_to_log,
             );
         }
 
-        if error_to_panic.is_not_empty() {
+        if !error_to_panic.is_empty() {
             panic!(
                 "Failed to log {} message to the follwing loggers: {:?}",
                 record.level(),
@@ -226,8 +229,8 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> Log for DispatchLogg
     }
 
     fn flush(&self) {
-        let mut error_to_panic = StaticVec::<&'a str, N>::new();
-        let mut error_to_log = StaticVec::<&'a str, N>::new();
+        let mut error_to_panic = Vec::<&'a str>::new();
+        let mut error_to_log = Vec::<&'a str>::new();
 
         for logger in self.loggers.read().iter() {
             if logger.flush().is_err() {
@@ -238,11 +241,11 @@ impl<'a, const N: usize, const L: usize, I: InterruptState> Log for DispatchLogg
             }
         }
 
-        if error_to_log.is_not_empty() {
+        if !error_to_log.is_empty() {
             self.log_log_error("flush", &error_to_log);
         }
 
-        if error_to_panic.is_not_empty() {
+        if !error_to_panic.is_empty() {
             panic!("Failed to flush the follwing loggers: {:?}", error_to_panic)
         }
     }
@@ -266,7 +269,7 @@ macro_rules! record {
     });
 }
 
-impl<'a, const N: usize, const L: usize, I: InterruptState> DispatchLogger<'a, I, N, L> {
+impl<'a, I: InterruptState> DispatchLogger<'a, I> {
     fn log_log_error<D: Display>(&self, error_reason: D, failing_loggers: &[&'a str]) {
         for primary in self.loggers.read().iter().filter(|l| l.primary) {
             if primary

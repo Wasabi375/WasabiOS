@@ -14,7 +14,7 @@ use core::{fmt::Write, marker::PhantomData};
 use color::{write_ansi_fg_color, Color, ANSI_RESET};
 
 pub use dispatch::DispatchLogger;
-use log::Record;
+use log::{LevelFilter, Record};
 pub use own_logger::OwnLogger;
 pub use ref_logger::RefLogger;
 use shared::sync::CoreInfo;
@@ -29,8 +29,49 @@ pub trait TryLog: Send + Sync {
     fn flush(&self) -> Result<(), FlushError>;
 }
 
-pub trait LogSetup {
+/// Trait used for the inital setup of a logger
+pub trait LogRenameModuleSetup {
+    /// rename modules before logging.
+    ///
+    /// The logger will replace `target` in the module of the log message with `rename`
     fn with_module_rename(&mut self, target: &'static str, rename: &'static str) -> &mut Self;
+
+    /// Reserve internal space for `additional` renames
+    ///
+    /// This works analog to `Vec::reserve`
+    fn reserve_renames(&mut self, additional: usize);
+    /// Reserve internal space for `additional` renames
+    ///
+    /// This works analog to `Vec::reserve_exact`
+    fn reserve_renames_exact(&mut self, additional: usize);
+}
+
+/// Trait used for the inital setup of a logger
+///
+/// If used in combination with [LogRenameModuleSetup] any modules should be
+/// described by their original name. This trait will not follow renames.
+pub trait LogModuleLevelSetup {
+    /// Set the 'default' log level.
+    ///
+    /// You can override the default level for specific modules and their sub-modules using [`with_module_level`]
+    fn with_level(&mut self, level: LevelFilter) -> &mut Self;
+
+    /// Set the log level for the specified target module.
+    ///
+    /// This sets the log level of a specific module and all its sub-modules.
+    /// When both the level for a parent module as well as a child module are set,
+    /// the more specific value is taken. If the log level for the same module is
+    /// specified twice, the resulting log level is implementation defined.
+    fn with_module_level(&mut self, target: &'static str, level: LevelFilter) -> &mut Self;
+
+    /// Reserve internal space for `additional` module levels
+    ///
+    /// This works analog to `Vec::reserve`
+    fn reserve_module_levels(&mut self, additional: usize);
+    /// Reserve internal space for `additional` module levels
+    ///
+    /// This works analog to `Vec::reserve_exact`
+    fn reserve_module_levels_exact(&mut self, additional: usize);
 }
 
 /// Default colors for logging

@@ -28,7 +28,7 @@ use crate::{
         halt,
     },
     locals,
-    logger::{MAX_RENAME_MAPPINGS, set_global_logger, setup_logger_module_rename},
+    logger::{set_global_logger, setup_logger_module_rename},
     prelude::UnwrapTicketLock,
     serial::{SERIAL1, SERIAL2},
     time::{sleep_tsc, ticks_in},
@@ -162,14 +162,7 @@ unsafe fn recreate_logger() {
 
 /// static serial logger location for panics
 static mut SERIAL_LOGGER: Option<
-    RefLogger<
-        'static,
-        SerialPort,
-        UnwrapTicketLock<SerialPort>,
-        CoreInterruptState,
-        0,
-        MAX_RENAME_MAPPINGS,
-    >,
+    RefLogger<'static, SerialPort, UnwrapTicketLock<SerialPort>, CoreInterruptState>,
 > = None;
 
 /// Ensures frambuffer is accessible during panic

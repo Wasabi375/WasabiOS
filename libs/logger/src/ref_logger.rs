@@ -25,19 +25,19 @@
 //! OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 //! USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::{write_record, LogSetup, TryLog, WriteOpts};
+use crate::{write_record, LogModuleLevelSetup, LogRenameModuleSetup, TryLog, WriteOpts};
+use alloc::vec::Vec;
 use core::{
     fmt::{self, Error, Write},
     marker::PhantomData,
 };
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use shared::sync::{lockcell::LockCell, CoreInfo};
-use staticvec::StaticVec;
 
 #[cfg(not(feature = "no-color"))]
 use crate::{color::Color, default_colors};
 
-pub struct RefLogger<'a, W, L, CI, const N: usize = 126, const R: usize = 126> {
+pub struct RefLogger<'a, W, L, CI> {
     /// The default logging level
     default_level: LevelFilter,
 
@@ -46,12 +46,12 @@ pub struct RefLogger<'a, W, L, CI, const N: usize = 126, const R: usize = 126> {
     /// This is used to override the default value for some specific modules.
     /// After initialization, the vector is sorted so that the first (prefix) match
     /// directly gives us the desired log level.
-    module_levels: StaticVec<(&'a str, LevelFilter), N>,
+    module_levels: Vec<(&'a str, LevelFilter)>,
 
     /// a list off mappings renaming modules
     ///
     /// This can be used to shorten module names
-    module_rename_mapping: StaticVec<(&'a str, &'a str), R>,
+    module_rename_mapping: Vec<(&'a str, &'a str)>,
 
     writer: &'a L,
     _phantom_writer: PhantomData<W>,
@@ -62,11 +62,10 @@ pub struct RefLogger<'a, W, L, CI, const N: usize = 126, const R: usize = 126> {
     level_colors: [Color; 6],
 }
 
-unsafe impl<W, L: Sync, CI, const N: usize, const R: usize> Sync for RefLogger<'_, W, L, CI, N, R> {}
-unsafe impl<W, L: Send, CI, const N: usize, const R: usize> Send for RefLogger<'_, W, L, CI, N, R> {}
+unsafe impl<W, L: Sync, CI> Sync for RefLogger<'_, W, L, CI> {}
+unsafe impl<W, L: Send, CI> Send for RefLogger<'_, W, L, CI> {}
 
-impl<'a, W, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
-    RefLogger<'a, W, L, CI, N, R>
+impl<'a, W, L: LockCell<W>, CI: CoreInfo> RefLogger<'a, W, L, CI>
 where
     W: fmt::Write,
 {
@@ -75,8 +74,8 @@ where
         RefLogger {
             // default is trace, because level filtering is done in dispatch logger
             default_level: LevelFilter::Trace,
-            module_levels: StaticVec::new(),
-            module_rename_mapping: StaticVec::new(),
+            module_levels: Vec::new(),
+            module_rename_mapping: Vec::new(),
             writer,
             _phantom_writer: PhantomData,
             _phantom_core_info: PhantomData,
@@ -84,33 +83,6 @@ where
             #[cfg(not(feature = "no-color"))]
             level_colors: default_colors(),
         }
-    }
-
-    /// Set the 'default' log level.
-    ///
-    /// You can override the default level for specific modules and their sub-modules using [`with_module_level`]
-    #[must_use]
-    pub fn with_level(mut self, level: LevelFilter) -> Self {
-        self.default_level = level;
-        self
-    }
-
-    /// Override the log level for some specific modules.
-    ///
-    /// This sets the log level of a specific module and all its sub-modules.
-    /// When both the level for a parent module as well as a child module are set,
-    /// the more specific value is taken. If the log level for the same module is
-    /// specified twice, the resulting log level is implementation defined.
-    #[must_use]
-    pub fn with_module_level(mut self, target: &'static str, level: LevelFilter) -> Self {
-        self.module_levels.push((target, level));
-
-        /* Normally this is only called in `init` to avoid redundancy, but we can't initialize the logger in tests */
-        #[cfg(test)]
-        self.module_levels
-            .sort_by_key(|(name, _level)| name.len().wrapping_neg());
-
-        self
     }
 
     /// Overrides the log color used for the specified level.
@@ -123,9 +95,7 @@ where
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
-    RefLogger<'a, W, L, CI, N, R>
-{
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo> RefLogger<'a, W, L, CI> {
     /// 'Init' the actual logger, instantiate it and configure it,
     pub fn init(&mut self) {
         /* Sort all module levels from most specific to least specific. The length of the module
@@ -154,9 +124,7 @@ impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
-    RefLogger<'a, W, L, CI, N, R>
-{
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo> RefLogger<'a, W, L, CI> {
     pub fn try_log(&self, record: &Record) -> Result<(), Error> {
         if !self.enabled(record.metadata()) {
             return Ok(());
@@ -187,9 +155,7 @@ impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize> Log
-    for RefLogger<'a, W, L, CI, N, R>
-{
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo> Log for RefLogger<'a, W, L, CI> {
     fn enabled(&self, metadata: &Metadata) -> bool {
         self.enabled(metadata)
     }
@@ -203,9 +169,7 @@ impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
     fn flush(&self) {}
 }
 
-impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize> TryLog
-    for RefLogger<'a, W, L, CI, N, R>
-{
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo> TryLog for RefLogger<'a, W, L, CI> {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         self.enabled(metadata)
     }
@@ -219,12 +183,41 @@ impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize>
     }
 }
 
-impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo, const N: usize, const R: usize> LogSetup
-    for RefLogger<'a, W, L, CI, N, R>
-{
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo> LogModuleLevelSetup for RefLogger<'a, W, L, CI> {
+    fn with_level(&mut self, level: LevelFilter) -> &mut Self {
+        self.default_level = level;
+        self
+    }
+
+    fn with_module_level(&mut self, target: &'static str, level: LevelFilter) -> &mut Self {
+        if let Some(old_position) = self.module_levels.iter().position(|(t, _)| *t == target) {
+            self.module_levels.swap_remove(old_position);
+        }
+        self.module_levels.push((target, level));
+        self
+    }
+
+    fn reserve_module_levels(&mut self, additional: usize) {
+        self.module_levels.reserve(additional);
+    }
+
+    fn reserve_module_levels_exact(&mut self, additional: usize) {
+        self.module_levels.reserve_exact(additional);
+    }
+}
+
+impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo> LogRenameModuleSetup for RefLogger<'a, W, L, CI> {
     fn with_module_rename(&mut self, target: &'static str, rename: &'static str) -> &mut Self {
         self.module_rename_mapping.push((target, rename));
 
         self
+    }
+
+    fn reserve_renames(&mut self, additional: usize) {
+        self.module_rename_mapping.reserve(additional);
+    }
+
+    fn reserve_renames_exact(&mut self, additional: usize) {
+        self.module_rename_mapping.reserve_exact(additional);
     }
 }

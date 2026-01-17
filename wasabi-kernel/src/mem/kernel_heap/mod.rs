@@ -115,7 +115,10 @@ pub fn init() {
         early_heap::freed() as f32 / early_heap::allocated() as f32
     );
     if early_heap::used() > 0 {
-        warn!("Early heap used. Ensure this was intentional and update this check");
+        warn!(
+            "Early heap used {} bytes. Ensure this was intentional and update this check",
+            early_heap::used()
+        );
     }
 
     #[cfg(feature = "mem-stats")]
