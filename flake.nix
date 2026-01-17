@@ -17,11 +17,9 @@
           rustToolchain = let rust = prev.rust-bin;
           in if builtins.pathExists ./rust-toolchain.toml then
             rust.fromRustupToolchainFile ./rust-toolchain.toml
-          else if builtins.pathExists ./rust-toolchain then
-            rust.fromRustupToolchainFile ./rust-toolchain
           else
             rust.stable.latest.default.override {
-              extensions = [ "rust-src" "rustfmt" "miri" "rust-analyzer" ];
+              extensions = [ "rust-src" "rustfmt" "rust-analyzer" ];
             };
         })
       ];
@@ -33,20 +31,18 @@
       devShells = forEachSupportedSystem ({ pkgs }: {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            rustToolchain
-            openssl
-            pkg-config
-            cargo-deny
-            cargo-edit
-            cargo-watch
-            qemu
-            nasm
-            nasmfmt
             asm-lsp
-            gdb
+            binutils
             elfutils
             fuse3
-            llvmPackages_19.libllvm
+            gdb
+            libllvm
+            nasm
+            nasmfmt
+            openssl
+            pkg-config
+            qemu
+            rustToolchain
           ];
         };
       });
