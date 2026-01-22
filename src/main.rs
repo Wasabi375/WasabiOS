@@ -1,10 +1,11 @@
 //! Runner and Build tool for Wasabi Os
 //!
 //! This simple command line utility can be used to run WasabiOs in Qemu.
-#![feature(exit_status_error)]
+#![feature(exit_status_error, const_convert, const_trait_impl)]
 
 mod args;
 mod build;
+mod gpt;
 mod qemu;
 mod test;
 
@@ -13,8 +14,8 @@ use args::{Arguments, BuildCommand, GdbArgs, LatestArgs, Profile, RunArgs, RunCo
 use build::{build, check, clean, expand};
 use clap::Parser;
 use log::LevelFilter;
-use nix::sys::termios::{tcgetattr, tcsetattr, SetArg, Termios};
-use qemu::{launch_qemu, Kernel, QemuConfig};
+use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
+use qemu::{Kernel, QemuConfig, launch_qemu};
 use simple_logger::SimpleLogger;
 use std::{
     ffi::{OsStr, OsString},

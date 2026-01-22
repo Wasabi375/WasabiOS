@@ -1,5 +1,6 @@
 use crate::{
     args::{BuildArgs, BuildOptions, CheckArgs, CleanArgs, ExpandArgs, KernelBinary, RunCommand},
+    gpt::GptBuilder,
     latest_path, run,
     test::test,
 };
@@ -33,7 +34,7 @@ pub async fn build(args: BuildArgs) -> Result<()> {
     let (elf, dir) = build_kernel_elf(KernelBinary::Wasabi, &args.options)
         .await
         .context("build kernel elf")?;
-    let img = build_kernel_uefi(&elf, Path::join(&dir, "wasabi-kernel-uefi.img"))
+    let img = build_kernel_uefi(elf.clone(), Path::join(&dir, "wasabi-kernel-uefi.img"))
         .context("build kernel")?;
     if args.emit_asm {
         emit_asm(&elf, &Path::join(&dir, "wasabi-kernel.asm"))
@@ -46,7 +47,7 @@ pub async fn build(args: BuildArgs) -> Result<()> {
         let (elf, dir) = build_kernel_elf(KernelBinary::Test, &args.options)
             .await
             .context("build test kernel elf")?;
-        let img = build_kernel_uefi(&elf, Path::join(&dir, "wasabi-test-uefi.img"))
+        let img = build_kernel_uefi(elf.clone(), Path::join(&dir, "wasabi-test-uefi.img"))
             .context("build test kernel")?;
         if args.emit_asm {
             emit_asm(&elf, &Path::join(&dir, "wasabi-test.asm"))
@@ -66,11 +67,10 @@ pub async fn build(args: BuildArgs) -> Result<()> {
     }
 }
 
-pub fn build_kernel_uefi(elf: &Path, img_path: PathBuf) -> Result<PathBuf> {
-    bootloader::UefiBoot::new(elf)
-        .create_disk_image(&img_path)
-        .context("create uefi disk image")?;
-    Ok(img_path)
+pub fn build_kernel_uefi(elf: PathBuf, img_path: PathBuf) -> Result<PathBuf> {
+    let builder = GptBuilder::new(img_path, elf);
+    let img_path = builder.build().context("build kernel uefi image")?;
+    Ok(img_path.to_path_buf())
 }
 
 pub async fn emit_asm(img: &Path, asm_file_path: &Path) -> Result<()> {
