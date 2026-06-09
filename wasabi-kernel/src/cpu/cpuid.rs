@@ -16,12 +16,10 @@ pub use core::arch::x86_64::CpuidResult;
 
 /// calls the cpuid instruction with the provided `leaf` and if set `sub_leaf`
 pub fn cpuid(leaf: u32, sub_leaf: Option<u32>) -> CpuidResult {
-    // safety: cpuid is a save instruction, assuming [check_cpuid_usable]
-    // succeeded
     if let Some(ecx) = sub_leaf {
-        unsafe { __cpuid_count(leaf, ecx) }
+        __cpuid_count(leaf, ecx)
     } else {
-        unsafe { __cpuid(leaf) }
+        __cpuid(leaf)
     }
 }
 

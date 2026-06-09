@@ -6,7 +6,6 @@
     abi_x86_interrupt,
     allocator_api,
     ascii_char,
-    assert_matches,
     box_into_inner,
     const_convert,
     const_trait_impl,

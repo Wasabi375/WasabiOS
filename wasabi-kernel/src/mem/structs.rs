@@ -1,14 +1,15 @@
 //! structures for the [mem](crate::mem) module that don't fit anywhere more specific
 
-use core::assert_matches::assert_matches;
+use core::assert_matches;
 use core::ops::{Deref, DerefMut};
+
 use log::trace;
 use shared::sync::lockcell::LockCell;
-use x86_64::structures::paging::mapper::MapToError;
+use x86_64::structures::paging::mapper::{MapToError, UnmappedFrame};
 use x86_64::structures::paging::{PageTableFlags, PhysFrame, RecursivePageTable};
 use x86_64::{
     VirtAddr,
-    structures::paging::{Mapper, Page, PageSize, Size4KiB, mapper::UnmappedFrame},
+    structures::paging::{Mapper, Page, PageSize, Size4KiB},
 };
 
 use crate::pages_required_for;

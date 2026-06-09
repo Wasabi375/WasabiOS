@@ -437,7 +437,7 @@ impl TaskSystem {
         task_definition: TaskDefinition<F>,
     ) -> Result<TaskHandle, MemError>
     where
-        F: FnOnce() -> (),
+        F: FnOnce() -> () + 'static,
         F: Sized,
     {
         let stack = PageAllocator::get_for_kernel()

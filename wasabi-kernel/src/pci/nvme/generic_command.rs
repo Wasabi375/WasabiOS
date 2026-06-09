@@ -1,7 +1,7 @@
 //! Data shared between all Command types
 //!
 
-use core::assert_matches::assert_matches;
+use core::assert_matches;
 
 use bit_field::BitField;
 use shared_derive::U8Enum;
