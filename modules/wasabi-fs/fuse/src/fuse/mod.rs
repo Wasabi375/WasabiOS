@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use core::cmp::max;
 use fuser::{FileAttr, FileType, Request};
 use host_shared::sync::StdInterruptState;
+use host_wfs::FileDevice;
 use log::{debug, error, trace, warn};
 use std::{
     path::Path,
@@ -13,11 +14,11 @@ use uuid::Uuid;
 use wfs::fs_structs::{self, FileId};
 use wfs::{
     BLOCK_SIZE, blocks_required_for,
-    fs::{FileSystem, FsError, FsReadOnly, FsReadWrite, FsWrite, OverrideCheck},
+    fs::{FileSystem, FsError, FsReadOnly, FsReadWrite, FsWrite, OverwriteCheck},
     mem_structs,
 };
 
-use crate::{block_device::FileDevice, fuse::errno::fs_error_no};
+use crate::fuse::errno::fs_error_no;
 
 type FileNode = wfs::mem_structs::FileNode<StdInterruptState>;
 
@@ -108,7 +109,7 @@ impl WasabiFuse<FsReadWrite> {
     pub fn create(
         image: &Path,
         block_count: u64,
-        override_check: OverrideCheck,
+        override_check: OverwriteCheck,
         uuid: Uuid,
         name: Option<Box<str>>,
     ) -> Result<Self> {

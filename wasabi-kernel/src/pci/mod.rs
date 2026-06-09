@@ -54,11 +54,7 @@ impl PCIAccess {
             // Safety: read from data is safe
             register.data_port().read()
         };
-        if value == !0 {
-            None
-        } else {
-            Some(value)
-        }
+        if value == !0 { None } else { Some(value) }
     }
 
     pub fn read16(&mut self, register: RegisterAddress) -> Option<u16> {
@@ -68,11 +64,7 @@ impl PCIAccess {
             // Safety: read from data is safe
             register.data_port16().read()
         };
-        if value == !0 {
-            None
-        } else {
-            Some(value)
-        }
+        if value == !0 { None } else { Some(value) }
     }
 
     pub fn read8(&mut self, register: RegisterAddress) -> Option<u8> {
@@ -82,11 +74,7 @@ impl PCIAccess {
             // Safety: read from data is safe
             register.data_port8().read()
         };
-        if value == !0 {
-            None
-        } else {
-            Some(value)
-        }
+        if value == !0 { None } else { Some(value) }
     }
 
     fn find_device_function_count(&mut self, addr: Address) -> u8 {

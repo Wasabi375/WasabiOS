@@ -5,7 +5,7 @@
 
 #![no_std]
 #![allow(incomplete_features)] // for generic_const_exprs
-#![feature(arbitrary_self_types, box_as_ptr, generic_const_exprs)]
+#![feature(arbitrary_self_types, generic_const_exprs)]
 #![warn(missing_docs)]
 
 extern crate alloc;
@@ -54,12 +54,12 @@ macro_rules! block_size_types {
         /// Align `T` on block boundaries and ensure it is padded to fill the entire block
         ///
         /// See [BLOCK_SIZE], [BlockAligned], [BlockSlice], [blocks_required_for]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[derive(Debug, Clone, PartialEq, Eq)]
         #[repr(C, align($size))]
         #[allow(unused)]
         pub struct $block<T>
         where
-            [(); $size - core::mem::size_of::<T>()]:,
+            [u8; $size - core::mem::size_of::<T>()]: Sized,
         {
             /// The data stored within the block
             pub data: T,
@@ -69,7 +69,7 @@ macro_rules! block_size_types {
 
         impl<T> $block<T>
         where
-            [(); $size - core::mem::size_of::<T>()]:,
+            [u8; $size - core::mem::size_of::<T>()]: Sized,
         {
             /// Create a new block aligned `T`
             #[allow(unused)]
@@ -117,7 +117,7 @@ macro_rules! block_size_types {
         impl<T> $block<T>
         where
             T: $crate::BlockConstructable,
-            [(); $size - core::mem::size_of::<T>()]:,
+            [u8; $size - core::mem::size_of::<T>()]: Sized,
         {
             /// Returns a u8 slice that covers the entire block.
             ///
@@ -147,8 +147,8 @@ macro_rules! block_size_types {
 
         impl<T> $block<core::mem::MaybeUninit<T>>
         where
-            [(); $size - core::mem::size_of::<T>()]:,
-            [(); $size - core::mem::size_of::<core::mem::MaybeUninit<T>>()]:,
+            [u8; $size - core::mem::size_of::<T>()]: Sized,
+            [u8; $size - core::mem::size_of::<core::mem::MaybeUninit<T>>()]: Sized,
         {
             /// Cerate a zerored uninit block
             #[allow(unused)]
@@ -179,7 +179,7 @@ macro_rules! block_size_types {
 
         impl<T> core::ops::Deref for $block<T>
         where
-            [(); $size - core::mem::size_of::<T>()]:,
+            [u8; $size - core::mem::size_of::<T>()]: Sized,
         {
             type Target = T;
 
@@ -190,7 +190,7 @@ macro_rules! block_size_types {
 
         impl<T> core::ops::DerefMut for $block<T>
         where
-            [(); $size - core::mem::size_of::<T>()]:,
+            [u8; $size - core::mem::size_of::<T>()]: Sized,
         {
             fn deref_mut(&mut self) -> &mut Self::Target {
                 &mut self.data

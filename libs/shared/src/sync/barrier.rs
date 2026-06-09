@@ -17,8 +17,8 @@ use crate::{
 };
 
 use super::{
-    lockcell::{RWLockCell, ReadCellGuard, ReadWriteCell},
     InterruptState,
+    lockcell::{RWLockCell, ReadCellGuard, ReadWriteCell},
 };
 
 /// A barrier that only allows entry when [Self::target]
@@ -261,9 +261,9 @@ impl<T, I> DataBarrier<T, I> {
     ///
     /// Caller must guarantee that changing the target won't invalidate the barrier for
     /// waiting processors
-    pub unsafe fn set_target(&self, target: u32, ordering: Ordering) { unsafe {
-        self.entry.set_target(target, ordering)
-    }}
+    pub unsafe fn set_target(&self, target: u32, ordering: Ordering) {
+        unsafe { self.entry.set_target(target, ordering) }
+    }
 }
 
 impl<T: Send, I: InterruptState> DataBarrier<T, I> {

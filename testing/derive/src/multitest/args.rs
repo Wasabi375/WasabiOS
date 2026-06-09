@@ -1,8 +1,8 @@
 use proc_macro2::{Ident, Punct};
 use syn::{
+    Error, Expr, Result, Token,
     ext::IdentExt,
     parse::{Parse, ParseStream},
-    Error, Expr, Result, Token,
 };
 
 #[derive(Debug)]
@@ -30,7 +30,7 @@ impl Parse for MultiTestArgs {
                         return Err(Error::new_spanned(
                             ident,
                             "Expected `name` or `expected_exit`",
-                        ))
+                        ));
                     }
                 }
             } else if lookahead.peek(Token![,]) {

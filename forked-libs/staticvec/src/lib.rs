@@ -17,7 +17,7 @@
     // // The "if-let" syntax Clippy recommends as an alternative to "match" in this lint is
     // // generally way less readable IMO.
     // clippy::match_bool,
-    
+
     // Without this, every single use of const generics is warned against.
     incomplete_features,
     // allow core intrinsics

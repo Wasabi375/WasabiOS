@@ -1,10 +1,10 @@
 use proc_macro2::{Ident, Punct, Span};
 use syn::{
+    Error, Expr, PathSegment, Result, Signature, Token,
     ext::IdentExt,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Error, Expr, PathSegment, Result, Signature, Token,
 };
 
 pub struct TestArgs {
@@ -210,7 +210,7 @@ impl Parse for TestArgs {
                         return Err(Error::new_spanned(
                             ident,
                             "Expected `name` or `expected_exit`",
-                        ))
+                        ));
                     }
                 }
             } else if lookahead.peek(Token![,]) {

@@ -19,7 +19,7 @@ use core::{
 };
 
 use crate::{
-    sync::{single_core_lock::SingleCoreLock, CoreInfo, InterruptState},
+    sync::{CoreInfo, InterruptState, single_core_lock::SingleCoreLock},
     types::NotSend,
 };
 

@@ -107,6 +107,10 @@ pub struct MemTree<I> {
     root_lock: UnsafeTicketLock<I>,
 }
 
+/// Safety:
+///   internally uses [UnsafeTicketLock] to ensure [Sync] + [Send]
+unsafe impl<I: InterruptState> Sync for MemTree<I> {}
+
 impl<I> !Clone for MemTree<I> {}
 
 impl<I: InterruptState> MemTree<I> {
@@ -1258,6 +1262,13 @@ pub(crate) enum MemTreeNode<I> {
         lock: UnsafeTicketLock<I>,
     },
 }
+
+/// Safety:
+///     MemTreeNode internally uses [UnsafeTicketLock] to ensure Send + Sync
+unsafe impl<I: InterruptState> Sync for MemTreeNode<I> {}
+/// Safety:
+///     MemTreeNode internally uses [UnsafeTicketLock] to ensure Send + Sync
+unsafe impl<I: InterruptState> Send for MemTreeNode<I> {}
 
 impl<I: InterruptState> MemTreeNode<I> {
     fn new_from(

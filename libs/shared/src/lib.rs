@@ -6,9 +6,7 @@
     const_ops,
     const_trait_impl,
     debug_closure_helpers,
-    downcast_unchecked,
     negative_impls,
-    step_trait,
     trusted_len
 )]
 #![warn(missing_docs)]

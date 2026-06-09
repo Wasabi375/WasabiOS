@@ -3,8 +3,6 @@
 #![feature(
     allocator_api,
     arbitrary_self_types,
-    assert_matches,
-    box_as_ptr,
     debug_closure_helpers,
     generic_const_exprs,
     negative_impls,

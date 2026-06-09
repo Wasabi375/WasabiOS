@@ -1,5 +1,5 @@
 use core::{
-    assert_matches::assert_matches,
+    assert_matches,
     cmp::min,
     error::Error,
     marker::PhantomData,
@@ -229,7 +229,7 @@ pub struct HeaderData {
     free_blocks: Option<DevicePointer<FreeBlockGroups>>,
 }
 
-pub enum OverrideCheck {
+pub enum OverwriteCheck {
     Check,
     IgnoreExisting,
 }
@@ -450,17 +450,17 @@ where
         device: D,
         uuid: Uuid,
         name: Option<Box<str>>,
-        override_check: OverrideCheck,
+        override_check: OverwriteCheck,
         access: AccessMode,
     ) -> Result<Self, FsError> {
         let fs_found = check_for_filesystem(&device).map_err(map_device_error)?;
         if fs_found != FsFound::None {
             match override_check {
-                OverrideCheck::Check => {
+                OverwriteCheck::Check => {
                     error!("File system of type {fs_found:?} already exists!");
                     return Err(FsError::OverrideCheck);
                 }
-                OverrideCheck::IgnoreExisting => {
+                OverwriteCheck::IgnoreExisting => {
                     warn!("File system of type {fs_found:?} already exists! It will be overridden");
                 }
             }
@@ -717,7 +717,7 @@ where
     }
 
     fn copy_header_to_backup(&mut self, header: &Block<MainHeader>) -> Result<(), FsError> {
-        let mut backup_header = Block::new(header.clone());
+        let mut backup_header = header.clone();
         backup_header.transient = None;
         backup_header.backup_header = DevicePointer::new(MAIN_HEADER_BLOCK);
         self.device
@@ -1294,7 +1294,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
 impl<D: BlockDevice, I: InterruptState> FileSystem<D, FsReadOnly, I> {
     pub fn create(
         device: D,
-        override_check: OverrideCheck,
+        override_check: OverwriteCheck,
         uuid: Uuid,
         name: Option<Box<str>>,
     ) -> Result<Self, FsError> {
@@ -1309,7 +1309,7 @@ impl<D: BlockDevice, I: InterruptState> FileSystem<D, FsReadOnly, I> {
 impl<D: BlockDevice, I: InterruptState> FileSystem<D, FsReadWrite, I> {
     pub fn create(
         device: D,
-        override_check: OverrideCheck,
+        override_check: OverwriteCheck,
         uuid: Uuid,
         name: Option<Box<str>>,
     ) -> Result<Self, FsError> {

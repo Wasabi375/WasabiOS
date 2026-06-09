@@ -128,7 +128,7 @@ impl LocalEpochHandle {
 
 #[cfg(feature = "test")]
 mod test {
-    use testing::{kernel_test, t_assert, KernelTestError};
+    use testing::{KernelTestError, kernel_test, t_assert};
 
     use super::*;
 

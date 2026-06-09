@@ -14,10 +14,11 @@ mod tests {
     use log::debug;
     use shared::sync::CoreInfo;
     use testing::{
+        KernelTestError, TestUnwrapExt,
         description::TestExitState,
         kernel_test,
         multiprocessor::{DataBarrier, TestInterruptState},
-        t_assert, t_assert_eq, t_assert_ne, tfail, KernelTestError, TestUnwrapExt,
+        t_assert, t_assert_eq, t_assert_ne, tfail,
     };
 
     #[kernel_test(expected_exit: TestExitState::Error(Some(KernelTestError::Fail)))]

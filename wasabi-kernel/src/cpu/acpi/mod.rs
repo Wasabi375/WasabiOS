@@ -10,8 +10,8 @@ use hashbrown::HashMap;
 use shared::sync::lockcell::LockCell;
 use thiserror::Error;
 use x86_64::{
-    structures::paging::{Page, PageTableFlags, PhysFrame},
     PhysAddr,
+    structures::paging::{Page, PageTableFlags, PhysFrame},
 };
 
 #[allow(unused_imports)]
@@ -20,8 +20,8 @@ use log::{debug, error, info, trace, warn};
 use crate::{
     cpu::acpi::structs::{Header, RsdpV1, XSDT},
     mem::{
-        frame_allocator::FrameAllocator, page_allocator::PageAllocator, page_table::PageTable,
-        ptr::UntypedPtr, MemError,
+        MemError, frame_allocator::FrameAllocator, page_allocator::PageAllocator,
+        page_table::PageTable, ptr::UntypedPtr,
     },
     utils::log_hex_dump,
 };

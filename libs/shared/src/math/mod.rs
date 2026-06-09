@@ -41,9 +41,9 @@ pub const trait NumberConstants {
     fn constant(value: usize) -> Self;
 }
 
-impl<T> const NumberConstants for T
+const impl<T> NumberConstants for T
 where
-    T: Number + ~const core::ops::Add,
+    T: Number + [const] core::ops::Add,
 {
     #[allow(clippy::assign_op_pattern)]
     fn constant(value: usize) -> Self {

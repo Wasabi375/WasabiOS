@@ -8,9 +8,9 @@ use log::error;
 use thiserror::Error;
 
 use super::{
+    Color, Point,
     kernel_font::BitFont,
     tty::{self, AnsiSGR},
-    Color, Point,
 };
 
 /// A surface which can be drawn on. Screen, Screen region, etc

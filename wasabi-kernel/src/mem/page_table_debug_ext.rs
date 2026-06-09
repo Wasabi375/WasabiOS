@@ -1,22 +1,22 @@
 //! Debug extensions for the page table and paging
 
 use core::{fmt::Write, mem::transmute_copy};
-use log::{log, Level};
+use log::{Level, log};
 use staticvec::StaticString;
 use x86_64::{
+    PhysAddr, VirtAddr,
     structures::paging::{
-        mapper::{MappedFrame, TranslateResult},
-        page_table::{FrameError, PageTableEntry, PageTableLevel},
         Page, PageSize, PageTable, PageTableFlags, PageTableIndex, PhysFrame, RecursivePageTable,
         Size1GiB, Size2MiB, Size4KiB, Translate,
+        mapper::{MappedFrame, TranslateResult},
+        page_table::{FrameError, PageTableEntry, PageTableLevel},
     },
-    PhysAddr, VirtAddr,
 };
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::mem::page_table::{recursive_index, PageTableKernelFlags, RecursivePageTableExt};
+use crate::mem::page_table::{PageTableKernelFlags, RecursivePageTableExt, recursive_index};
 
 /// Debug extensions for page tables
 pub trait PageTableDebugExt {

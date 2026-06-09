@@ -1,0 +1,148 @@
+(
+    out_dir: "builder/out_test",
+    general_build: (
+        jobs: None,
+        architecture: X86_64,
+    ),
+    kernels: [
+        (
+            id: (
+                inner: "wasabi-kernel",
+            ),
+            crate_path: "wasabi-kernel",
+            package_name: "wasabi-kernel",
+            features: [],
+            no_default_feature: false,
+            all_features: false,
+            profile: "dev",
+            output_asm: false,
+        ),
+        (
+            id: (
+                inner: "wasabi-test",
+            ),
+            crate_path: "wasabi-test",
+            package_name: "wasabi-test",
+            features: [],
+            no_default_feature: false,
+            all_features: false,
+            profile: "dev",
+            output_asm: false,
+        ),
+    ],
+    file_systems: [
+        (
+            id: (
+                inner: "wasabi-kernel",
+            ),
+            fs_type: FAT,
+            size: "20 MB",
+            static_input: None,
+            generated: [
+                (
+                    path_in_fs: "kernel-x86_64",
+                    build: (
+                        inner: "wasabi-kernel",
+                    ),
+                    artifact: KernelElf,
+                ),
+                (
+                    path_in_fs: "efi/boot/bootx64.efi",
+                    build: (
+                        inner: "BOOTLOADER-X86_64",
+                    ),
+                    artifact: KernelElf,
+                ),
+            ],
+        ),
+        (
+            id: (
+                inner: "wasabi-test",
+            ),
+            fs_type: FAT,
+            size: "20 MB",
+            static_input: None,
+            generated: [
+                (
+                    path_in_fs: "kernel-x86_64",
+                    build: (
+                        inner: "wasabi-kernel",
+                    ),
+                    artifact: KernelElf,
+                ),
+                (
+                    path_in_fs: "efi/boot/bootx64.efi",
+                    build: (
+                        inner: "BOOTLOADER-X86_64",
+                    ),
+                    artifact: KernelElf,
+                ),
+            ],
+        ),
+    ],
+    images: [
+        (
+            id: (
+                inner: "wasabi-kernel",
+            ),
+            partitions: [
+                (
+                    uuid: None,
+                    name: "boot",
+                    fs: (
+                        inner: "wasabi-kernel",
+                    ),
+                    is_boot: true,
+                    is_read_only: false,
+                ),
+            ],
+            device_uuid: None,
+        ),
+        (
+            id: (
+                inner: "wasabi-test",
+            ),
+            partitions: [
+                (
+                    uuid: None,
+                    name: "boot",
+                    fs: (
+                        inner: "wasabi-kernel",
+                    ),
+                    is_boot: true,
+                    is_read_only: false,
+                ),
+            ],
+            device_uuid: None,
+        ),
+    ],
+    default_build_targets: [
+        (
+            inner: "wasabi-kernel",
+        ),
+    ],
+    default_run_image: Some((
+        inner: "wasabi-kernel",
+    )),
+    qemu: (
+        ovmf: (
+            prebuild_tag: "edk2-stable202605-r1",
+            prebuild_hash: "8ae4d2d73161cc2335f5675d3b8b6edfa0642301679764a246940488ea3ce20d",
+            storage_path: "ovmf",
+            download_url: "https://github.com/rust-osdev/ovmf-prebuilt/releases/download/edk2-stable202605-r1/edk2-stable202605-r1-bin.tar.xz",
+        ),
+        memory: "4G",
+        processor_count: 8,
+        serial: [
+            "stdio",
+        ],
+        debug_log: None,
+        debug_info: "int,cpu_reset,unimp,guest_errors",
+    ),
+    clean: (
+        ovmf: Unused,
+        build: (
+            bootloader: false,
+        ),
+    ),
+)

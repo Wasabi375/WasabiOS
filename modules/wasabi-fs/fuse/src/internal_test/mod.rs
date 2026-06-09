@@ -8,15 +8,16 @@ use std::{
 use anyhow::{Context, Result};
 use clap::ValueEnum;
 use host_shared::sync::StdInterruptState;
+use host_wfs::FileDevice;
 use log::info;
 use shared::sync::InterruptState;
 use wfs::{
-    fs::{FsReadWrite, OverrideCheck},
+    fs::{FsReadWrite, OverwriteCheck},
     fs_structs::{FileId, FileType},
     mem_structs::{Directory, FileNode},
 };
 
-use crate::{InternalTestOptions, block_device::FileDevice};
+use crate::InternalTestOptions;
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum TestVariant {
@@ -129,7 +130,7 @@ fn create_test_image(image_path: &Path) -> Result<()> {
     let uuid = uuid::Uuid::new_v4();
     let name = "internal test image".into();
 
-    let fs = FileSystem::create(device, OverrideCheck::IgnoreExisting, uuid, Some(name))
+    let fs = FileSystem::create(device, OverwriteCheck::IgnoreExisting, uuid, Some(name))
         .expect("Failed to create image");
 
     return match fs.close() {

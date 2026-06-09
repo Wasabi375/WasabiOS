@@ -1,5 +1,3 @@
-#![feature(proc_macro_diagnostic)]
-
 extern crate proc_macro;
 
 #[allow(unused_imports)] // this disables the warning about the "test" in the module name

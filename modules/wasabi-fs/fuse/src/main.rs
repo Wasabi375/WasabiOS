@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -8,14 +7,12 @@ use log::{LevelFilter, debug, info};
 use simple_logger::SimpleLogger;
 use wfs::{
     BLOCK_SIZE, blocks_required_for,
-    fs::{FsReadOnly, FsReadWrite, OverrideCheck},
+    fs::{FsReadOnly, FsReadWrite, OverwriteCheck},
 };
 
 use crate::fuse::WasabiFuse;
 
 mod fuse;
-
-mod block_device;
 
 mod internal_test;
 
@@ -152,9 +149,9 @@ fn create(mut args: CreateOptions) {
     );
 
     let override_check = if args.force {
-        OverrideCheck::IgnoreExisting
+        OverwriteCheck::IgnoreExisting
     } else {
-        OverrideCheck::Check
+        OverwriteCheck::Check
     };
     let uuid = uuid::Uuid::new_v4();
     let name: Option<Box<str>> = args.name.take().map(|n| n.into_boxed_str());

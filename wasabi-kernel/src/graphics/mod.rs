@@ -9,14 +9,14 @@ pub mod tty;
 use alloc::boxed::Box;
 use core::slice;
 use log::{info, warn};
-use logger::{dispatch::TargetLogger, OwnLogger};
+use logger::{OwnLogger, dispatch::TargetLogger};
 use shared::sync::lockcell::LockCell;
 
 use self::{
     canvas::CanvasWriter,
     fb::{
-        startup::{take_boot_framebuffer, HARDWARE_FRAMEBUFFER_START_INFO},
         Framebuffer, HARDWARE_FRAMEBUFFER,
+        startup::{HARDWARE_FRAMEBUFFER_START_INFO, take_boot_framebuffer},
     },
     kernel_font::BitFont,
 };

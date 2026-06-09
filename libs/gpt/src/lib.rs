@@ -34,6 +34,14 @@ pub mod chs;
 
 pub mod protective_mbr;
 
+pub mod partition_types {
+    use uuid::{Uuid, uuid};
+
+    pub const DATA: Uuid = uuid!("27c2e72d-65c0-4e68-96b9-233fbd7c0c4f");
+    pub const READ_ONLY: Uuid = uuid!("3a958a59-ae93-44f3-9f37-7186b3de1fe3");
+    pub const KERNEL_INFO: Uuid = uuid!("6b3763fd-c29f-4b94-965a-a87599ac2dfb");
+}
+
 #[derive(Debug, Error, Clone, Copy)]
 #[allow(missing_docs)]
 pub enum InvalidHeader {

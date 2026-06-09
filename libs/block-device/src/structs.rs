@@ -232,7 +232,7 @@ impl BlockGroup {
 pub struct DevicePointer<T> {
     /// the address on the device
     pub lba: LBA,
-    _block_type: PhantomData<T>,
+    _block_type: PhantomData<fn() -> T>,
 }
 const_assert!(size_of::<DevicePointer<u8>>() == size_of::<LBA>());
 

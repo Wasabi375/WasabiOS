@@ -52,8 +52,10 @@ impl FileDevice {
         })
     }
 
-    pub fn close(self) -> Result<(), std::io::Error> {
-        self.file.lock().expect("We never shatter the lock").flush()
+    pub fn close(self) -> Result<File, std::io::Error> {
+        let mut file = self.file.into_inner().expect("We never shatter the lock");
+        file.flush()?;
+        Ok(file)
     }
 
     fn read_contig_internal(

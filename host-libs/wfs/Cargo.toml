@@ -1,0 +1,12 @@
+[package]
+name = "host-wfs"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wfs.workspace = true
+shared.workspace = true
+host-shared.workspace = true
+block-device.workspace = true
+log.workspace = true
+thiserror.workspace = true
