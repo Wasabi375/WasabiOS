@@ -1,13 +1,16 @@
 use std::{
-    fs::File,
-    io::Write,
     path::{Path, PathBuf},
     process::Stdio,
 };
 
 use anyhow::{Context, Result, ensure};
-use log::{debug, info};
-use tokio::{fs, process::Command};
+use log::{debug, error, info};
+use serde::{Deserialize, Serialize};
+use tokio::{
+    fs::{self, File},
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
 
 use crate::{
     args::{BuildArgs, CheckArgs, CleanArgs},
@@ -17,6 +20,8 @@ use crate::{
         build::{BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild},
     },
 };
+
+const BOOT_INFO_FILENAME: &'static str = "boot_info.ron";
 
 pub async fn build_from_args(args: BuildArgs, config: VerifiedConfig) -> Result<()> {
     let targets = if args.target.is_empty() {
@@ -246,8 +251,14 @@ async fn check_kernel(kernel: &KernelBuild, build_opts: &GeneralBuild) -> Result
     Ok(())
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
+struct BootloaderInfo {
+    version: String,
+}
+
 pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
     let out_dir = bootloader_out_dir(&config.config.out_dir, &BuildTarget::BOOTLOADER_X86.into());
+
     let manifest = get_workspace_manifest().await?;
     let bootloader = manifest
         .workspace
@@ -257,10 +268,24 @@ pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
         .get("bootloader")
         .unwrap();
 
+    let version = bootloader.req();
+    let info = BootloaderInfo {
+        version: version.to_string(),
+    };
+    if !should_download_bootloader(config, &info).await {
+        info!("reusing existing bootloader");
+        return Ok(());
+    }
+
     let mut cmd = Command::new("cargo");
     cmd.kill_on_drop(true);
+
+    if let Some(jobs) = config.config.general_build.jobs {
+        cmd.arg("--jobs").arg(&format!("{jobs}"));
+    }
+
     cmd.arg("install").arg("bootloader-x86_64-uefi");
-    cmd.arg("--version").arg(bootloader.req());
+    cmd.arg("--version").arg(version);
     cmd.arg("--locked");
     cmd.arg("--target").arg("x86_64-unknown-uefi");
     cmd.arg("-Zbuild-std=core")
@@ -273,9 +298,67 @@ pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
         .await
         .context("install uefi x86-64 bootloader")?
         .success();
-
     ensure!(success, "failed to build uefi bootloader");
+
+    let info_file = out_dir.join(BOOT_INFO_FILENAME);
+    let mut info_file = File::create(info_file)
+        .await
+        .context("create bootloader info file")?;
+    let info = ron::ser::to_string_pretty(&info, Default::default())
+        .context("serialize bootloader info")?;
+    info_file
+        .write_all(info.as_bytes())
+        .await
+        .context("write bootloader info to file")?;
+    info_file
+        .flush()
+        .await
+        .context("flush bootloader info file")?;
+
     Ok(())
+}
+
+async fn should_download_bootloader(
+    config: &VerifiedConfig,
+    requirements: &BootloaderInfo,
+) -> bool {
+    let id = BuildTarget::BOOTLOADER_X86.into();
+    let out_dir = bootloader_out_dir(&config.config.out_dir, &id);
+    let info_path = out_dir.join(BOOT_INFO_FILENAME);
+    let bin = out_dir.join(bootloader_artifact_path(BuildArtifact::KernelElf, &id));
+
+    if !bin.exists() || !info_path.exists() {
+        return true;
+    }
+
+    let mut info_file = match File::open(&info_path).await.context("open info file") {
+        Ok(info_file) => info_file,
+        Err(err) => {
+            error!("could not open info file at {}\n{err}", info_path.display());
+            return true;
+        }
+    };
+    let mut info_data = String::new();
+    if let Err(err) = info_file
+        .read_to_string(&mut info_data)
+        .await
+        .context("read info file")
+    {
+        error!(
+            "failed to read from info file at {}\n{err}",
+            info_path.display()
+        );
+        return true;
+    }
+    let stored_info: BootloaderInfo = match ron::from_str(&info_data) {
+        Ok(data) => data,
+        Err(err) => {
+            error!("invalid boot info data at: {}\n{err}", info_path.display());
+            return true;
+        }
+    };
+
+    &stored_info != requirements
 }
 
 pub fn bootloader_out_dir<P: AsRef<Path>>(base_path: P, target: &BuildTarget) -> PathBuf {
@@ -315,9 +398,10 @@ async fn emit_asm(elf: &Path, asm_out: &Path) -> Result<()> {
             .await
             .context("create parent dir for fat disk image")?;
     }
-    let mut asm_file = File::create(asm_out).context("asm file creation")?;
+    let mut asm_file = File::create(asm_out).await.context("asm file creation")?;
     asm_file
         .write(&output.stdout)
+        .await
         .context(format!("Writing asm file failed {:?}", &asm_out))?;
 
     info!("dump asm to {}", asm_out.display());

@@ -4,6 +4,11 @@
         jobs: None,
         architecture: X86_64,
     ),
+    special_builds: (
+        bootloader: (
+            force_reinstall: false,
+        ),
+    ),
     kernels: [
         (
             id: (

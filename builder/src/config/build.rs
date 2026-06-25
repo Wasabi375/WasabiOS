@@ -112,6 +112,18 @@ pub struct KernelBuild {
     pub output_asm: bool,
 }
 
+#[derive(Debug, Clone, Configuration, Serialize, Deserialize)]
+#[congen(debug, clone)]
+pub struct SpecialBuilds {
+    pub bootloader: BootloaderBuild,
+}
+
+#[derive(Debug, Clone, Configuration, Serialize, Deserialize)]
+#[congen(debug, clone)]
+pub struct BootloaderBuild {
+    pub force_reinstall: bool,
+}
+
 /// Target architecture (default X86_64)
 #[derive(
     Debug,

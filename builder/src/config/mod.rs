@@ -7,7 +7,10 @@ use ron::{self, ser::PrettyConfig};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    build::{BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild, KernelId},
+    build::{
+        BootloaderBuild, BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild,
+        KernelId, SpecialBuilds,
+    },
     file_system::{
         DiskImage, FileSystem, FsId, FsType, GeneratedFsInputConfig, ImageId, Partition,
     },
@@ -28,6 +31,8 @@ pub struct Config {
     pub out_dir: String,
 
     pub general_build: GeneralBuild,
+
+    pub special_builds: SpecialBuilds,
 
     pub kernels: Vec<Arc<KernelBuild>>,
 
@@ -197,6 +202,11 @@ fn initial_config() -> Config {
         general_build: GeneralBuild {
             jobs: None,
             architecture: build::Arch::X86_64,
+        },
+        special_builds: SpecialBuilds {
+            bootloader: BootloaderBuild {
+                force_reinstall: false,
+            },
         },
         kernels: vec![
             KernelBuild {
