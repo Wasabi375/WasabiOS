@@ -1,9 +1,4 @@
-use std::{
-    any::{Any, type_name},
-    ffi::OsStr,
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::{any::Any, ffi::OsStr, marker::PhantomData, sync::Arc};
 
 use congen::{
     Configuration,
@@ -13,14 +8,18 @@ use congen::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, Hash)]
-pub struct Id<IdType> {
-    inner: Arc<str>,
-    #[serde(skip)]
-    typ: PhantomData<IdType>,
+pub trait IdType {
+    fn type_name() -> &'static str;
 }
 
-impl<IdType> Id<IdType> {
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, Hash)]
+pub struct Id<T: IdType> {
+    inner: Arc<str>,
+    #[serde(skip)]
+    typ: PhantomData<T>,
+}
+
+impl<T: IdType> Id<T> {
     pub fn new<S: AsRef<str>>(id: S) -> Self {
         Self {
             inner: id.as_ref().into(),
@@ -32,7 +31,7 @@ impl<IdType> Id<IdType> {
     }
 }
 
-impl<IdType> std::fmt::Debug for Id<IdType> {
+impl<T: IdType> std::fmt::Debug for Id<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Id")
             .field("inner", &self.inner)
@@ -41,13 +40,13 @@ impl<IdType> std::fmt::Debug for Id<IdType> {
     }
 }
 
-impl<IdType> std::fmt::Display for Id<IdType> {
+impl<T: IdType> std::fmt::Display for Id<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}({})", type_name::<IdType>(), self.inner))
+        f.write_fmt(format_args!("{}({})", T::type_name(), self.inner))
     }
 }
 
-impl<IdType> From<Arc<str>> for Id<IdType> {
+impl<T: IdType> From<Arc<str>> for Id<T> {
     fn from(value: Arc<str>) -> Self {
         Self {
             inner: value,
@@ -56,25 +55,25 @@ impl<IdType> From<Arc<str>> for Id<IdType> {
     }
 }
 
-impl<IdType> From<String> for Id<IdType> {
+impl<T: IdType> From<String> for Id<T> {
     fn from(value: String) -> Self {
         Self::new(value)
     }
 }
 
-impl<IdType> From<&str> for Id<IdType> {
+impl<T: IdType> From<&str> for Id<T> {
     fn from(value: &str) -> Self {
         Self::new(value)
     }
 }
 
-impl<IdType> AsRef<str> for Id<IdType> {
+impl<T: IdType> AsRef<str> for Id<T> {
     fn as_ref(&self) -> &str {
         self.inner.as_ref()
     }
 }
 
-impl<IdType> Id<IdType> {
+impl<T: IdType> Id<T> {
     pub fn into_inner(self) -> Arc<str> {
         self.inner
     }
@@ -105,9 +104,9 @@ impl<T> From<Option<T>> for IdChange<T> {
     }
 }
 
-impl<IdType: 'static> Configuration for Id<IdType> {}
-impl<IdType: 'static> CongenInternal for Id<IdType> {
-    type CongenChange = IdChange<Id<IdType>>;
+impl<T: IdType + 'static> Configuration for Id<T> {}
+impl<T: IdType + 'static> CongenInternal for Id<T> {
+    type CongenChange = IdChange<Id<T>>;
 
     fn apply_change_with_inner_default(
         &mut self,
@@ -124,8 +123,8 @@ impl<IdType: 'static> CongenInternal for Id<IdType> {
     }
 }
 
-impl<IdType: 'static> CongenChange for IdChange<Id<IdType>> {
-    type Configuration = Id<IdType>;
+impl<T: IdType + 'static> CongenChange for IdChange<Id<T>> {
+    type Configuration = Id<T>;
 
     fn empty() -> Self {
         IdChange::NoChange
@@ -136,7 +135,7 @@ impl<IdType: 'static> CongenChange for IdChange<Id<IdType>> {
             Ok(inner) => inner,
             Err(parse_err) => return Ok(Err(parse_err)),
         };
-        Ok(Ok(inner.map(|inner| <Id<IdType>>::from(inner)).into()))
+        Ok(Ok(inner.map(|inner| <Id<T>>::from(inner)).into()))
     }
 
     fn apply_change(&mut self, change: Self) {
@@ -179,6 +178,11 @@ macro_rules! config_id_type {
         impl std::default::Default for $marker {
             fn default() -> Self {
                 unreachable!()
+            }
+        }
+        impl crate::config::id::IdType for $marker {
+            fn type_name() -> &'static str {
+                stringify!($typ)
             }
         }
         pub type $typ = crate::config::id::Id<$marker>;
