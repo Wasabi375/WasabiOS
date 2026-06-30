@@ -78,10 +78,10 @@ impl BuildConfig {
         }
     }
 
-    pub fn specials() -> Vec<(BuildTarget, BuildConfig)> {
+    pub fn specials() -> Vec<(BuildTarget, Arc<BuildConfig>)> {
         [BuildTarget::BOOTLOADER_X86.into()]
             .into_iter()
-            .map(|t: BuildTarget| (t.clone(), BuildConfig::Special(t)))
+            .map(|t: BuildTarget| (t.clone(), BuildConfig::Special(t).into()))
             .collect()
     }
 }

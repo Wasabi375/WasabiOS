@@ -430,7 +430,7 @@ impl PageAllocator {
 
 #[cfg(feature = "test")]
 mod test {
-    use core::assert_matches::assert_matches;
+    use core::assert_matches;
 
     use shared::sync::lockcell::LockCell;
     use testing::{KernelTestError, kernel_test};

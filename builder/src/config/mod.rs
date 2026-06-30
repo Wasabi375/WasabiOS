@@ -53,7 +53,7 @@ pub struct Config {
 pub struct VerifiedConfig {
     pub config: Config,
 
-    pub build_targets: HashMap<BuildTarget, BuildConfig>,
+    pub build_targets: HashMap<BuildTarget, Arc<BuildConfig>>,
     #[expect(unused)]
     pub kernels: HashMap<KernelId, Arc<KernelBuild>>,
 
@@ -103,11 +103,12 @@ impl Config {
         }
 
         let mut build_targets = HashMap::with_capacity(kernels.len());
-        build_targets.extend(
-            kernels
-                .iter()
-                .map(|(id, kernel)| (id.clone().into(), BuildConfig::Kernel(kernel.clone()))),
-        );
+        build_targets.extend(kernels.iter().map(|(id, kernel)| {
+            (
+                id.clone().into(),
+                BuildConfig::Kernel(kernel.clone()).into(),
+            )
+        }));
         build_targets.extend(BuildConfig::specials());
 
         for target in &self.default_build_targets {

@@ -26,6 +26,7 @@ mod disk_image;
 mod file_system;
 mod ovmf;
 mod run;
+mod sync;
 
 #[cfg(unix)]
 mod unix;

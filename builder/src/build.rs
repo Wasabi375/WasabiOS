@@ -1,9 +1,10 @@
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
+    sync::Arc,
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -19,23 +20,27 @@ use crate::{
         VerifiedConfig,
         build::{BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild},
     },
+    sync::FutureCache,
 };
+
+static BUILD_CACHE: FutureCache<BuildTarget, Result<()>> = FutureCache::const_new();
 
 const BOOT_INFO_FILENAME: &'static str = "boot_info.ron";
 
 pub async fn build_from_args(args: BuildArgs, config: VerifiedConfig) -> Result<()> {
+    let config = Arc::new(config);
     let targets = if args.target.is_empty() {
         &config.config.default_build_targets
     } else {
         &args.target
     };
-    build(targets.iter().cloned(), &config).await?;
+    build(targets.iter().cloned(), config.clone()).await?;
     Ok(())
 }
 
 pub async fn build_artifacts<T: IntoIterator<Item = (BuildTarget, BuildArtifact)>>(
     targets: T,
-    config: &VerifiedConfig,
+    config: Arc<VerifiedConfig>,
 ) -> Result<Vec<PathBuf>> {
     let mut result_paths = Vec::new();
 
@@ -43,9 +48,10 @@ pub async fn build_artifacts<T: IntoIterator<Item = (BuildTarget, BuildArtifact)
         let build_config = config
             .build_targets
             .get(&target)
-            .with_context(|| format!("could not find build target {target}"))?;
+            .with_context(|| format!("could not find build target {target}"))?
+            .clone();
         info!("build target: {target}");
-        build_from_config(build_config, config).await?;
+        build_from_config(build_config.clone(), config.clone()).await?;
 
         result_paths.push(build_config.artifact_path(artifact, &config.config));
     }
@@ -55,33 +61,51 @@ pub async fn build_artifacts<T: IntoIterator<Item = (BuildTarget, BuildArtifact)
 
 pub async fn build<T: IntoIterator<Item = BuildTarget>>(
     targets: T,
-    config: &VerifiedConfig,
+    config: Arc<VerifiedConfig>,
 ) -> Result<()> {
     for target in targets {
         let build_config = config
             .build_targets
             .get(&target)
-            .with_context(|| format!("could not find build target {target}"))?;
+            .with_context(|| format!("could not find build target {target}"))?
+            .clone();
         info!("build target: {target}");
-        build_from_config(build_config, config).await?;
+        build_from_config(build_config, config.clone()).await?;
     }
     Ok(())
 }
 
-async fn build_from_config(build_config: &BuildConfig, config: &VerifiedConfig) -> Result<()> {
-    let out_dir: PathBuf = config.config.out_dir.clone().into();
-    match build_config {
-        BuildConfig::Kernel(kernel_build) => {
-            build_kernel(&*kernel_build, &config, &out_dir)
-                .await
-                .with_context(|| format!("build target: {}", kernel_build.id))?;
+async fn build_from_config(
+    build_config: Arc<BuildConfig>,
+    config: Arc<VerifiedConfig>,
+) -> Result<()> {
+    let build_id = build_config.id().clone();
+
+    let build_future = async move {
+        let out_dir: PathBuf = config.config.out_dir.clone().into();
+        match &*build_config {
+            BuildConfig::Kernel(kernel_build) => {
+                build_kernel(&*kernel_build, &*config, &out_dir)
+                    .await
+                    .with_context(|| format!("build target: {}", kernel_build.id))?;
+            }
+            BuildConfig::Special(id) => match id.as_str() {
+                BuildTarget::BOOTLOADER_X86 => build_bootloader(&*config)
+                    .await
+                    .context("build bootloader-x86-64")?,
+                _ => panic!("unknown special id: {id}"),
+            },
         }
-        BuildConfig::Special(id) => match id.as_str() {
-            BuildTarget::BOOTLOADER_X86 => build_bootloader(config)
-                .await
-                .context("build bootloader-x86-64")?,
-            _ => panic!("unknown special id: {id}"),
-        },
+        Ok(())
+    };
+
+    if let Err(err) = &*BUILD_CACHE
+        .spawn_or_get(build_id, build_future)
+        .await
+        .join()
+        .await
+    {
+        bail!("build from config: {err}");
     }
     Ok(())
 }
@@ -99,7 +123,7 @@ pub async fn check(args: CheckArgs, config: VerifiedConfig) -> Result<()> {
             .get(target)
             .with_context(|| format!("could not find build target {target}"))?;
         info!("build target: {target}");
-        match build_config {
+        match &**build_config {
             BuildConfig::Kernel(kernel_build) => {
                 check_kernel(&*kernel_build, &config.config.general_build)
                     .await

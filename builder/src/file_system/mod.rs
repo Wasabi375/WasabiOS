@@ -87,7 +87,7 @@ async fn build_dependencies(
         .map(|input| (input.build.clone(), input.artifact))
         .collect();
 
-    let out_paths = build::build_artifacts(build_targets, &config)
+    let out_paths = build::build_artifacts(build_targets, config)
         .await
         .context("build depencies")?;
 
