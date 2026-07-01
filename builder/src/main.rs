@@ -27,6 +27,7 @@ mod file_system;
 mod ovmf;
 mod run;
 mod sync;
+mod tests;
 
 #[cfg(unix)]
 mod unix;
@@ -101,7 +102,7 @@ async fn main() -> Result<()> {
             .context("build image")?,
         Command::Clean(args) => clean(args, config).await.context("clean")?,
         Command::Run(args) => run::run_with_args(args, config).await.context("run")?,
-        Command::Test => todo!(),
+        Command::Test(args) => tests::test_with_args(args, config).await.context("test")?,
         Command::Gdb => todo!(),
         Command::Config(_) | Command::InitConfig { .. } => {
             unreachable!("Handled before loading config")

@@ -105,7 +105,7 @@ async fn build_from_config(
         .join()
         .await
     {
-        bail!("build from config: {err}");
+        bail!("build from config: {err:#}");
     }
     Ok(())
 }

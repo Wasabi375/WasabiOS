@@ -7,6 +7,7 @@ use crate::config::{
     Config,
     build::BuildTarget,
     file_system::{FsId, ImageId},
+    tests::TestId,
 };
 
 #[derive(Parser, Debug)]
@@ -30,7 +31,7 @@ pub enum Command {
     #[command(alias = "r")]
     Run(RunArgs),
     #[command(alias = "t")]
-    Test,
+    Test(TestArgs),
     Gdb,
 
     Fs(FsArgs),
@@ -89,4 +90,9 @@ pub struct FsArgs {
 #[derive(Args, Debug)]
 pub struct RunArgs {
     pub target: Option<ImageId>,
+}
+
+#[derive(Args, Debug)]
+pub struct TestArgs {
+    pub targets: Vec<TestId>,
 }

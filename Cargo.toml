@@ -49,7 +49,7 @@ members = [
     "builder",
 
     "wasabi-kernel",
-    "wasabi-test", "host-libs/wfs", 
+    "wasabi-test",
 ]
 default-members = ["builder"]
 

@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap},
+    fs::File,
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::{Context, Result, bail, ensure};
 use congen::Configuration;
@@ -16,6 +21,7 @@ use crate::config::{
     },
     general::SizeBytes,
     qemu::{Ovmf, QemuConfig},
+    tests::{Test, TestGroup, TestId, TestSystem},
 };
 
 pub mod build;
@@ -23,6 +29,7 @@ pub mod file_system;
 pub mod general;
 pub mod id;
 pub mod qemu;
+pub mod tests;
 
 #[derive(Debug, Clone, Configuration, Serialize, Deserialize)]
 #[congen(debug, clone)]
@@ -40,7 +47,12 @@ pub struct Config {
 
     pub images: Vec<Arc<DiskImage>>,
 
+    pub tests: Vec<Arc<TestSystem>>,
+    pub test_groups: Vec<Arc<TestGroup>>,
+
     pub default_build_targets: Vec<BuildTarget>,
+
+    pub default_tests: Vec<TestId>,
 
     pub default_run_image: Option<ImageId>,
 
@@ -60,6 +72,9 @@ pub struct VerifiedConfig {
     pub images: HashMap<ImageId, Arc<DiskImage>>,
 
     pub file_systems: HashMap<FsId, Arc<FileSystem>>,
+
+    pub tests: HashMap<TestId, Test>,
+    pub test_systems: HashMap<TestId, Arc<TestSystem>>,
 }
 
 impl Config {
@@ -145,12 +160,66 @@ impl Config {
         }
         // TODO check uuids in Partitions and Images
 
+        let mut test_systems = HashMap::new();
+        let mut tests = HashMap::new();
+        for test in &self.tests {
+            if test_systems.insert(test.id.clone(), test.clone()).is_some() {
+                bail!(
+                    "test ids must be unique. Found multiple test system definitions using {}",
+                    test.id
+                )
+            }
+            tests.insert(test.id.clone(), Test::System(test.clone()));
+        }
+        for group in &self.test_groups {
+            let mut group = group.clone();
+            if group.systems.is_empty() {
+                let mut edit = group.as_ref().clone();
+                edit.systems = self
+                    .tests
+                    .iter()
+                    .filter(|test| {
+                        if group.cargo_only && !test.cargo.is_some() {
+                            false
+                        } else if group.kernel_only && !test.kernel.is_some() {
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|test| test.id.clone())
+                    .collect();
+                group = edit.into();
+            } else {
+                for test in &group.systems {
+                    ensure!(
+                        test_systems.contains_key(&test),
+                        "test group {} refers to test {}, but no such test was found",
+                        group.id,
+                        test
+                    );
+                }
+            }
+
+            if tests
+                .insert(group.id.clone(), Test::Group(group.clone()))
+                .is_some()
+            {
+                bail!(
+                    "test ids must be unique. Found multiple test system/group definitions using {}",
+                    group.id
+                )
+            }
+        }
+
         Ok(VerifiedConfig {
             config: self,
             kernels,
             build_targets,
             file_systems,
             images,
+            tests,
+            test_systems
         })
     }
 }
@@ -233,28 +302,6 @@ fn initial_config() -> Config {
             }
             .into(),
         ],
-        default_build_targets: vec!["wasabi-kernel".into()],
-        qemu: QemuConfig {
-            ovmf: Ovmf {
-                prebuild_tag: "edk2-stable202605-r1".to_string(),
-                prebuild_hash: "8ae4d2d73161cc2335f5675d3b8b6edfa0642301679764a246940488ea3ce20d"
-                    .to_string(),
-                storage_path: "ovmf".to_string(),
-                download_url: "https://github.com/rust-osdev/ovmf-prebuilt/releases/download/edk2-stable202605-r1/edk2-stable202605-r1-bin.tar.xz"
-                    .to_string(),
-            },
-            memory: "4G".to_string(),
-            processor_count: 8,
-            debug_log: None,
-            debug_info:"int,cpu_reset,unimp,guest_errors".to_string(),
-            serial: vec![ "stdio".to_string() ],
-        },
-        clean: CleanConfig {
-            ovmf: CleanOvmf::Unused,
-            build: CleanBuild {
-                bootloader: false,
-            },
-        },
         file_systems: vec![
             FileSystem {
                 id: "wasabi-kernel".into(),
@@ -321,6 +368,136 @@ fn initial_config() -> Config {
                 device_uuid: None,
             }.into()
         ],
+        tests: vec![
+            TestSystem { 
+                id: "histogram".into(),
+                cargo: Some("histogram".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "staticvec".into(),
+                cargo: Some("staticvec".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "shared".into(),
+                cargo: Some("shared".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "host-shared".into(),
+                cargo: Some("host-shared".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "host-wfs".into(),
+                cargo: Some("host-wfs".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "block-device".into(),
+                cargo: Some("block-device".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "wfs".into(),
+                cargo: Some("wfs".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "testing".into(),
+                cargo: Some("testing".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "testing-tests".into(),
+                cargo: Some("testing".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "gpt".into(),
+                cargo: Some("gpt".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "interrupt-fn-builder".into(),
+                cargo: Some("interrupt-fn-builder".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "logger".into(),
+                cargo: Some("logger".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "fuse".into(),
+                cargo: Some("fuse".into()),
+                kernel: None
+            }.into(),
+            TestSystem { 
+                id: "wasabi-test".into(),
+                cargo: None,
+                kernel: Some("wasabi-test".into())
+            }.into(),
+            TestSystem { 
+                id: "builder".into(),
+                cargo: Some("builder".into()),
+                kernel: None
+            }.into(),
+        ],
+        test_groups: vec![
+            TestGroup { id: "all".into(), systems: vec![], cargo_only: false, kernel_only: false }.into(),
+            TestGroup { id: "owned".into(), systems: vec![
+                "host-shared".into(),
+                "host-wfs".into(),
+                "block-device".into(),
+                "gpt".into(),
+                "interrupt-fn-builder".into(),
+                "logger".into(),
+                "shared".into(),
+                "testing".into(),
+                "testing-tests".into(),
+                "builder".into(),
+                "wasabi-test".into(),
+            ], cargo_only: false, kernel_only: false }.into(),
+            TestGroup { id: "cargo".into(), systems: vec![], cargo_only: true, kernel_only: false }.into(),
+            TestGroup { id: "kernel".into(), systems: vec![], cargo_only: false, kernel_only: true }.into(),
+        ],
+        default_build_targets: vec!["wasabi-kernel".into()],
+        default_tests: vec!["owned".into()],
         default_run_image: Some("wasabi-kernel".into()),
+        qemu: QemuConfig {
+            ovmf: Ovmf {
+                prebuild_tag: "edk2-stable202605-r1".to_string(),
+                prebuild_hash: "8ae4d2d73161cc2335f5675d3b8b6edfa0642301679764a246940488ea3ce20d"
+                    .to_string(),
+                storage_path: "ovmf".to_string(),
+                download_url: "https://github.com/rust-osdev/ovmf-prebuilt/releases/download/edk2-stable202605-r1/edk2-stable202605-r1-bin.tar.xz"
+                    .to_string(),
+            },
+            memory: "4G".to_string(),
+            processor_count: 8,
+            debug_log: None,
+            debug_info:"int,cpu_reset,unimp,guest_errors".to_string(),
+            serial: vec![ "stdio".to_string() ],
+        },
+        clean: CleanConfig {
+            ovmf: CleanOvmf::Unused,
+            build: CleanBuild {
+                bootloader: false,
+            },
+        },
     }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::config::initial_config;
+
+
+    #[test]
+    fn verify_init_config() {
+        initial_config().verify().unwrap();
+    }
+
 }

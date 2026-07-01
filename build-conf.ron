@@ -121,9 +121,191 @@
             device_uuid: None,
         ),
     ],
+    tests: [
+        (
+            id: (
+                inner: "histogram",
+            ),
+            cargo: Some("histogram"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "staticvec",
+            ),
+            cargo: Some("staticvec"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "shared",
+            ),
+            cargo: Some("shared"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "host-shared",
+            ),
+            cargo: Some("host-shared"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "host-wfs",
+            ),
+            cargo: Some("host-wfs"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "block-device",
+            ),
+            cargo: Some("block-device"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "wfs",
+            ),
+            cargo: Some("wfs"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "testing",
+            ),
+            cargo: Some("testing"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "testing-tests",
+            ),
+            cargo: Some("testing"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "gpt",
+            ),
+            cargo: Some("gpt"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "interrupt-fn-builder",
+            ),
+            cargo: Some("interrupt-fn-builder"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "logger",
+            ),
+            cargo: Some("logger"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "fuse",
+            ),
+            cargo: Some("fuse"),
+            kernel: None,
+        ),
+        (
+            id: (
+                inner: "wasabi-test",
+            ),
+            cargo: None,
+            kernel: Some((
+                inner: "wasabi-test",
+            )),
+        ),
+        (
+            id: (
+                inner: "builder",
+            ),
+            cargo: Some("builder"),
+            kernel: None,
+        ),
+    ],
+    test_groups: [
+        (
+            id: (
+                inner: "all",
+            ),
+            systems: [],
+            cargo_only: false,
+            kernel_only: false,
+        ),
+        (
+            id: (
+                inner: "owned",
+            ),
+            systems: [
+                (
+                    inner: "host-shared",
+                ),
+                (
+                    inner: "host-wfs",
+                ),
+                (
+                    inner: "block-device",
+                ),
+                (
+                    inner: "gpt",
+                ),
+                (
+                    inner: "interrupt-fn-builder",
+                ),
+                (
+                    inner: "logger",
+                ),
+                (
+                    inner: "shared",
+                ),
+                (
+                    inner: "testing",
+                ),
+                (
+                    inner: "testing-tests",
+                ),
+                (
+                    inner: "builder",
+                ),
+                (
+                    inner: "wasabi-test",
+                ),
+            ],
+            cargo_only: false,
+            kernel_only: false,
+        ),
+        (
+            id: (
+                inner: "cargo",
+            ),
+            systems: [],
+            cargo_only: true,
+            kernel_only: false,
+        ),
+        (
+            id: (
+                inner: "kernel",
+            ),
+            systems: [],
+            cargo_only: false,
+            kernel_only: true,
+        ),
+    ],
     default_build_targets: [
         (
             inner: "wasabi-kernel",
+        ),
+    ],
+    default_tests: [
+        (
+            inner: "owned",
         ),
     ],
     default_run_image: Some((
