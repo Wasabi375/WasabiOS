@@ -5,7 +5,7 @@
 tmp/
 
 # build artifacts
-latest/
+build-artifacts/
 /target/
 
 # file system images

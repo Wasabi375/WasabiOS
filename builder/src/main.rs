@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Parser;
 use congen::Configuration;
-use log::{LevelFilter, debug, warn};
+use log::{debug, warn};
 use simple_logger::SimpleLogger;
 use tokio::fs;
 
@@ -59,11 +59,7 @@ async fn main() -> Result<()> {
     #[cfg(unix)]
     let _restore_tty = unix::RestoreTty::new()?;
 
-    SimpleLogger::new()
-        .with_level(LevelFilter::Debug) // TODO temp
-        .env()
-        .init()
-        .unwrap();
+    SimpleLogger::new().env().init().unwrap();
 
     verify_workdir();
 
@@ -74,7 +70,7 @@ async fn main() -> Result<()> {
         return Ok(());
     };
 
-    let config = Config::load(&dbg!(&args).config)?;
+    let config = Config::load(&args.config)?;
 
     if let Command::Config(change) = &args.cmd {
         config

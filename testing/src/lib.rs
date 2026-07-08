@@ -3,7 +3,6 @@
 #![no_std]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
-#![feature(sync_unsafe_cell)]
 
 extern crate alloc;
 

@@ -9,11 +9,11 @@
     const_convert,
     const_trait_impl,
     maybe_uninit_array_assume_init,
-    never_type,
     pointer_is_aligned_to,
     ptr_metadata,
     stmt_expr_attributes
 )]
+#![cfg_attr(feature = "test", feature(never_type))]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![allow(rustdoc::private_intra_doc_links)]
 #![deny(unsafe_op_in_unsafe_fn)]

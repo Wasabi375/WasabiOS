@@ -264,7 +264,7 @@ fn initial_config() -> Config {
     const KERNEL_FILE_NAME: &str = "kernel-x86_64";
     const UEFI_BOOT_FILENAME: &str = "efi/boot/bootx64.efi";
     Config {
-        out_dir: "builder/out_test".to_string(), // FIXME set back to latest
+        out_dir: "build-artifacts".to_string(), 
         general_build: GeneralBuild {
             jobs: None,
             architecture: build::Arch::X86_64,

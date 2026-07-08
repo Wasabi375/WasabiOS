@@ -1,5 +1,5 @@
 (
-    out_dir: "builder/out_test",
+    out_dir: "build-artifacts",
     general_build: (
         jobs: None,
         architecture: X86_64,
