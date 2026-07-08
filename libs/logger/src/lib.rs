@@ -99,6 +99,14 @@ struct WriteOpts<'a, CI> {
     _core_info: PhantomData<CI>,
 }
 
+fn rule_matches(module_name: &str, metadata: &log::Metadata) -> bool {
+    let target = metadata.target();
+    target.starts_with(module_name)
+        || (module_name.ends_with('!')
+            && module_name.len() == target.len() + 1
+            && module_name.starts_with(target))
+}
+
 fn write_record<W: Write, CI: CoreInfo>(
     writer: &mut W,
     record: &Record,

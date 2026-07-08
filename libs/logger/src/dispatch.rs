@@ -10,7 +10,7 @@ use shared::sync::{
     InterruptState,
 };
 
-use crate::{FlushError, LogModuleLevelSetup, TryLog};
+use crate::{rule_matches, FlushError, LogModuleLevelSetup, TryLog};
 
 use alloc::{boxed::Box, vec::Vec};
 use shared::alloc_ext::reforbox::RefOrBox;
@@ -185,7 +185,7 @@ impl<'a, I: InterruptState> Log for DispatchLogger<'a, I> {
             .iter()
             /* At this point the vec is already sorted so that we can simply take
              * the first match */
-            .find(|(name, _level)| metadata.target().starts_with(name))
+            .find(|(name, _level)| rule_matches(name, metadata))
             .map(|(_name, level)| *level)
             .unwrap_or(self.default_level);
         if log_level > module_min_log_level {

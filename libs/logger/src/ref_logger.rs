@@ -25,7 +25,9 @@
 //! OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 //! USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::{write_record, LogModuleLevelSetup, LogRenameModuleSetup, TryLog, WriteOpts};
+use crate::{
+    rule_matches, write_record, LogModuleLevelSetup, LogRenameModuleSetup, TryLog, WriteOpts,
+};
 use alloc::vec::Vec;
 use core::{
     fmt::{self, Error, Write},
@@ -149,7 +151,7 @@ impl<'a, W: Write, L: LockCell<W>, CI: CoreInfo> RefLogger<'a, W, L, CI> {
                 /* At this point the vec is already sorted so that we can simply take
                  * the first match
                  */
-                .find(|(name, _level)| metadata.target().starts_with(name))
+                .find(|(name, _level)| rule_matches(name, metadata))
                 .map(|(_name, level)| level)
                 .unwrap_or(&self.default_level)
     }
