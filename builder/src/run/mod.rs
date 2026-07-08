@@ -50,7 +50,10 @@ impl QemuExitCode {
     pub fn ok(&self) -> Result<()> {
         match self {
             QemuExitCode::ExitNormal => Ok(()),
-            QemuExitCode::Success => Ok(()),
+            QemuExitCode::Success => {
+                info!("qemu was stopped by exit device(isa-debug-exit)");
+                Ok(())
+            }
             QemuExitCode::Fail => bail!("qemu exit with failure"),
             QemuExitCode::Unknown(other) => bail!("qemu exit with unknowne error code: {other}"),
         }

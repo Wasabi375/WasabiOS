@@ -59,7 +59,11 @@ async fn main() -> Result<()> {
     #[cfg(unix)]
     let _restore_tty = unix::RestoreTty::new()?;
 
-    SimpleLogger::new().env().init().unwrap();
+    SimpleLogger::new()
+        .with_level(log::LevelFilter::Info)
+        .env()
+        .init()
+        .unwrap();
 
     verify_workdir();
 
