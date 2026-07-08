@@ -46,26 +46,14 @@ where
         .with_module_rename("wasabi_kernel", "::");
 }
 
-/// initializes the logger piping all [log::log] calls into the first serial port.
-///
-/// # Safety
-///
-/// must only ever be called once at the start of the kernel boot proces and after
-/// [SERIAL1] is initialized
-pub unsafe fn init() {
-    // TODO reduce the stack size requirements for logging
-
-    let mut dispatch_logger = DispatchLogger::new();
-    dispatch_logger
-        .reserve_module_levels(16)
-        // comment to move ; to separate line - easy uncomment of module log levels
-        ;
-
-    #[cfg(not(feature = "test"))]
-    #[allow(dead_code)]
-    {
-        dispatch_logger
-            .with_level(LevelFilter::Info)
+/// setup default log levels for modules, used during normal kernel
+pub fn set_log_levels<L>(logger: &mut L)
+where
+    L: LogModuleLevelSetup,
+{
+    logger
+            .with_level(LevelFilter::Warn)
+            // .with_module_level("shared::sync::lockcell", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::task", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::cpu", LevelFilter::Trace)
@@ -84,14 +72,17 @@ pub unsafe fn init() {
             // .with_module_level("wasabi_kernel::crossbeam_epoch", LevelFilter::Trace)
             // comment to move ; to separate line - easy uncomment of module log levels
             ;
-    }
+}
 
-    #[cfg(feature = "test")]
-    {
-        // adjust log levels for tests
-        dispatch_logger
-            .with_level(LevelFilter::Warn)
+/// setup default log levels for modules, used during test kernel
+pub fn set_test_log_levels<L>(logger: &mut L)
+where
+    L: LogModuleLevelSetup,
+{
+    logger
+        .with_level(LevelFilter::Warn)
             .with_module_level("wasabi_test", LevelFilter::Info)
+            // .with_module_level("wasabi_kernel::core_local", LevelFilter::Trace)
             // .with_module_level("wasabi_kernel::mem::page_table::test", LevelFilter::Info)
             // .with_module_level("wasabi_kernel::pci::nvme", LevelFilter::Debug)
             // .with_module_level("wfs::mem_tree", LevelFilter::Trace)
@@ -100,7 +91,28 @@ pub unsafe fn init() {
             // .with_module_level("test_serial", LevelFilter::Trace)
             // comment to move ; to separate line - easy uncomment of module log levels
             ;
-    }
+}
+
+/// initializes the logger piping all [log::log] calls into the first serial port.
+///
+/// # Safety
+///
+/// must only ever be called once at the start of the kernel boot proces and after
+/// [SERIAL1] is initialized
+pub unsafe fn init() {
+    // TODO reduce the stack size requirements for logging
+
+    let mut dispatch_logger = DispatchLogger::new();
+    dispatch_logger
+        .reserve_module_levels(16)
+        // comment to move ; to separate line - easy uncomment of module log levels
+        ;
+
+    #[cfg(not(feature = "test"))]
+    set_log_levels(&mut dispatch_logger);
+
+    #[cfg(feature = "test")]
+    set_test_log_levels(&mut dispatch_logger);
 
     let mut serial_logger = RefLogger::new(&SERIAL1);
     setup_logger_module_rename(&mut serial_logger);
