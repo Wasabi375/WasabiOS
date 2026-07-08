@@ -161,16 +161,12 @@ impl ACPI {
             let flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::NO_EXECUTE;
             let page = PageAllocator::get_for_kernel().lock().allocate_page_4k()?;
+            let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
             unsafe {
                 // Safety: we are the only code mapping this frame
                 PageTable::get_for_kernel()
                     .lock()
-                    .map_kernel(
-                        page,
-                        frame,
-                        flags,
-                        FrameAllocator::get_for_kernel().lock().as_mut(),
-                    )?
+                    .map_kernel(page, frame, flags, frame_alloc.as_mut())?
                     .flush();
             }
             page

@@ -362,6 +362,9 @@
         (
             inner: "wasabi-kernel",
         ),
+        (
+            inner: "wasabi-test",
+        ),
     ],
     default_tests: [
         (

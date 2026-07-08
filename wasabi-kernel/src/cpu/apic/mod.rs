@@ -155,15 +155,11 @@ impl Apic {
             .allocate_page_4k()
             .map_err(MemError::from)?;
         unsafe {
+            let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
             // Safety: new page with apic frame (only used here) and is therefor safe
             PageTable::get_for_kernel()
                 .lock()
-                .map_kernel(
-                    page,
-                    phys_frame,
-                    apic_table_flags,
-                    FrameAllocator::get_for_kernel().lock().as_mut(),
-                )
+                .map_kernel(page, phys_frame, apic_table_flags, frame_alloc.as_mut())
                 .map_err(MemError::from)?
                 .flush();
         };
