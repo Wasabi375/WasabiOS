@@ -1,28 +1,5 @@
-[package]
-name = "wasabi_os"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-anyhow.workspace = true
-bootloader.workspace = true
-cargo_toml = "0.22"
-clap = { version = "4.5", features = ["derive"] }
-fatfs = "0.3.6"
-fs-err = "3.0.0"
-gpt_builder = { version = "4.1.0", package = "gpt" }
-log.workspace = true
-lzma-rs = "0.3.0"
-nix = { version = "0.30", features = [ "term" ] }
-sha2 = "0.10.8"
-simple_logger.workspace = true 
-tar = "0.4.41"
-tempfile = "3.12.0"
-tokio = { version = "1.32.0", features = ["full"] }
-uuid.workspace = true
-ureq = "3.1"
-
 [workspace]
+resolver = "3"
 members = [
     "forked-libs/histogram", 
     "forked-libs/staticvec",
@@ -130,16 +107,4 @@ x86_64 = { version = "0.15.1", git = "https://github.com/Wasabi375/x86_64", bran
 # TODO: why am I using my fork?
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
 
-[profile.dev]
-panic = "abort"
-lto = "fat"
-
-[profile.release]
-panic = "abort"
-lto = "fat"
-
-[package.metadata.docs.rs]
-rustc-args = ["--cfg", "docsrs_dummy_build"]
-
 [patch.crates-io]
-tar = { path = "/home/burkhard/programming/forks/tar-rs" }
