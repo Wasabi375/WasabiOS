@@ -105,7 +105,7 @@ async fn build_from_config(
         .join()
         .await
     {
-        bail!("build from config: {err:#}");
+        bail!("build from config:\n{err:?}");
     }
     Ok(())
 }
@@ -228,7 +228,7 @@ async fn build_kernel_elf(
         .await
         .context("cargo build execution")?
         .success();
-    ensure!(success, "cargo build {:?} failed", kernel.id);
+    ensure!(success, "cargo build {} failed", kernel.id);
 
     Ok(Path::join(&out_dir, &kernel.package_name))
 }

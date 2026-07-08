@@ -92,7 +92,19 @@ pub struct RunArgs {
     pub target: Option<ImageId>,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Default)]
 pub struct TestArgs {
     pub targets: Vec<TestId>,
+
+    /// Override the isolated property for all tests
+    #[arg(long)]
+    pub isolated: Option<bool>,
+
+    /// Override the keep_going property for all tests
+    #[arg(long)]
+    pub keep_going: Option<bool>,
+
+    /// Override the fast property for all tests
+    #[arg(long)]
+    pub fast: Option<bool>,
 }

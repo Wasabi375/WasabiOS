@@ -170,6 +170,9 @@ pub fn reserve_pages(allocator: &mut PageAllocator) {
 // TODO should this be unsafe. Thechincally this could lead to UB if we start this
 // from within an interrupt while this is already running, but not done.
 pub fn ap_startup() {
+    // FIXME there is a race condition somewhere
+    // if logging is disabled (warn or higher) only AP1 will finish and BSP and AP2, AP3, etc
+    // will deadlock
     info!("Starting APs");
     debug!("ap trampoline size: {}", TRAMPOLINE_CODE.len());
 
@@ -182,6 +185,7 @@ pub fn ap_startup() {
     let sipi = SipiPayload::new();
 
     assert_eq!(1, get_ready_core_count(Ordering::SeqCst));
+    assert_eq!(1, get_started_core_count(Ordering::SeqCst));
 
     let mut stack = ApStack::alloc().expect("failed to alloc ap stack");
 

@@ -15,13 +15,9 @@ use crate::config::{
     build::{
         BootloaderBuild, BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild,
         KernelId, SpecialBuilds,
-    },
-    file_system::{
+    }, file_system::{
         DiskImage, FileSystem, FsId, FsType, GeneratedFsInputConfig, ImageId, Partition,
-    },
-    general::SizeBytes,
-    qemu::{Ovmf, QemuConfig},
-    tests::{Test, TestGroup, TestId, TestSystem},
+    }, general::SizeBytes, qemu::{Ovmf, QemuConfig, QemuTest}, tests::{Test, TestGroup, TestId, TestSystem},
 };
 
 pub mod build;
@@ -329,7 +325,7 @@ fn initial_config() -> Config {
                 generated: vec![
                     GeneratedFsInputConfig {
                         path_in_fs: KERNEL_FILE_NAME.to_string(),
-                        build: "wasabi-kernel".into(),
+                        build: "wasabi-test".into(),
                         artifact: BuildArtifact::KernelElf,
                     },
                     GeneratedFsInputConfig {
@@ -360,7 +356,7 @@ fn initial_config() -> Config {
                     Partition {
                         uuid: None,
                         name: "boot".to_string(),
-                        fs: "wasabi-kernel".into(),
+                        fs: "wasabi-test".into(),
                         is_boot: true,
                         is_read_only: false
                     }
@@ -372,77 +368,137 @@ fn initial_config() -> Config {
             TestSystem { 
                 id: "histogram".into(),
                 cargo: Some("histogram".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "staticvec".into(),
                 cargo: Some("staticvec".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "shared".into(),
                 cargo: Some("shared".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "host-shared".into(),
                 cargo: Some("host-shared".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "host-wfs".into(),
                 cargo: Some("host-wfs".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "block-device".into(),
                 cargo: Some("block-device".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "wfs".into(),
                 cargo: Some("wfs".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "testing".into(),
                 cargo: Some("testing".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "testing-tests".into(),
                 cargo: Some("testing".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "gpt".into(),
                 cargo: Some("gpt".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "interrupt-fn-builder".into(),
                 cargo: Some("interrupt-fn-builder".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "logger".into(),
                 cargo: Some("logger".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "fuse".into(),
                 cargo: Some("fuse".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "wasabi-test".into(),
                 cargo: None,
-                kernel: Some("wasabi-test".into())
+                kernel: Some("wasabi-test".into()),
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
             TestSystem { 
                 id: "builder".into(),
                 cargo: Some("builder".into()),
-                kernel: None
+                kernel: None,
+                timeout_secs: 60,
+                isolated: false,
+                keep_going: false,
+                fast: false,
             }.into(),
         ],
         test_groups: vec![
@@ -477,9 +533,13 @@ fn initial_config() -> Config {
             },
             memory: "4G".to_string(),
             processor_count: 8,
+            serial: vec![ "stdio".to_string() ],
             debug_log: None,
             debug_info:"int,cpu_reset,unimp,guest_errors".to_string(),
-            serial: vec![ "stdio".to_string() ],
+            test: QemuTest {
+                no_tcp: false,
+                tcp_port: 4444,
+            },
         },
         clean: CleanConfig {
             ovmf: CleanOvmf::Unused,

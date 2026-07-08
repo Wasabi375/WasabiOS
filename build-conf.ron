@@ -71,7 +71,7 @@
                 (
                     path_in_fs: "kernel-x86_64",
                     build: (
-                        inner: "wasabi-kernel",
+                        inner: "wasabi-test",
                     ),
                     artifact: KernelElf,
                 ),
@@ -112,7 +112,7 @@
                     uuid: None,
                     name: "boot",
                     fs: (
-                        inner: "wasabi-kernel",
+                        inner: "wasabi-test",
                     ),
                     is_boot: true,
                     is_read_only: false,
@@ -128,6 +128,10 @@
             ),
             cargo: Some("histogram"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -135,6 +139,10 @@
             ),
             cargo: Some("staticvec"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -142,6 +150,10 @@
             ),
             cargo: Some("shared"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -149,6 +161,10 @@
             ),
             cargo: Some("host-shared"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -156,6 +172,10 @@
             ),
             cargo: Some("host-wfs"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -163,6 +183,10 @@
             ),
             cargo: Some("block-device"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -170,6 +194,10 @@
             ),
             cargo: Some("wfs"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -177,6 +205,10 @@
             ),
             cargo: Some("testing"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -184,6 +216,10 @@
             ),
             cargo: Some("testing"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -191,6 +227,10 @@
             ),
             cargo: Some("gpt"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -198,6 +238,10 @@
             ),
             cargo: Some("interrupt-fn-builder"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -205,6 +249,10 @@
             ),
             cargo: Some("logger"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -212,6 +260,10 @@
             ),
             cargo: Some("fuse"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -221,6 +273,10 @@
             kernel: Some((
                 inner: "wasabi-test",
             )),
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
         (
             id: (
@@ -228,6 +284,10 @@
             ),
             cargo: Some("builder"),
             kernel: None,
+            timeout_secs: 60,
+            isolated: false,
+            keep_going: false,
+            fast: false,
         ),
     ],
     test_groups: [
@@ -319,12 +379,16 @@
             download_url: "https://github.com/rust-osdev/ovmf-prebuilt/releases/download/edk2-stable202605-r1/edk2-stable202605-r1-bin.tar.xz",
         ),
         memory: "4G",
-        processor_count: 8,
+        processor_count: 1,
         serial: [
             "stdio",
         ],
         debug_log: None,
         debug_info: "int,cpu_reset,unimp,guest_errors",
+        test: (
+            no_tcp: false,
+            tcp_port: 4444,
+        ),
     ),
     clean: (
         ovmf: Unused,

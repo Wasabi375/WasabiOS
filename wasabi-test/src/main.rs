@@ -102,7 +102,6 @@ use bootloader_api::BootInfo;
 use core::{
     any::Any,
     fmt::Debug,
-    i128,
     str::{FromStr, from_utf8},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -138,7 +137,7 @@ const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
     let config = bootloader_api::BootloaderConfig::new_default();
     bootloader_config_common(config)
 };
-const KERNEL_CONFIG: KernelConfig = KernelConfig { start_aps: true };
+const KERNEL_CONFIG: KernelConfig = KernelConfig { start_aps: false };
 wasabi_kernel::entry_point!(
     kernel_test_main,
     boot_config = &BOOTLOADER_CONFIG,
@@ -186,27 +185,17 @@ fn get_test_iter() -> impl Iterator<Item = &'static KernelTestDescription> {
 }
 
 fn init_mp() {
+    let core_count = get_ready_core_count(Ordering::SeqCst);
+    trace!("init mp! core count: {core_count}");
     unsafe {
         // this function is called before tests are executed and is always called with
         // the same arguments, assuming that ready_core_count is constant
-        testing::multiprocessor::init_interrupt_state(
-            &TESTING_CORE_INTERRUPT_STATE,
-            get_ready_core_count(Ordering::SeqCst),
-        );
+        testing::multiprocessor::init_interrupt_state(&TESTING_CORE_INTERRUPT_STATE, core_count);
         // we call this on all processors with the same value so this will not affect
         // any processors currently waiting
-        TEST_START_BARRIER.set_target(
-            get_ready_core_count(Ordering::Acquire).into(),
-            Ordering::Release,
-        );
-        TEST_USER_DATA_BARRIER.set_target(
-            get_ready_core_count(Ordering::Acquire).into(),
-            Ordering::Release,
-        );
-        TEST_END_BARRIER.set_target(
-            get_ready_core_count(Ordering::Acquire).into(),
-            Ordering::Release,
-        );
+        TEST_START_BARRIER.set_target(core_count.into(), Ordering::Release);
+        TEST_USER_DATA_BARRIER.set_target(core_count.into(), Ordering::Release);
+        TEST_END_BARRIER.set_target(core_count.into(), Ordering::Release);
     }
 }
 

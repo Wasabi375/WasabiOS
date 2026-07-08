@@ -58,6 +58,8 @@ pub unsafe fn init_interrupt_state(
         Err(guard_ptr) => guard_ptr as *const _,
     };
 
+    // if above succeded guard_ptr is null and we skip the loop.
+    // Otherwise we wait until guard_ptr no longer points to the dummy
     while core::ptr::eq(guard_ptr, dummy_ptr) {
         spin_loop();
         guard_ptr = INTERRUPT_STATE_GUARD_PTR.load(Ordering::Relaxed) as *const _;

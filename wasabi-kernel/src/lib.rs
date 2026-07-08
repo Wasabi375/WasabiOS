@@ -101,7 +101,11 @@ pub unsafe fn enter_kernel_main() -> ! {
     while KERNEL_MAIN_BARRIER.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
         spin_loop();
         if time_since_tsc(spin_start) > Duration::new_seconds(5) && !warn_send {
-            warn!("waiting for all cores to reach kernel_main");
+            warn!(
+                "waiting for all cores to reach kernel_main. {}/{}",
+                KERNEL_MAIN_BARRIER.load(Ordering::SeqCst),
+                get_ready_core_count(Ordering::SeqCst),
+            );
             warn_send = true;
         }
         if time_since_tsc(spin_start) > Duration::new_seconds(30) {
