@@ -59,8 +59,6 @@ pub unsafe fn check_cpuid_usable() {
     //      if not this will cause a invalid opcode exception (#UD)
     unsafe {
         rflags::write(rflags);
-        // rflags.toggle(RFlags::ID);
-        // rflags::write(rflags);
     }
 
     // test for genuine intel cpu

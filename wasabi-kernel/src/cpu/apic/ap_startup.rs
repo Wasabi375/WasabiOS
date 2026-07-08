@@ -60,9 +60,9 @@ mod bsp_ctrl_regs {
     pub fn store_bsp_regs() {
         trace!("storing bsp ctrl regs");
         assert!(locals!().is_bsp());
-        BSP_CR0.store(Cr0::read_raw(), Ordering::Release);
-        BSP_CR4.store(Cr4::read_raw(), Ordering::Release);
-        BSP_EFER.store(Efer::read_raw(), Ordering::Release);
+        BSP_CR0.store(Cr0::read_raw(), Ordering::SeqCst);
+        BSP_CR4.store(Cr4::read_raw(), Ordering::SeqCst);
+        BSP_EFER.store(Efer::read_raw(), Ordering::SeqCst);
         BSP_REGS_STORED.store(true, Ordering::SeqCst);
         trace!("bsp cr0: {:?}", Cr0::read());
         trace!("bsp cr4: {:?}", Cr0::read());
@@ -82,9 +82,9 @@ mod bsp_ctrl_regs {
         //  assuming they are not stale.
         unsafe {
             assert!(BSP_REGS_STORED.load(Ordering::SeqCst));
-            Cr0::write_raw(BSP_CR0.load(Ordering::Acquire));
-            Cr4::write_raw(BSP_CR4.load(Ordering::Acquire));
-            Efer::write_raw(BSP_EFER.load(Ordering::Acquire));
+            Cr0::write_raw(BSP_CR0.load(Ordering::SeqCst));
+            Cr4::write_raw(BSP_CR4.load(Ordering::SeqCst));
+            Efer::write_raw(BSP_EFER.load(Ordering::SeqCst));
         }
     }
 }
@@ -170,9 +170,6 @@ pub fn reserve_pages(allocator: &mut PageAllocator) {
 // TODO should this be unsafe. Thechincally this could lead to UB if we start this
 // from within an interrupt while this is already running, but not done.
 pub fn ap_startup() {
-    // FIXME there is a race condition somewhere
-    // if logging is disabled (warn or higher) only AP1 will finish and BSP and AP2, AP3, etc
-    // will deadlock
     info!("Starting APs");
     debug!("ap trampoline size: {}", TRAMPOLINE_CODE.len());
 
@@ -222,6 +219,9 @@ pub fn ap_startup() {
             continue;
         } else {
             if time_since_tsc(timer) > WAIT_FOR_START_TIMEOUT {
+                warn!(
+                    "{WAIT_FOR_START_TIMEOUT} ellapsed while waiting for other cores. Continue with startup..."
+                );
                 // assume all cores are started
                 break;
             } else {
@@ -373,6 +373,7 @@ impl Drop for ApStack {
 
 #[allow(unused)]
 unsafe extern "C" fn ap_entry(stack_end: u64) -> ! {
+    #[inline(always)]
     fn find_stack(stack_end: VirtAddr) -> Pages<Size4KiB> {
         let page_after_last = stack_end.align_up(Size4KiB::SIZE);
         let page_after_last = Page::<Size4KiB>::from_start_address(page_after_last)

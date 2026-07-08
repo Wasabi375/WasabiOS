@@ -224,7 +224,7 @@ impl<'a> FrameAllocator<'a> {
         })
     }
 
-    /// allocate a new frame but do not recore the allocation in stats
+    /// allocate a new frame but do not record the allocation in stats
     ///
     /// We do this, because we don't want page table frame allocations to
     /// be recorded

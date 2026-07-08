@@ -209,7 +209,6 @@ impl CoreStatics {
             // to override some specific data to move to a new self_ptr
             ..boot_locals
         });
-
         core_statics.self_ptr = NonNull::from(core_statics.as_mut());
 
         core_statics
@@ -361,7 +360,7 @@ pub unsafe fn core_boot() -> CoreId {
         cpu::disable_interrupts();
     }
 
-    let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::AcqRel).into();
+    let core_id: CoreId = CORE_ID_COUNTER.fetch_add(1, Ordering::SeqCst).into();
 
     // This is critical for the safe access to boot_core_locals
     while BOOT_LOCK.load(Ordering::SeqCst) != core_id.0 {
@@ -372,12 +371,12 @@ pub unsafe fn core_boot() -> CoreId {
     // to access this, which is ensured by the BOOT_LOCK
     let boot_core_locals = unsafe { &mut *addr_of_mut!(BOOT_CORE_LOCALS) };
 
-    cpu::set_gs_base(boot_core_locals as *const CoreStatics as u64);
-
     // setup locals region for boot of core
     boot_core_locals.core_id = core_id;
     boot_core_locals.self_ptr =
         NonNull::new(boot_core_locals).expect("Core locals should never be at ptr 0");
+
+    cpu::set_gs_base(boot_core_locals as *const CoreStatics as u64);
 
     assert_eq!(boot_core_locals.interrupt_count.count(), 0);
     assert_eq!(boot_core_locals.exception_count.count(), 0);

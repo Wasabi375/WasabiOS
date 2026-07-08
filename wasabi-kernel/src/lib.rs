@@ -91,10 +91,11 @@ pub fn in_kernel_main() -> bool {
 ///
 /// the processor must be in a valid state that does not randomly cause UB
 pub unsafe fn enter_kernel_main() -> ! {
+    trace!("enter kernel main ...");
     KERNEL_MAIN_BARRIER.fetch_add(1, Ordering::SeqCst);
     let spin_start = timestamp_now_tsc();
     let mut warn_send = false;
-    while KERNEL_MAIN_BARRIER.load(Ordering::SeqCst) != get_ready_core_count(Ordering::SeqCst) {
+    while KERNEL_MAIN_BARRIER.load(Ordering::SeqCst) < get_ready_core_count(Ordering::SeqCst) {
         spin_loop();
         if time_since_tsc(spin_start) > Duration::new_seconds(5) && !warn_send {
             warn!(
@@ -108,6 +109,10 @@ pub unsafe fn enter_kernel_main() -> ! {
             panic!("cancel waiting fo rall cores to reach kernel_main");
         }
     }
+    assert_eq!(
+        KERNEL_MAIN_BARRIER.load(Ordering::Acquire),
+        get_ready_core_count(Ordering::Acquire)
+    );
     if locals!().is_bsp() {
         info!("all cores reached kernel_main!");
     }
