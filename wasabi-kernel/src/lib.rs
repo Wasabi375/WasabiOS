@@ -6,15 +6,11 @@
     abi_x86_interrupt,
     allocator_api,
     ascii_char,
-    box_into_inner,
     const_convert,
     const_trait_impl,
-    debug_closure_helpers,
-    extern_types,
     maybe_uninit_array_assume_init,
     never_type,
     pointer_is_aligned_to,
-    ptr_alignment_type,
     ptr_metadata,
     stmt_expr_attributes
 )]

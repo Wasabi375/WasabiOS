@@ -379,7 +379,7 @@
             download_url: "https://github.com/rust-osdev/ovmf-prebuilt/releases/download/edk2-stable202605-r1/edk2-stable202605-r1-bin.tar.xz",
         ),
         memory: "4G",
-        processor_count: 1,
+        processor_count: 8,
         serial: [
             "stdio",
         ],

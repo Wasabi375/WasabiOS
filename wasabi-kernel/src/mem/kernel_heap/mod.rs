@@ -114,12 +114,7 @@ pub fn init() {
         early_heap::freed(),
         early_heap::freed() as f32 / early_heap::allocated() as f32
     );
-    if early_heap::used() > 0 {
-        warn!(
-            "Early heap used {} bytes. Ensure this was intentional and update this check",
-            early_heap::used()
-        );
-    }
+    early_heap::check_usage();
 
     #[cfg(feature = "mem-stats")]
     KernelHeap::init_stats(KernelHeap::get(), HeapStats::default());

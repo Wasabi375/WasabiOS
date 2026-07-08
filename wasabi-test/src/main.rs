@@ -85,7 +85,6 @@
 #![no_main]
 #![warn(missing_docs, rustdoc::missing_crate_level_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
-#![feature(stmt_expr_attributes)]
 
 #[allow(unused_imports)]
 #[macro_use]
@@ -137,7 +136,7 @@ const BOOTLOADER_CONFIG: bootloader_api::BootloaderConfig = {
     let config = bootloader_api::BootloaderConfig::new_default();
     bootloader_config_common(config)
 };
-const KERNEL_CONFIG: KernelConfig = KernelConfig { start_aps: false };
+const KERNEL_CONFIG: KernelConfig = KernelConfig { start_aps: true };
 wasabi_kernel::entry_point!(
     kernel_test_main,
     boot_config = &BOOTLOADER_CONFIG,
@@ -165,12 +164,11 @@ fn wait_for_test_ready_handshake(serial: &mut SerialPort) {
 }
 
 static TEST_START_BARRIER: DataBarrier<(KernelTestDescription, bool)> =
-    DataBarrier::new(u32::max_value()).with_target_ordering(Ordering::Acquire);
+    DataBarrier::new(u32::MAX).with_target_ordering(Ordering::Acquire);
 static TEST_USER_DATA_BARRIER: DataBarrier<Box<dyn Any + Send>> =
-    DataBarrier::new(u32::max_value()).with_target_ordering(Ordering::Acquire);
+    DataBarrier::new(u32::MAX).with_target_ordering(Ordering::Acquire);
 static TEST_MP_SUCCESS: AtomicBool = AtomicBool::new(true);
-static TEST_END_BARRIER: Barrier =
-    Barrier::new(u32::max_value()).with_target_ordering(Ordering::Acquire);
+static TEST_END_BARRIER: Barrier = Barrier::new(u32::MAX).with_target_ordering(Ordering::Acquire);
 static TESTING_CORE_INTERRUPT_STATE: CoreInterruptState = CoreInterruptState;
 
 fn get_test_iter() -> impl Iterator<Item = &'static KernelTestDescription> {
