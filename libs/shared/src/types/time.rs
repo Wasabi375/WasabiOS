@@ -237,7 +237,7 @@ impl Duration {
     }
 
     /// get's the duration u64 in it's current scale.
-    /// use `to_micors().as_u64()` to get a specific scale.
+    /// use `to_micros().as_u64()` to get a specific scale.
     #[inline]
     pub const fn as_u64(&self) -> u64 {
         match self {
@@ -330,6 +330,8 @@ impl Display for Duration {
         if self.as_u64() == 0 {
             return f.write_fmt(format_args!("{self:?}"));
         }
+
+        // TODO: left trim all "0"s
 
         let mut scaled = self.as_u64() * self.multiplier();
 

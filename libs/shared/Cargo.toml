@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default= []
 no-unicode-log = []
+log-locking = []
 
 [dependencies]
 derive-where.workspace = true

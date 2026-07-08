@@ -324,6 +324,13 @@ pub struct UnsafeTicketLock<I> {
     pub preemtable: bool,
     /// phantom access to the cores interrupt state
     _interrupt_state: PhantomData<I>,
+
+    /// set if it is save to call log! from within the lock
+    ///
+    /// In case a lock is used during logging this will lead to deadlocks
+    /// if set to true.
+    #[cfg(feature = "log-locking")]
+    can_log: bool,
 }
 
 unsafe impl<I: InterruptState> Send for UnsafeTicketLock<I> {}
@@ -345,6 +352,8 @@ impl<I> UnsafeTicketLock<I> {
             owner: AtomicU16::new(!0),
             preemtable: true,
             _interrupt_state: PhantomData,
+            #[cfg(feature = "log-locking")]
+            can_log: false,
         }
     }
 
@@ -360,6 +369,8 @@ impl<I> UnsafeTicketLock<I> {
             owner: AtomicU16::new(!0),
             preemtable: false,
             _interrupt_state: PhantomData,
+            #[cfg(feature = "log-locking")]
+            can_log: false,
         }
     }
 
@@ -376,6 +387,31 @@ impl<I> UnsafeTicketLock<I> {
             writer,
             "[UnsafeTicketLock(c: {current}, n: {next}, o: {owner}, s: {shattered})]"
         );
+    }
+
+    /// Enables logging for this lock.
+    ///
+    /// Calling this might lead to deadlocks if the lock is used during calls to `log!`.
+    #[cfg(feature = "log-locking")]
+    pub const fn with_logging(mut self) -> Self {
+        self.can_log = true;
+        self
+    }
+
+    /// Enables logging for this lock.
+    ///
+    /// Calling this might lead to deadlocks if the lock is used during calls to `log!`.
+    #[cfg(feature = "log-locking")]
+    pub const fn with_logging_mut(&mut self) {
+        self.can_log = true;
+    }
+
+    /// An identity used to describe the lock.
+    ///
+    /// This stays consistent as long as the lock is not moved
+    #[cfg(feature = "log-locking")]
+    fn identity(&self) -> usize {
+        self as *const Self as *const u8 as usize
     }
 }
 
@@ -398,15 +434,37 @@ impl<I: InterruptState> UnsafeTicketLock<I> {
 
         let ticket = self.next_ticket.fetch_add(1, Ordering::SeqCst);
 
+        #[cfg(feature = "log-locking")]
+        let mut logged_attempt = false;
+
         while self.current_ticket.load(Ordering::SeqCst) != ticket {
             let owner = self.owner.load(Ordering::Acquire);
             if owner != !0 && owner == I::s_core_id().0 as u16 {
                 panic!("Deadlock detected. Lock already taken by this core");
             }
 
+            #[cfg(feature = "log-locking")]
+            if self.can_log {
+                if !logged_attempt {
+                    logged_attempt = true;
+                    log::trace!(
+                        "Waiting for log {:#x} with ticket {ticket}",
+                        self.identity()
+                    );
+                }
+            }
+
             while self.current_ticket.load(Ordering::Relaxed) != ticket {
                 spin_loop();
             }
+        }
+
+        #[cfg(feature = "log-locking")]
+        if self.can_log {
+            log::trace!(
+                "Acquired ticket lock {:#x} with ticket {ticket}",
+                self.identity()
+            );
         }
 
         self.owner.store(I::s_core_id().0 as u16, Ordering::Release);
@@ -425,6 +483,15 @@ impl<I: InterruptState> UnsafeTicketLock<I> {
             if self.is_unlocked() && !self.shattered.load(Ordering::Acquire) {
                 panic!("Lock is already unlocked");
             }
+        }
+
+        #[cfg(feature = "log-locking")]
+        if self.can_log {
+            let next_ticket = self.current_ticket.load(Ordering::SeqCst) + 1;
+            log::trace!(
+                "Released ticket lock {:#x}. Next ticket {next_ticket}",
+                self.identity()
+            );
         }
 
         self.owner.store(!0, Ordering::Release);
@@ -506,6 +573,23 @@ impl<T, I> TicketLock<T, I> {
     /// All internals are accessed with relaxed loads
     pub fn spew_state<W: core::fmt::Write>(&self, writer: &mut W) {
         self.lock.spew_state(writer)
+    }
+
+    /// Enables logging for this lock.
+    ///
+    /// Calling this might lead to deadlocks if the lock is used during calls to `log!`.
+    #[cfg(feature = "log-locking")]
+    pub const fn with_logging(mut self) -> Self {
+        self.lock = self.lock.with_logging();
+        self
+    }
+
+    /// Enables logging for this lock.
+    ///
+    /// Calling this might lead to deadlocks if the lock is used during calls to `log!`.
+    #[cfg(feature = "log-locking")]
+    pub const fn with_logging_mut(&mut self) {
+        self.lock.with_logging_mut();
     }
 }
 
@@ -804,6 +888,23 @@ macro_rules! unwrapLockWrapper {
                     unsafe {
                         UnwrapLock::new($lock_type::new_non_preemtable(MaybeUninit::uninit()))
                     }
+                }
+
+                /// Enables logging for this lock.
+                ///
+                /// Calling this might lead to deadlocks if the lock is used during calls to `log!`.
+                #[cfg(feature = "log-locking")]
+                pub const fn with_logging(mut self) -> Self {
+                     self.lockcell.with_logging_mut();
+                     self
+                }
+
+                /// Enables logging for this lock.
+                ///
+                /// Calling this might lead to deadlocks if the lock is used during calls to `log!`.
+                #[cfg(feature = "log-locking")]
+                pub const fn with_logging_mut(&mut self) {
+                     self.lockcell.with_logging_mut();
                 }
             }
         }
