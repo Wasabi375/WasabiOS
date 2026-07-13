@@ -135,7 +135,11 @@ fn reset_transient(args: ForceResetOptions) {
 
 fn info(args: InfoOptions) {
     let fs = WasabiFuse::<FsReadOnly>::open(&args.image_file).unwrap();
-    info!("Header: {:?}", fs.fs().header_data());
+    info!("Header: {:#?}", fs.fs().header_data());
+    info!(
+        "Free block count: {}",
+        fs.fs().block_allocator.free_block_count()
+    );
 }
 
 fn create(mut args: CreateOptions) {

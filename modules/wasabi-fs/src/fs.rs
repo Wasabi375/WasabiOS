@@ -192,6 +192,7 @@ pub enum FsReadOnly {}
 pub enum FsReadWrite {}
 impl FsWrite for FsReadWrite {}
 
+// TODO why are there pub fields in here?
 pub struct FileSystem<D, S, I> {
     pub device: D,
     max_block_count: u64,
@@ -221,6 +222,8 @@ pub struct HeaderData {
 
     pub next_file_id: FileId,
     pub dirty: bool,
+
+    pub block_count: u64,
 
     status: FsStatus,
     mount_count: u8,
@@ -433,6 +436,7 @@ where
                 dirty: true,
                 mount_count: 1,
                 free_blocks: None,
+                block_count: max_block_count,
             },
 
             mem_tree,
@@ -592,6 +596,7 @@ where
             status: FsStatus::Uninitialized,
             mount_count: 0,
             free_blocks: Some(header.free_blocks),
+            block_count: fs.max_block_count,
         };
 
         let new_header = if force_open {

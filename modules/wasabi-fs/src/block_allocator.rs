@@ -406,6 +406,14 @@ impl BlockAllocator {
 
         Ok(())
     }
+
+    /// Get the total number of free blocks
+    pub fn free_block_count(&self) -> u64 {
+        self.free
+            .iter()
+            .map(|group| group.count.to_native().get())
+            .sum()
+    }
 }
 
 // TODO merge with mem_structs::BlockList?
