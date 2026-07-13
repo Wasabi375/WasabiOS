@@ -301,7 +301,7 @@ impl BlockAllocator {
                 return Err(FsError::BlockDeviceFull(count));
             }
 
-            if remaining_size > group_size {
+            if group_size > remaining_size {
                 group_size >>= 1;
                 continue;
             }
