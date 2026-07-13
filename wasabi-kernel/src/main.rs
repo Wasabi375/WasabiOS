@@ -64,17 +64,17 @@ fn context_switch_experiment() {
     let task_system = &locals!().task_system;
     // // Safety: tasks do not share stack references
     unsafe {
-        let foo = 5u64;
-        let bar = 5u64;
-        task_system
-            .launch_task(TaskDefinition::new(
-                move || info!("foobar: {}", foo + bar),
-                "foobar",
-            ))
-            .unwrap();
-        task_system
-            .launch_task(TaskDefinition::new(count_task, "count"))
-            .unwrap();
+        // let foo = 5u64;
+        // let bar = 5u64;
+        // task_system
+        //     .launch_task(TaskDefinition::new(
+        //         move || info!("foobar: {}", foo + bar),
+        //         "foobar",
+        //     ))
+        //     .unwrap();
+        // task_system
+        //     .launch_task(TaskDefinition::new(count_task, "count"))
+        //     .unwrap();
 
         for i in 0..25 {
             task_system

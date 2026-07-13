@@ -12,6 +12,7 @@ use crate::{config::Config, config_id_type};
 
 config_id_type!(KernelId, KernelIdT);
 config_id_type!(BuildTarget, BuildTargetT);
+config_id_type!(KModuleId, KModuleIdT);
 
 impl BuildTarget {
     pub const BOOTLOADER_X86: &str = "BOOTLOADER-X86_64";
@@ -20,6 +21,12 @@ impl BuildTarget {
 
 impl From<KernelId> for BuildTarget {
     fn from(value: KernelId) -> Self {
+        value.into_inner().into()
+    }
+}
+
+impl From<KModuleId> for BuildTarget {
+    fn from(value: KModuleId) -> Self {
         value.into_inner().into()
     }
 }
@@ -35,6 +42,7 @@ pub struct GeneralBuild {
 #[derive(Debug, Clone)]
 pub enum BuildConfig {
     Kernel(Arc<KernelBuild>),
+    Module(Arc<ModuleBuild>),
     /// Hardcoded BuildTargets that require special build logic, e.g bootloader
     Special(BuildTarget),
 }
@@ -43,6 +51,7 @@ impl BuildConfig {
     pub fn id(&self) -> BuildTarget {
         match self {
             BuildConfig::Kernel(kernel_build) => kernel_build.id.clone().into(),
+            BuildConfig::Module(module) => module.id.clone().into(),
             BuildConfig::Special(id) => id.clone(),
         }
     }
@@ -50,7 +59,10 @@ impl BuildConfig {
     pub fn out_dir(&self, base_dir: impl AsRef<Path>, general_build: &GeneralBuild) -> PathBuf {
         match self {
             BuildConfig::Kernel(kernel_build) => {
-                crate::build::out_dir_for(base_dir, &kernel_build, general_build)
+                crate::build::out_dir_for(base_dir, &kernel_build.profile, general_build)
+            }
+            BuildConfig::Module(module) => {
+                crate::build::out_dir_for(base_dir, &module.profile, general_build)
             }
             BuildConfig::Special(id) => match id.as_str() {
                 BuildTarget::BOOTLOADER_X86 => crate::build::bootloader_out_dir(base_dir, id),
@@ -69,8 +81,9 @@ impl BuildConfig {
     pub fn artifact_name(&self, artifact: BuildArtifact) -> String {
         match self {
             BuildConfig::Kernel(kernel_build) => {
-                crate::build::artifact_path(&kernel_build, artifact)
+                crate::build::kernel_artifact_path(&kernel_build, artifact)
             }
+            BuildConfig::Module(module) => crate::build::module_artifact_path(&module, artifact),
             BuildConfig::Special(id) => match id.as_str() {
                 BuildTarget::BOOTLOADER_X86 => crate::build::bootloader_artifact_path(artifact, id),
                 _ => panic!("unknown special id: {id}"),
@@ -98,6 +111,7 @@ pub struct KernelBuild {
     #[congen(default = String::new())]
     pub package_name: String,
 
+    #[congen(rust_default)]
     pub features: Vec<String>,
 
     #[congen(default = false)]
@@ -106,6 +120,35 @@ pub struct KernelBuild {
     #[congen(default = false)]
     pub all_features: bool,
 
+    #[congen(default = "dev".into())]
+    pub profile: String,
+
+    #[congen(default = false)]
+    pub output_asm: bool,
+}
+
+#[derive(Debug, Clone, Configuration, Serialize, Deserialize)]
+#[congen(debug, clone)]
+pub struct ModuleBuild {
+    #[congen(rust_default)]
+    pub id: KModuleId,
+
+    #[congen(rust_default)]
+    pub crate_path: String,
+
+    #[congen(default = String::new())]
+    pub package_name: String,
+
+    #[congen(rust_default)]
+    pub features: Vec<String>,
+
+    #[congen(default = false)]
+    pub no_default_feature: bool,
+
+    #[congen(default = false)]
+    pub all_features: bool,
+
+    #[congen(default = "dev".into())]
     pub profile: String,
 
     #[congen(default = false)]
@@ -156,9 +199,14 @@ impl Into<clap::builder::OsStr> for Arch {
 }
 
 impl Arch {
-    pub fn tripple_str(&self) -> &'static OsStr {
+    pub fn kernel_tripple_str(&self) -> &'static OsStr {
         match self {
             Arch::X86_64 => OsStr::new("x86_64-unknown-none"),
+        }
+    }
+    pub fn module_tripple_str(&self) -> &'static OsStr {
+        match self {
+            Arch::X86_64 => OsStr::new("modules/x86_64-unknown-kmodule.json"),
         }
     }
     pub fn short_name(&self) -> &'static str {

@@ -61,6 +61,7 @@ async fn main() -> Result<()> {
 
     SimpleLogger::new()
         .with_level(log::LevelFilter::Info)
+        // .with_module_level("wfs", log::LevelFilter::Trace)
         .env()
         .init()
         .unwrap();

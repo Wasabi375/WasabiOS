@@ -67,12 +67,14 @@ pub struct FileSystem {
     /// Size of the filesytem
     ///
     /// not all file system types respect this.
+    #[congen(default = "1GB".parse().unwrap())]
     pub size: SizeBytes,
 
     /// Data directory that is copied into the fs
     #[congen(rust_default)]
     pub static_input: Option<String>,
 
+    #[congen(rust_default)]
     pub generated: Vec<GeneratedFsInputConfig>,
 }
 

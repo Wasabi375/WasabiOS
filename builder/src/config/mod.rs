@@ -1,9 +1,4 @@
-use std::{
-    collections::{HashMap},
-    fs::File,
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
 
 use anyhow::{Context, Result, bail, ensure};
 use congen::Configuration;
@@ -13,11 +8,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     build::{
-        BootloaderBuild, BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild,
-        KernelId, SpecialBuilds,
-    }, file_system::{
+        BootloaderBuild, BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KModuleId,
+        KernelBuild, KernelId, ModuleBuild, SpecialBuilds,
+    },
+    file_system::{
         DiskImage, FileSystem, FsId, FsType, GeneratedFsInputConfig, ImageId, Partition,
-    }, general::SizeBytes, qemu::{Ovmf, QemuConfig, QemuTest}, tests::{Test, TestGroup, TestId, TestSystem},
+    },
+    general::SizeBytes,
+    qemu::{Ovmf, QemuConfig, QemuTest},
+    tests::{Test, TestGroup, TestId, TestSystem},
 };
 
 pub mod build;
@@ -38,6 +37,8 @@ pub struct Config {
     pub special_builds: SpecialBuilds,
 
     pub kernels: Vec<Arc<KernelBuild>>,
+
+    pub modules: Vec<Arc<ModuleBuild>>,
 
     pub file_systems: Vec<Arc<FileSystem>>,
 
@@ -64,6 +65,9 @@ pub struct VerifiedConfig {
     pub build_targets: HashMap<BuildTarget, Arc<BuildConfig>>,
     #[expect(unused)]
     pub kernels: HashMap<KernelId, Arc<KernelBuild>>,
+
+    #[expect(unused)]
+    pub modules: HashMap<KModuleId, Arc<ModuleBuild>>,
 
     pub images: HashMap<ImageId, Arc<DiskImage>>,
 
@@ -103,7 +107,6 @@ impl Config {
 
     pub fn verify(self) -> Result<VerifiedConfig> {
         let mut kernels = HashMap::with_capacity(self.kernels.len());
-
         for kernel in self.kernels.iter() {
             if kernels.insert(kernel.id.clone(), kernel.clone()).is_some() {
                 bail!(
@@ -113,14 +116,39 @@ impl Config {
             }
         }
 
-        let mut build_targets = HashMap::with_capacity(kernels.len());
-        build_targets.extend(kernels.iter().map(|(id, kernel)| {
-            (
-                id.clone().into(),
-                BuildConfig::Kernel(kernel.clone()).into(),
-            )
-        }));
-        build_targets.extend(BuildConfig::specials());
+        let mut modules = HashMap::with_capacity(self.modules.len());
+        for module in self.modules.iter() {
+            if modules.insert(module.id.clone(), module.clone()).is_some() {
+                bail!(
+                    "kernel module ids must be unique. Found multiple module definitions using {}",
+                    module.id
+                );
+            }
+        }
+
+        let mut build_targets = HashMap::new();
+        extend_no_replace(
+            &mut build_targets,
+            kernels.iter().map(|(id, kernel)| {
+                (
+                    id.clone().into(),
+                    BuildConfig::Kernel(kernel.clone()).into(),
+                )
+            }),
+        )
+        .context("kernel build target")?;
+        extend_no_replace(
+            &mut build_targets,
+            modules.iter().map(|(id, module)| {
+                (
+                    id.clone().into(),
+                    BuildConfig::Module(module.clone()).into(),
+                )
+            }),
+        )
+        .context("kernel module build target")?;
+        extend_no_replace(&mut build_targets, BuildConfig::specials())
+            .context("special build target")?;
 
         for target in &self.default_build_targets {
             ensure!(
@@ -212,12 +240,30 @@ impl Config {
             config: self,
             kernels,
             build_targets,
+            modules,
             file_systems,
             images,
             tests,
-            test_systems
+            test_systems,
         })
     }
+}
+
+fn extend_no_replace<K, V>(
+    map: &mut HashMap<K, V>,
+    iter: impl IntoIterator<Item = (K, V)>,
+) -> Result<()>
+where
+    K: std::fmt::Display + Eq + std::hash::Hash,
+{
+    for (key, value) in iter {
+        if map.contains_key(&key) {
+            bail!("key {key} already exists");
+        }
+        map.insert(key, value);
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Configuration, Serialize, Deserialize)]
@@ -298,6 +344,8 @@ fn initial_config() -> Config {
             }
             .into(),
         ],
+        modules: vec![
+        ],
         file_systems: vec![
             FileSystem {
                 id: "wasabi-kernel".into(),
@@ -365,7 +413,7 @@ fn initial_config() -> Config {
             }.into()
         ],
         tests: vec![
-            TestSystem { 
+            TestSystem {
                 id: "histogram".into(),
                 cargo: Some("histogram".into()),
                 kernel: None,
@@ -374,7 +422,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "staticvec".into(),
                 cargo: Some("staticvec".into()),
                 kernel: None,
@@ -383,7 +431,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "shared".into(),
                 cargo: Some("shared".into()),
                 kernel: None,
@@ -392,7 +440,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "host-shared".into(),
                 cargo: Some("host-shared".into()),
                 kernel: None,
@@ -401,7 +449,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "host-wfs".into(),
                 cargo: Some("host-wfs".into()),
                 kernel: None,
@@ -410,7 +458,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "block-device".into(),
                 cargo: Some("block-device".into()),
                 kernel: None,
@@ -419,7 +467,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "wfs".into(),
                 cargo: Some("wfs".into()),
                 kernel: None,
@@ -428,7 +476,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "testing".into(),
                 cargo: Some("testing".into()),
                 kernel: None,
@@ -437,7 +485,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "testing-tests".into(),
                 cargo: Some("testing".into()),
                 kernel: None,
@@ -446,7 +494,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "gpt".into(),
                 cargo: Some("gpt".into()),
                 kernel: None,
@@ -455,7 +503,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "interrupt-fn-builder".into(),
                 cargo: Some("interrupt-fn-builder".into()),
                 kernel: None,
@@ -464,7 +512,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "logger".into(),
                 cargo: Some("logger".into()),
                 kernel: None,
@@ -473,7 +521,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "fuse".into(),
                 cargo: Some("fuse".into()),
                 kernel: None,
@@ -482,7 +530,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "wasabi-test".into(),
                 cargo: None,
                 kernel: Some("wasabi-test".into()),
@@ -491,7 +539,7 @@ fn initial_config() -> Config {
                 keep_going: false,
                 fast: false,
             }.into(),
-            TestSystem { 
+            TestSystem {
                 id: "builder".into(),
                 cargo: Some("builder".into()),
                 kernel: None,
@@ -554,10 +602,8 @@ fn initial_config() -> Config {
 mod test {
     use crate::config::initial_config;
 
-
     #[test]
     fn verify_init_config() {
         initial_config().verify().unwrap();
     }
-
 }

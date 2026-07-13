@@ -35,6 +35,20 @@
             output_asm: false,
         ),
     ],
+    modules: [
+        (
+            id: (
+                inner: "pi-test",
+            ),
+            crate_path: "pi-test",
+            package_name: "pi_test",
+            features: [],
+            no_default_feature: false,
+            all_features: false,
+            profile: "dev",
+            output_asm: false,
+        ),
+    ],
     file_systems: [
         (
             id: (
@@ -84,6 +98,21 @@
                 ),
             ],
         ),
+        (
+            id: (
+                inner: "main-wfs",
+            ),
+            fs_type: WFS,
+            size: "1 GB",
+            static_input: None,
+            generated: [
+                (
+                    path_in_fs: "pi-test.kmodule",
+                    build: ( inner: "pi-test" ),
+                    artifact: KernelModule,
+                ),
+            ],
+        ),
     ],
     images: [
         (
@@ -98,6 +127,13 @@
                         inner: "wasabi-kernel",
                     ),
                     is_boot: true,
+                    is_read_only: false,
+                ),
+                (
+                    uuid: None,
+                    name: "main-wfs",
+                    fs: ( inner: "main-wfs" ),
+                    is_boot: false,
                     is_read_only: false,
                 ),
             ],

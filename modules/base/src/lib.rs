@@ -13,7 +13,7 @@ extern "C" {
 }
 
 #[stabby::export(canaries)]
-pub extern "C" fn __kmodule_main() {
+pub extern "C" fn __kmodule_main(_main: fn() -> Result<(), u64>) {
     unsafe {
         serial_print("test");
         exit();

@@ -18,7 +18,7 @@ use crate::{
     cargo::get_workspace_manifest,
     config::{
         VerifiedConfig,
-        build::{BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild},
+        build::{BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild, ModuleBuild},
     },
     sync::FutureCache,
 };
@@ -87,7 +87,12 @@ async fn build_from_config(
             BuildConfig::Kernel(kernel_build) => {
                 build_kernel(&*kernel_build, &*config, &out_dir)
                     .await
-                    .with_context(|| format!("build target: {}", kernel_build.id))?;
+                    .with_context(|| format!("build target kernel: {}", kernel_build.id))?;
+            }
+            BuildConfig::Module(module_build) => {
+                build_module(&*module_build, &*config, &out_dir)
+                    .await
+                    .with_context(|| format!("build target module: {}", module_build.id))?;
             }
             BuildConfig::Special(id) => match id.as_str() {
                 BuildTarget::BOOTLOADER_X86 => build_bootloader(&*config)
@@ -129,6 +134,11 @@ pub async fn check(args: CheckArgs, config: VerifiedConfig) -> Result<()> {
                     .await
                     .with_context(|| format!("check kernel: {target}"))?;
             }
+            BuildConfig::Module(module_build) => {
+                check_module(&*module_build, &config.config.general_build)
+                    .await
+                    .with_context(|| format!("check kernel: {target}"))?;
+            }
             BuildConfig::Special(id) => match id.as_str() {
                 BuildTarget::BOOTLOADER_X86 => {
                     // external codebase on crates.io. No need to check anything
@@ -147,7 +157,7 @@ async fn build_kernel(
 ) -> Result<PathBuf> {
     let general_build = &config.config.general_build;
 
-    let kernel_out_dir = out_dir_for(&out_dir, &kernel_config, general_build);
+    let kernel_out_dir = out_dir_for(&out_dir, &kernel_config.profile, general_build);
 
     let elf_path = build_kernel_elf(&kernel_config, &general_build, &kernel_out_dir)
         .await
@@ -155,7 +165,7 @@ async fn build_kernel(
     if kernel_config.output_asm {
         // TODO I think I want to have an override for this flag that I
         // can trigger programatically
-        let asm_out = kernel_out_dir.join(artifact_path(kernel_config, BuildArtifact::Asm));
+        let asm_out = kernel_out_dir.join(kernel_artifact_path(kernel_config, BuildArtifact::Asm));
         emit_asm(&elf_path, &asm_out)
             .await
             .context("dump kernel assembly")?;
@@ -164,25 +174,73 @@ async fn build_kernel(
     Ok(kernel_out_dir)
 }
 
-pub fn out_dir_for(
-    base_dir: impl AsRef<Path>,
-    kernel: &KernelBuild,
-    build: &GeneralBuild,
-) -> PathBuf {
-    base_dir
-        .as_ref()
-        .join(build.architecture.tripple_str())
-        .join(&kernel.profile)
+async fn build_module(
+    module_config: &ModuleBuild,
+    config: &VerifiedConfig,
+    out_dir: &Path,
+) -> Result<PathBuf> {
+    let general_build = &config.config.general_build;
+
+    let module_out_dir = out_dir_for(&out_dir, &module_config.profile, general_build);
+
+    let elf_path = build_module_elf(&module_config, &general_build, &module_out_dir)
+        .await
+        .context("build module elf")?;
+    if module_config.output_asm {
+        // TODO I think I want to have an override for this flag that I
+        // can trigger programatically
+        let asm_out = module_out_dir.join(module_artifact_path(module_config, BuildArtifact::Asm));
+        emit_asm(&elf_path, &asm_out)
+            .await
+            .context("dump module assembly")?;
+    }
+
+    Ok(module_out_dir)
 }
 
-pub fn artifact_path(kernel: &KernelBuild, artifact: BuildArtifact) -> String {
+pub fn out_dir_for(base_dir: impl AsRef<Path>, profile: &str, build: &GeneralBuild) -> PathBuf {
+    base_dir
+        .as_ref()
+        .join(build.architecture.kernel_tripple_str())
+        .join(profile)
+}
+
+pub fn kernel_artifact_path(kernel: &KernelBuild, artifact: BuildArtifact) -> String {
     match artifact {
         BuildArtifact::KernelElf => kernel.package_name.clone(),
         BuildArtifact::Asm => format!("{}.asm", kernel.package_name),
-        BuildArtifact::Lib => format!("{}.rlib", kernel.package_name),
-        BuildArtifact::KernelModule => todo!(),
-        BuildArtifact::Executable => todo!(),
+        BuildArtifact::Lib | BuildArtifact::KernelModule | BuildArtifact::Executable => {
+            panic!("Illegal artifact type for kernel build: {artifact:?}")
+        }
     }
+}
+
+pub fn module_artifact_path(module: &ModuleBuild, artifact: BuildArtifact) -> String {
+    match artifact {
+        BuildArtifact::KernelModule => format!("lib{}.so", module.package_name),
+        BuildArtifact::Asm => format!("{}.asm", module.package_name),
+        BuildArtifact::KernelElf | BuildArtifact::Executable | BuildArtifact::Lib => {
+            panic!("Illegal artifact type for kernel build: {artifact:?}")
+        }
+    }
+}
+
+fn general_cargo(cmd: &str, build_opts: &GeneralBuild, out_dir: Option<&Path>) -> Command {
+    let mut command = Command::new("cargo");
+    command.kill_on_drop(true);
+    command.arg(cmd);
+
+    command.arg("-Z").arg("unstable-options");
+
+    if let Some(jobs) = build_opts.jobs {
+        command.arg("--jobs").arg(&format!("{jobs}"));
+    }
+
+    if let Some(out_dir) = out_dir {
+        command.arg("--artifact-dir").arg(&out_dir);
+    }
+
+    command
 }
 
 async fn build_kernel_elf(
@@ -190,18 +248,14 @@ async fn build_kernel_elf(
     build_opts: &GeneralBuild,
     out_dir: &Path,
 ) -> Result<PathBuf> {
-    let mut cmd = Command::new("cargo");
-    cmd.kill_on_drop(true);
-    cmd.arg("build");
+    let mut cmd = general_cargo("build", build_opts, Some(out_dir));
 
     cmd.arg("-p").arg(&kernel.crate_path);
 
     cmd.arg("--bin").arg(&kernel.package_name);
 
-    cmd.arg("-Z").arg("unstable-options");
-
     cmd.arg("--target")
-        .arg(build_opts.architecture.tripple_str());
+        .arg(build_opts.architecture.kernel_tripple_str());
 
     if kernel.no_default_feature {
         cmd.arg("--no-default-features");
@@ -216,12 +270,6 @@ async fn build_kernel_elf(
     }
 
     cmd.arg("--profile").arg(&kernel.profile);
-
-    if let Some(jobs) = build_opts.jobs {
-        cmd.arg("--jobs").arg(&format!("{jobs}"));
-    }
-
-    cmd.arg("--artifact-dir").arg(&out_dir);
 
     let success = cmd
         .status()
@@ -234,18 +282,14 @@ async fn build_kernel_elf(
 }
 
 async fn check_kernel(kernel: &KernelBuild, build_opts: &GeneralBuild) -> Result<()> {
-    let mut cmd = Command::new("cargo");
-    cmd.kill_on_drop(true);
-    cmd.arg("check");
+    let mut cmd = general_cargo("check", build_opts, None);
 
     cmd.arg("-p").arg(&kernel.crate_path);
 
     cmd.arg("--bin").arg(&kernel.package_name);
 
-    cmd.arg("-Z").arg("unstable-options");
-
     cmd.arg("--target")
-        .arg(build_opts.architecture.tripple_str());
+        .arg(build_opts.architecture.kernel_tripple_str());
 
     if kernel.no_default_feature {
         cmd.arg("--no-default-features");
@@ -261,16 +305,90 @@ async fn check_kernel(kernel: &KernelBuild, build_opts: &GeneralBuild) -> Result
 
     cmd.arg("--profile").arg(&kernel.profile);
 
-    if let Some(jobs) = build_opts.jobs {
-        cmd.arg("--jobs").arg(&format!("{jobs}"));
-    }
-
     let success = cmd
         .status()
         .await
         .context("cargo check execution")?
         .success();
     ensure!(success, "cargo check {:?} failed", kernel.id);
+
+    Ok(())
+}
+
+async fn build_module_elf(
+    module: &ModuleBuild,
+    build_opts: &GeneralBuild,
+    out_dir: &Path,
+) -> Result<PathBuf> {
+    let mut cmd = general_cargo("build", build_opts, Some(out_dir));
+
+    cmd.arg("-Zjson-target-spec");
+    cmd.arg("-Zbuild-std=core,alloc");
+
+    cmd.arg("-p").arg(&module.crate_path);
+
+    cmd.arg("--lib");
+
+    cmd.arg("--target")
+        .arg(build_opts.architecture.module_tripple_str());
+
+    if module.no_default_feature {
+        cmd.arg("--no-default-features");
+    }
+    if module.all_features {
+        cmd.arg("--all-features");
+    } else {
+        for feature in module.features.iter() {
+            cmd.arg("--features");
+            cmd.arg(&feature);
+        }
+    }
+
+    cmd.arg("--profile").arg(&module.profile);
+
+    let success = cmd
+        .status()
+        .await
+        .context("cargo build execution")?
+        .success();
+    ensure!(success, "cargo build {} failed", module.id);
+
+    Ok(Path::join(&out_dir, &module.package_name))
+}
+
+async fn check_module(module: &ModuleBuild, build_opts: &GeneralBuild) -> Result<()> {
+    let mut cmd = general_cargo("check", build_opts, None);
+
+    cmd.arg("-Zjson-target-spec");
+    cmd.arg("-Zbuild-std=core,alloc");
+
+    cmd.arg("-p").arg(&module.crate_path);
+
+    cmd.arg("--lib");
+
+    cmd.arg("--target")
+        .arg(build_opts.architecture.module_tripple_str());
+
+    if module.no_default_feature {
+        cmd.arg("--no-default-features");
+    }
+    if module.all_features {
+        cmd.arg("--all-features");
+    } else {
+        for feature in module.features.iter() {
+            cmd.arg("--features");
+            cmd.arg(&feature);
+        }
+    }
+
+    cmd.arg("--profile").arg(&module.profile);
+
+    let success = cmd
+        .status()
+        .await
+        .context("cargo check execution")?
+        .success();
+    ensure!(success, "cargo check {:?} failed", module.id);
 
     Ok(())
 }

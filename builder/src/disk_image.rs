@@ -41,14 +41,24 @@ pub async fn build_from_args(args: BuildImageArgs, config: VerifiedConfig) -> Re
 pub async fn build_image(image: Arc<DiskImage>, config: Arc<VerifiedConfig>) -> Result<()> {
     let mut build_fs_set = JoinSet::new();
     for partition in image.partitions.iter() {
+        let partition_name = partition.name.clone();
+        let fs_id = partition.fs.clone();
         let fs = config
             .file_systems
             .get(&partition.fs)
-            .with_context(|| format!("could not find fs({}) for partiotion", &partition.fs))?
+            .with_context(|| {
+                format!(
+                    "could not find fs({}) for partiotion {}",
+                    fs_id, partition_name
+                )
+            })?
             .clone();
         let config = config.clone();
-        build_fs_set
-            .spawn(async move { build_fs(fs, config).await.context("build fs for partition") });
+        build_fs_set.spawn(async move {
+            build_fs(fs, config)
+                .await
+                .with_context(|| format!("build {} for partition {}", fs_id, partition_name))
+        });
     }
     while let Some(success) = build_fs_set.join_next().await {
         success.context("join tokio")??

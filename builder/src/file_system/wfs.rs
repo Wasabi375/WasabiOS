@@ -29,8 +29,12 @@ pub async fn build_wfs_fs(
 ) -> Result<()> {
     let image_path = out_path(&fs_config, config);
     let block_count = blocks_required_for!(fs_config.size.bytes());
-    let device = FileDevice::create(&image_path, block_count)
-        .context("failed to create image file for fs")?;
+    let device = FileDevice::create(&image_path, block_count).with_context(|| {
+        format!(
+            "failed to create image file for fs at {}",
+            image_path.display()
+        )
+    })?;
 
     let name = fs_config.id.as_ref().to_owned();
     let uuid = Uuid::new_v4();
@@ -88,9 +92,9 @@ async fn copy_file(fs: &mut WFS, source: FileSource) -> Result<()> {
         .create_file(file_name, dir_id)
         .context("failed to create file in fs")?;
 
-    let mut source = File::open(source.source)
+    let mut source = File::open(&source.source)
         .await
-        .context("failed to open source file")?;
+        .with_context(|| format!("failed to open source file: {}", source.source.display()))?;
 
     const MAX_BUFFER: usize = KiB!(64);
     let mut buffer = alloc_buffer(MAX_BUFFER).context("failed to alloc copy buffer")?;
@@ -136,7 +140,7 @@ where
 
 pub fn out_path(fs: &FileSystem, config: &Config) -> PathBuf {
     let mut dir = out_dir(config);
-    dir.push(format!("{}.wfs", fs.id));
+    dir.push(format!("{}.wfs", fs.id.as_str()));
     dir
 }
 

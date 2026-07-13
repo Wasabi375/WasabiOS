@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, fmt::Display, result::Result as StdResult};
+use std::{ffi::OsStr, fmt::Display, result::Result as StdResult, str::FromStr};
 
 use congen::{
     Configuration,
@@ -138,6 +138,16 @@ impl<'de> Deserialize<'de> for SizeBytes {
         }
 
         deserializer.deserialize_str(SizeVisitor)
+    }
+}
+
+impl FromStr for SizeBytes {
+    type Err = parse_size::Error;
+
+    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
+        SizeBytes::parser()
+            .parse_size(s)
+            .map(|bytes| SizeBytes(bytes))
     }
 }
 

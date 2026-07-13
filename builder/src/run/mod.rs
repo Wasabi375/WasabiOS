@@ -186,12 +186,13 @@ pub async fn run_image_with(
 ) -> Result<QemuProcess> {
     let mut pre_run = JoinSet::new();
     {
+        let image_id = image.id.clone();
         let image = image.clone();
         let config = config.clone();
         pre_run.spawn(async move {
             build_image(image, config.clone())
                 .await
-                .context("build disk image")
+                .with_context(|| format!("build disk image: {image_id}"))
         });
     }
     {

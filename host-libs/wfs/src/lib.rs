@@ -1,6 +1,6 @@
 use std::{
     cmp::max,
-    fs::File,
+    fs::{File, create_dir_all},
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
     sync::{Mutex, MutexGuard},
@@ -20,6 +20,10 @@ pub struct FileDevice {
 
 impl FileDevice {
     pub fn create(path: &Path, block_count: u64) -> Result<FileDevice, std::io::Error> {
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent)?;
+        }
+
         let mut file = File::options()
             .read(true)
             .write(true)
@@ -255,12 +259,12 @@ impl BlockDevice for FileDevice {
     {
         assert_eq!(data.len() % BLOCK_SIZE, 0);
 
-        for block in blocks {
+        for group in blocks {
             let to_write = data
-                .split_off(..block.bytes(BLOCK_SIZE) as usize)
+                .split_off(..group.bytes(BLOCK_SIZE) as usize)
                 .expect("data buffer is not long enough for all blocks");
 
-            self.write_blocks_contig(block.start, to_write.into())?;
+            self.write_blocks_contig(group.start, to_write.into())?;
         }
 
         Ok(())
