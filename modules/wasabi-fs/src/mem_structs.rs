@@ -238,6 +238,11 @@ impl BlockList {
     }
 
     /// Iterate over [PartialBlockGroup]s
+    ///
+    /// This skips over `byte_offset` bytes. If `byte_offset` is not a multiple
+    /// of [BLOCK_SIZE] te first block will contain the remaining offset.
+    /// Iterates over `bytes` worth of [Block]s with the last [PartialBlockGroup]
+    /// reproting how many remaining bytes are requested.
     pub fn iter_partial(
         &self,
         byte_offset: u64,
@@ -420,6 +425,13 @@ pub struct PartialBlockGroup {
     pub len: u64,
 }
 
+impl PartialBlockGroup {
+    /// Returns `true` if the partial block group terminates at a [BLOCK_SIZE] alignment
+    pub fn ends_at_block_end(&self) -> bool {
+        (self.offset + self.len) % BLOCK_SIZE as u64 == 0
+    }
+}
+
 impl<I> Iterator for BlockListPartialIter<I>
 where
     I: Iterator<Item = BlockGroup>,
@@ -447,19 +459,25 @@ where
                 0
             };
 
-            let len = if self.remaining_bytes < current_group.bytes(BLOCK_SIZE) {
+            let len = if offset + self.remaining_bytes < current_group.bytes(BLOCK_SIZE) {
                 current_group = current_group
-                    .with_new_length(blocks_required_for!(self.remaining_bytes))
+                    .with_new_length(blocks_required_for!(offset + self.remaining_bytes))
                     .expect("blocks_required_for should never be 0");
                 self.remaining_bytes
             } else {
                 current_group.bytes(BLOCK_SIZE)
             };
-            assert!(self.remaining_bytes >= len);
+            assert!(len > offset);
+            let len = len - offset;
 
+            assert!(self.remaining_bytes >= len);
             self.remaining_bytes -= len;
 
-            assert!(offset + len <= current_group.bytes(BLOCK_SIZE));
+            assert!(
+                offset + len <= current_group.bytes(BLOCK_SIZE),
+                "{offset} + {len} >= {}",
+                current_group.bytes(BLOCK_SIZE)
+            );
             return Some(PartialBlockGroup {
                 group: current_group,
                 offset,

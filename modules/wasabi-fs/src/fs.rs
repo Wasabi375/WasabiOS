@@ -1211,53 +1211,61 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
         let mut partial_first_block = None;
         let mut partial_last_block = None;
 
-        let groups = block_list
-            .iter_partial(offset, data.len() as u64)
-            .with_positions()
-            .filter_map(
-                |PositionInfo {
-                     first,
-                     last,
-                     item: group,
-                     ..
-                 }| {
-                    if first && group.offset != 0 {
-                        // partial read for the first block is required
-                        partial_first_block = Some(group);
+        let block_list = block_list.iter_partial(offset, data.len() as u64);
+        for group_info in block_list.clone().with_positions() {
+            let PositionInfo {
+                first,
+                last,
+                item: group,
+                ..
+            } = group_info;
+            if first && group.offset != 0 {
+                partial_first_block = Some(group);
+                if last && group.group.count() > 1 && !group.ends_at_block_end() {
+                    partial_last_block = Some(group);
+                }
+            } else if last && !group.ends_at_block_end() {
+                assert_eq!(group.offset, 0);
+                partial_last_block = Some(group);
+            }
+        }
 
-                        let mut remaining = group.group.subgroup(1);
+        let full_block_groups = block_list.with_positions().filter_map(
+            |PositionInfo {
+                 first,
+                 last,
+                 item: group,
+                 ..
+             }| {
+                if first && group.offset != 0 {
+                    // partial read for the first block is required
 
-                        if last {
-                            if group.group.count() == 1 {
-                                assert!(remaining.is_none());
-                                // writing only a single block, therefore write_partial_block
-                                // handles both partial data at start and end
-                            } else {
-                                // first group contains first and last block (2 different blocks)
-                                // partial_last_block also points to the first group
-                                partial_last_block = Some(group);
-                                remaining = remaining.and_then(|g| g.remove_end(1));
-                            }
+                    let mut remaining = group.group.subgroup(1);
+
+                    if last {
+                        if group.group.count() == 1 {
+                            assert!(remaining.is_none());
+                            // writing only a single block, therefore write_partial_block
+                            // handles both partial data at start and end
+                        } else if !group.ends_at_block_end() {
+                            // first group contains first and last block (2 different blocks)
+                            remaining = remaining.and_then(|g| g.remove_end(1));
                         }
-                        remaining
-                    } else if last && group.len != BLOCK_SIZE as u64 {
-                        partial_last_block = Some(group);
-                        group.group.remove_end(1)
-                    } else {
-                        assert_eq!(group.offset, 0);
-                        assert_eq!(group.len, BLOCK_SIZE as u64);
-                        Some(group.group)
                     }
-                },
-            );
-        let offset = offset as usize;
+                    remaining
+                } else if last && !group.ends_at_block_end() {
+                    assert_eq!(group.offset, 0);
+                    group.group.remove_end(1)
+                } else {
+                    assert_eq!(group.offset, 0);
+                    assert!(group.len % BLOCK_SIZE as u64 == 0);
+                    Some(group.group)
+                }
+            },
+        );
 
-        let full_block_data_len = ((data.len() - offset) / BLOCK_SIZE) * BLOCK_SIZE;
-        let full_block_data: &[u8] = &data[offset..][..full_block_data_len];
-
-        self.device
-            .write_blocks(groups, full_block_data)
-            .map_err(map_device_error)?;
+        let mut full_blocks_offset = 0;
+        let mut full_block_data_end = data.len();
 
         if let Some(first_block_group) = partial_first_block {
             // if the first block is also the last block, then group.len is the correct length
@@ -1274,18 +1282,28 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
                     first_block_group.offset,
                 )
                 .map_err(map_device_error)?;
+
+            full_blocks_offset = partial_block_length;
         }
         if let Some(last_block_group) = partial_last_block {
             let length_plus_offset = (last_block_group.len + last_block_group.offset) as usize;
             let last_block_data_len =
                 length_plus_offset - (BLOCK_SIZE * (last_block_group.group.count() as usize - 1));
             let last_block_data = &data[data.len() - last_block_data_len..];
+            assert!(last_block_data_len < BLOCK_SIZE);
             assert_eq!(last_block_data.len(), last_block_data_len);
 
             self.device
                 .write_partial_block(last_block_group.group.end(), last_block_data, 0)
                 .map_err(map_device_error)?;
+
+            full_block_data_end -= last_block_data_len;
         }
+
+        let full_block_data = &data[full_blocks_offset..full_block_data_end];
+        self.device
+            .write_blocks(full_block_groups, full_block_data)
+            .map_err(map_device_error)?;
 
         Ok(())
     }
