@@ -181,9 +181,11 @@ async fn clean(clean: CleanArgs, config: VerifiedConfig) -> Result<()> {
         .await
         .context("disk_image::clean")?;
 
-    delete_empty_dirs(&config.config.out_dir)
-        .await
-        .context("delete empty out_dir subdirectories")?;
+    if std::fs::exists(&config.config.out_dir).context("check out_dir exists")? {
+        delete_empty_dirs(&config.config.out_dir)
+            .await
+            .context("delete empty out_dir subdirectories")?;
+    }
 
     Ok(())
 }

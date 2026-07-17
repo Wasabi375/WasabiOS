@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -228,13 +228,16 @@ pub fn module_artifact_path(module: &ModuleBuild, artifact: BuildArtifact) -> St
 fn general_cargo(cmd: &str, build_opts: &GeneralBuild, out_dir: Option<&Path>) -> Command {
     let mut command = Command::new("cargo");
     command.kill_on_drop(true);
-    command.arg(cmd);
-
-    command.arg("-Z").arg("unstable-options");
 
     if let Some(jobs) = build_opts.jobs {
         command.arg("--jobs").arg(&format!("{jobs}"));
     }
+
+    command.arg(cmd);
+
+    // unstable-options must be passed after cmd or cargo will ignore it. I can't find
+    // any documented reason for this.
+    command.arg("-Z").arg("unstable-options");
 
     if let Some(out_dir) = out_dir {
         command.arg("--artifact-dir").arg(&out_dir);
@@ -346,6 +349,8 @@ async fn build_module_elf(
 
     cmd.arg("--profile").arg(&module.profile);
 
+    debug!("build module using: {cmd:?}");
+
     let success = cmd
         .status()
         .await
@@ -396,6 +401,12 @@ async fn check_module(module: &ModuleBuild, build_opts: &GeneralBuild) -> Result
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 struct BootloaderInfo {
     version: String,
+    git: Option<String>,
+    branch: Option<String>,
+    tag: Option<String>,
+    rev: Option<String>,
+    no_default_features: bool,
+    features: Vec<String>,
 }
 
 pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
@@ -405,29 +416,78 @@ pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
     let bootloader = manifest
         .workspace
         .as_ref()
-        .unwrap()
+        .context("get workspace manifest")?
         .dependencies
         .get("bootloader")
-        .unwrap();
+        .context("get bootloader dependency")?;
 
-    let version = bootloader.req();
-    let info = BootloaderInfo {
-        version: version.to_string(),
+    let info = match bootloader {
+        cargo_toml::Dependency::Simple(version) => BootloaderInfo {
+            version: version.clone(),
+            git: None,
+            branch: None,
+            tag: None,
+            rev: None,
+            no_default_features: false,
+            features: Vec::new(),
+        },
+        cargo_toml::Dependency::Inherited(_inherited_dependency_detail) => bail!(
+            "bootloader dependency is inherited. That should not be possible for a workspace dep"
+        ),
+        cargo_toml::Dependency::Detailed(dep) => {
+            ensure!(
+                dep.registry.is_none(),
+                "bootloader dependency is not supported"
+            );
+            ensure!(
+                dep.registry_index.is_none(),
+                "bootloader dependency is not supported"
+            );
+            ensure!(dep.path.is_none(), "bootloader dependency is not supported");
+
+            BootloaderInfo {
+                version: dep
+                    .version
+                    .clone()
+                    .ok_or(anyhow!("bootloader dependency has no version defined"))?,
+                git: dep.git.clone(),
+                branch: dep.branch.clone(),
+                tag: dep.tag.clone(),
+                rev: dep.rev.clone(),
+                no_default_features: !dep.default_features,
+                features: dep.features.clone(),
+            }
+        }
     };
     if !should_download_bootloader(config, &info).await {
         info!("reusing existing bootloader");
         return Ok(());
     }
 
-    let mut cmd = Command::new("cargo");
-    cmd.kill_on_drop(true);
+    let mut cmd = general_cargo("install", &config.config.general_build, None);
+    cmd.arg("bootloader-x86_64-uefi");
 
-    if let Some(jobs) = config.config.general_build.jobs {
-        cmd.arg("--jobs").arg(&format!("{jobs}"));
+    cmd.arg("-Z").arg("bindeps");
+
+    cmd.arg("--version").arg(&info.version);
+    if let Some(git) = info.git.as_ref() {
+        cmd.arg("--git").arg(git);
+        if let Some(branch) = info.branch.as_ref() {
+            cmd.arg("--branch").arg(branch);
+        }
+        if let Some(tag) = info.tag.as_ref() {
+            cmd.arg("--tag").arg(tag);
+        }
+        if let Some(rev) = info.rev.as_ref() {
+            cmd.arg("--rev").arg(rev);
+        }
     }
-
-    cmd.arg("install").arg("bootloader-x86_64-uefi");
-    cmd.arg("--version").arg(version);
+    if info.no_default_features {
+        cmd.arg("--no-default-features");
+    }
+    for feature in &info.features {
+        cmd.arg("--features").arg(feature);
+    }
     cmd.arg("--locked");
     cmd.arg("--target").arg("x86_64-unknown-uefi");
     cmd.arg("-Zbuild-std=core")
@@ -435,12 +495,11 @@ pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
     cmd.arg("--root").arg(&out_dir);
     cmd.env_remove("RUSTFLAGS");
     cmd.env_remove("CARGO_ENCODED_RUSTFLAGS");
-    let success = cmd
-        .status()
-        .await
-        .context("install uefi x86-64 bootloader")?
-        .success();
-    ensure!(success, "failed to build uefi bootloader");
+
+    debug!("{cmd:?}");
+
+    let success = cmd.status().await.context("wait for install")?.success();
+    ensure!(success, "failed to install uefi bootloader");
 
     let info_file = out_dir.join(BOOT_INFO_FILENAME);
     let mut info_file = File::create(info_file)

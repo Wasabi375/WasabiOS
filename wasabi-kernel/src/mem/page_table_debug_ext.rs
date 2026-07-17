@@ -243,7 +243,7 @@ impl<'a> PageTableDebugExt for RecursivePageTable<'a> {
         let l1 = &l1_table[vaddr.p1_index()];
 
         fn print_table_entry(entry: &PageTableEntry, vaddr: VirtAddr, level: Level, msg: &str) {
-            let frame = entry.frame().ok();
+            let frame = entry.frame(true).ok();
             let flags = entry.flags();
             let raw_bits: u64 = unsafe {
                 // Safety: entry is repr transparent u64
@@ -350,7 +350,7 @@ impl<'a> PageTableDebugExt for RecursivePageTable<'a> {
                     let l1: u64 = level_indices[3].into();
                     let virt_addr = (l4 << 39) | (l3 << 30) | (l2 << 21) | (l1 << 12);
 
-                    match entry.frame() {
+                    match entry.frame(true) {
                         Ok(frame) => last_region.extend_or_print(
                             VirtAddr::new(virt_addr),
                             frame,

@@ -11,7 +11,6 @@ wfs.workspace = true
 gpt.workspace = true
 
 anyhow.workspace = true
-bootloader.workspace = true
 cargo_toml = "0.22"
 clap = { version = "4.5", features = ["derive"] }
 congen.workspace = true

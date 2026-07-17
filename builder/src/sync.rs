@@ -116,6 +116,7 @@ where
     }
 }
 
+// TODO cancle future on panic
 pub struct FutureCache<I, T> {
     cache: RwLock<BTreeMap<I, FutureOnce<T>>>,
 }

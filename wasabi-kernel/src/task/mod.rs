@@ -27,7 +27,11 @@ use x86_64::{
         rflags::{self, RFlags},
         xcontrol::{XCr0, XCr0Flags},
     },
-    structures::{gdt::SegmentSelector, idt::InterruptStackFrame, paging::Size4KiB},
+    structures::{
+        gdt::SegmentSelector,
+        idt::{InterruptStackFrame, InterruptStackFrameValue},
+        paging::Size4KiB,
+    },
 };
 
 use crate::{
@@ -488,7 +492,7 @@ impl TaskSystem {
         let segments = locals!().gdt.kernel_segments();
 
         let launch_interrupt_fake = TaskInterrupt {
-            stack_frame: InterruptStackFrame::new(
+            stack_frame: InterruptStackFrameValue::new(
                 VirtAddr::new(task_entry as *mut () as usize as u64),
                 segments.code,
                 launch_rflags,
@@ -648,7 +652,7 @@ impl TaskSystem {
 }
 
 fn verify_interrupt_frame<L: LockCell<SystemData>>(
-    stack_frame: InterruptStackFrame,
+    stack_frame: InterruptStackFrameValue,
     task: &Task,
     system_data: &LockCellGuard<'_, SystemData, L>,
 ) -> bool {
@@ -705,7 +709,7 @@ fn verify_interrupt_frame<L: LockCell<SystemData>>(
 ///
 /// can be used to [Self::resume] a [Task]
 struct TaskInterrupt {
-    stack_frame: InterruptStackFrame,
+    stack_frame: InterruptStackFrameValue,
     registers: InterruptRegisterState,
     xsave_area: Option<Box<[u8]>>,
 }
@@ -944,7 +948,7 @@ pub extern "x86-interrupt" fn context_switch_handler(_int_stack_frame: Interrupt
         assert!(stack_frame.cpu_flags.contains(RFlags::INTERRUPT_FLAG));
 
         let interrupt = TaskInterrupt {
-            stack_frame: *stack_frame,
+            stack_frame: **stack_frame,
             registers: registers.clone(),
             xsave_area: Some(xsave_area),
         };

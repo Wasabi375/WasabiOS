@@ -1360,7 +1360,7 @@ pub fn experiment_nvme_device() {
         frames = frame_alloc.alloc_range(page_count).unwrap();
 
         let mut page_table = PageTable::get_for_kernel().lock();
-        for (page, frame) in pages.iter().zip(frames) {
+        for (page, frame) in pages.iter().zip(frames.clone()) {
             unsafe {
                 let flags =
                     PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
@@ -1646,7 +1646,7 @@ mod test {
 
         drop(page_alloc);
 
-        for (page, frame) in pages.iter().zip(frames) {
+        for (page, frame) in pages.iter().zip(frames.clone()) {
             unsafe {
                 let flags = PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
                 let kernel_page_table = &mut PageTable::get_for_kernel().lock();

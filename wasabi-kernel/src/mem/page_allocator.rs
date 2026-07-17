@@ -92,7 +92,8 @@ pub fn init(page_table: &mut RecursivePageTable) {
             }
 
             if level == 1 {
-                match entry.frame() {
+                let is_level_1_frame = true;
+                match entry.frame(is_level_1_frame) {
                     Ok(_frame) => {
                         let l4: u64 = level_indices[0].into();
                         let l3: u64 = level_indices[1].into();
