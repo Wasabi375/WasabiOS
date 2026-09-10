@@ -97,7 +97,7 @@ pub fn init() {
     let mut heap_guard = KERNEL_HEAP.lock_uninit();
     let heap = unsafe {
         // Safety: we call init right after we move this to static storage
-        heap_guard.write(KernelHeap::new(pages.into()))
+        heap_guard.write(KernelHeap::new(pages))
     };
 
     // Safety: KERNEL_HEAP is a static
@@ -394,7 +394,7 @@ pub fn max_freeze_heap_count() -> usize {
 // TODO reassess sizes once xsave has a better allocation strategy
 // TODO reassess sizes
 // FIXME allowing for larger slabs seems to crash, but without any log output
-const SLAB_ALLOCATOR_SIZES_BYTES: &'static [usize] = &[4, 64, 256]; // , 1024, 2440];
+const SLAB_ALLOCATOR_SIZES_BYTES: &[usize] = &[4, 64, 256]; // , 1024, 2440];
 
 /// block size for the [SlabAllocator]
 const SLAB_BLOCK_SIZE: usize = KiB!(1); // TODO why is this 1KiB and not 4
@@ -780,7 +780,7 @@ impl<'a, A: Allocator> MutAllocator for SlabAllocator<'a, A> {
                 prev.next = block.next;
             } else {
                 // if prev is none, it means it is the first block in the list
-                next_first = Some(block.next.clone());
+                next_first = Some(block.next);
             }
             if let Some(mut next_ptr) = block.next {
                 // safety: we only store valid references and have mut access,
@@ -832,7 +832,7 @@ impl SlabBlock {
     /// helper function to create a [Layout] for a [SlabBlock]
     #[inline]
     fn layout() -> Layout {
-        Layout::from_size_align(SLAB_BLOCK_SIZE as usize, align_of::<SlabBlock>())
+        Layout::from_size_align(SLAB_BLOCK_SIZE, align_of::<SlabBlock>())
             .expect("Bug in SlabAllocator block layout calculation")
     }
 

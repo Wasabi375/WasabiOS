@@ -118,7 +118,7 @@ impl GDTInfo {
     fn init_gdt(tss: &'static TaskStateSegment) -> (GlobalDescriptorTable, Segments) {
         let mut gdt = GlobalDescriptorTable::new();
         let code = gdt.append(Descriptor::kernel_code_segment());
-        let tss = gdt.append(Descriptor::tss_segment(&tss));
+        let tss = gdt.append(Descriptor::tss_segment(tss));
         (gdt, Segments { code, tss })
     }
 

@@ -113,8 +113,7 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
         assert_ne!(
             block_count
                 .checked_add(first_lba.get())
-                .map(|end| LBA::new(end))
-                .flatten(),
+                .and_then(LBA::new),
             None,
             "Block count overflows LBA range from start"
         );
@@ -146,7 +145,7 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
         this.map_lba(this.start_lba)
             .get()
             .checked_add(this.map_block_count(this.block_count))
-            .and_then(|end| LBA::new(end))
+            .and_then(LBA::new)
             .expect("Block count overflows LBA range from start(in nvme space)");
 
         this
@@ -159,7 +158,7 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
             .checked_add(self.start_lba.get())
             // convert into nvme space
             .and_then(|addr| addr.checked_shl(self.lba_count_conversion_shift))
-            .and_then(|addr| LBA::new(addr))
+            .and_then(LBA::new)
             .expect("overflow lba during conversion from block-device to nvme space")
     }
 
@@ -275,7 +274,7 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
 
         match inner_result {
             Ok(()) => Ok(()),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
 
@@ -302,7 +301,7 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
 
         match inner_result {
             Ok(()) => Ok(()),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
 

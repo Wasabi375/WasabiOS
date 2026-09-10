@@ -84,33 +84,33 @@ impl From<u64> for Capabilities {
     }
 }
 
-impl Into<u64> for Capabilities {
-    fn into(self) -> u64 {
-        let doorbell_stride = self.doorbell_stride.ilog2() - 2;
+impl From<Capabilities> for u64 {
+    fn from(val: Capabilities) -> Self {
+        let doorbell_stride = val.doorbell_stride.ilog2() - 2;
         assert_eq!(
-            self.doorbell_stride,
+            val.doorbell_stride,
             1 << (doorbell_stride + 12),
             "doorbell_stride {:#x} must be a power of 2 and between 4 and 2^17",
-            self.doorbell_stride
+            val.doorbell_stride
         );
 
-        (self.maximum_queue_entries as u64)
-            | (self.contiguous_queues_required as u64) << 16
-            | (self.arbitrations_supported as u64) << 17
-            | (self.reserved_1 as u64) << 19
-            | (self.timeout as u64) << 24
-            | (self.doorbell_stride as u64) << 32
-            | (self.subsystem_reset_supported as u64) << 36
-            | (self.command_sets_supported as u64) << 37
-            | (self.boot_partition_support as u64) << 45
-            | (self.power_scope as u64) << 46
-            | (self.mem_min_page_size as u64) << 48
-            | (self.mem_max_page_size as u64) << 52
-            | (self.persistent_memory_region_support as u64) << 56
-            | (self.memory_buffer_support as u64) << 57
-            | (self.subsystem_shutdown_support as u64) << 58
-            | (self.ready_modes_support as u64) << 59
-            | (self.reserved_2 as u64) << 61
+        (val.maximum_queue_entries as u64)
+            | (val.contiguous_queues_required as u64) << 16
+            | (val.arbitrations_supported as u64) << 17
+            | (val.reserved_1 as u64) << 19
+            | (val.timeout as u64) << 24
+            | (val.doorbell_stride as u64) << 32
+            | (val.subsystem_reset_supported as u64) << 36
+            | (val.command_sets_supported as u64) << 37
+            | (val.boot_partition_support as u64) << 45
+            | (val.power_scope as u64) << 46
+            | (val.mem_min_page_size as u64) << 48
+            | (val.mem_max_page_size as u64) << 52
+            | (val.persistent_memory_region_support as u64) << 56
+            | (val.memory_buffer_support as u64) << 57
+            | (val.subsystem_shutdown_support as u64) << 58
+            | (val.ready_modes_support as u64) << 59
+            | (val.reserved_2 as u64) << 61
     }
 }
 
@@ -178,42 +178,42 @@ impl From<u32> for ControllerConfiguration {
     }
 }
 
-impl Into<u32> for ControllerConfiguration {
-    fn into(self) -> u32 {
-        let memory_page_size = self.memory_page_size.ilog2() - 12;
+impl From<ControllerConfiguration> for u32 {
+    fn from(val: ControllerConfiguration) -> Self {
+        let memory_page_size = val.memory_page_size.ilog2() - 12;
         assert_eq!(
-            self.memory_page_size,
+            val.memory_page_size,
             1 << (memory_page_size + 12),
             "memory_page_size {:#x} must be a power of 2 and between 4KiB and 128MiB",
-            self.memory_page_size
+            val.memory_page_size
         );
 
-        let sub_queue_size = self.io_submission_queue_entry_size.ilog2();
+        let sub_queue_size = val.io_submission_queue_entry_size.ilog2();
         assert_eq!(
-            self.io_submission_queue_entry_size,
+            val.io_submission_queue_entry_size,
             1 << sub_queue_size,
             "io_submission_queue_entry_size {:#x} must be a power of 2",
-            self.io_submission_queue_entry_size
+            val.io_submission_queue_entry_size
         );
 
-        let comp_queue_size = self.io_completion_queue_entry_size.ilog2();
+        let comp_queue_size = val.io_completion_queue_entry_size.ilog2();
         assert_eq!(
-            self.io_completion_queue_entry_size,
+            val.io_completion_queue_entry_size,
             1 << comp_queue_size,
             "io_completion_queue_entry_size {:#x} must be a power of 2",
-            self.io_completion_queue_entry_size
+            val.io_completion_queue_entry_size
         );
 
-        (self.enable as u32)
-            | (self.reserved_1 as u32) << 1
-            | (self.command_set_selected as u32) << 4
-            | (memory_page_size as u32) << 7
-            | (self.arbitration_mechanism as u8 as u32) << 11
-            | (self.shutdown_notification as u32) << 14
-            | (sub_queue_size as u32) << 16
-            | (comp_queue_size as u32) << 20
-            | (self.controller_ready_independent_of_media_enable as u32) << 24
-            | (self.reserved_2 as u32) << 25
+        (val.enable as u32)
+            | (val.reserved_1 as u32) << 1
+            | (val.command_set_selected as u32) << 4
+            | memory_page_size << 7
+            | (val.arbitration_mechanism as u8 as u32) << 11
+            | (val.shutdown_notification as u32) << 14
+            | sub_queue_size << 16
+            | comp_queue_size << 20
+            | (val.controller_ready_independent_of_media_enable as u32) << 24
+            | (val.reserved_2 as u32) << 25
     }
 }
 
@@ -253,15 +253,15 @@ pub struct ControllerStatus {
     reserved: u32,
 }
 
-impl Into<u32> for ControllerStatus {
-    fn into(self) -> u32 {
-        self.reserved << 7
-            | (self.shutdown_type as u32) << 6
-            | (self.processing_paused as u32) << 5
-            | (self.subsystem_reset_occured as u32) << 4
-            | (self.shutdown_status as u32) << 2
-            | (self.fatal_error as u32) << 1
-            | (self.ready as u32)
+impl From<ControllerStatus> for u32 {
+    fn from(val: ControllerStatus) -> Self {
+        val.reserved << 7
+            | (val.shutdown_type as u32) << 6
+            | (val.processing_paused as u32) << 5
+            | (val.subsystem_reset_occured as u32) << 4
+            | (val.shutdown_status as u32) << 2
+            | (val.fatal_error as u32) << 1
+            | (val.ready as u32)
     }
 }
 
@@ -345,15 +345,15 @@ impl From<u32> for AdminQueueAttributes {
     }
 }
 
-impl Into<u32> for AdminQueueAttributes {
-    fn into(self) -> u32 {
+impl From<AdminQueueAttributes> for u32 {
+    fn from(val: AdminQueueAttributes) -> Self {
         // Convert into 0 based value
-        let sub_value = self.submission_queue_size - 1;
-        let comp_value = self.completion_queue_size - 1;
+        let sub_value = val.submission_queue_size - 1;
+        let comp_value = val.completion_queue_size - 1;
 
         (sub_value as u32)
             | (comp_value as u32) << 16
-            | (self.reserved_1 as u32) << 12
-            | (self.reserved_2 as u32) << 28
+            | (val.reserved_1 as u32) << 12
+            | (val.reserved_2 as u32) << 28
     }
 }

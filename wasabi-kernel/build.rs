@@ -25,7 +25,7 @@ fn build_assembly() {
         .follow_links(true)
         .into_iter()
         .filter_map(|f| f.ok())
-        .filter(|f| is_asm_file(f));
+        .filter(is_asm_file);
 
     for file in asm_files {
         build_assembly_file(file.path(), base_path, out_path);
@@ -48,11 +48,10 @@ fn build_assembly_file(file: &Path, base_dir: &PathBuf, out_dir: &PathBuf) {
     );
     let output_file = PathBuf::from(&output_file);
 
-    if let Some(parent) = output_file.parent() {
-        if fs::create_dir_all(parent).is_err() {
+    if let Some(parent) = output_file.parent()
+        && fs::create_dir_all(parent).is_err() {
             panic!("Failed to crate parent dir for {:?}", output_file);
         }
-    }
 
     let status = Command::new("nasm")
         .arg("-f")
@@ -73,7 +72,7 @@ fn is_asm_file(file: &DirEntry) -> bool {
         return false;
     }
 
-    let Some(ext) = file.path().extension().map(|e| e.to_str()).flatten() else {
+    let Some(ext) = file.path().extension().and_then(|e| e.to_str()) else {
         return false;
     };
 

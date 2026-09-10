@@ -33,7 +33,7 @@ pub unsafe fn init_serial_ports() {
             .lock_uninit()
             .write(create_port(COM1_IO_PORT).unwrap());
         // Safety: COM2_IO_PORT is a valid IO port
-        if let Some(com2) = create_port(COM2_IO_PORT).ok() {
+        if let Ok(com2) = create_port(COM2_IO_PORT) {
             let _ = SERIAL2.lock().insert(com2);
         }
     }

@@ -765,7 +765,7 @@ impl NVMEController {
 
         core::sync::atomic::fence(Ordering::SeqCst);
 
-        while self.read_controller_status().ready != false {
+        while self.read_controller_status().ready {
             spin_loop();
         }
         core::sync::atomic::fence(Ordering::SeqCst);
@@ -787,7 +787,7 @@ impl NVMEController {
 
         core::sync::atomic::fence(Ordering::SeqCst);
 
-        while self.read_controller_status().ready != true {
+        while !self.read_controller_status().ready {
             spin_loop();
         }
         core::sync::atomic::fence(Ordering::SeqCst);
@@ -1191,11 +1191,7 @@ impl NVMEController {
     /// it is save to drop this, otherwise this must not be dropped.
     pub fn is_safe_to_drop(&mut self) -> bool {
         self.reclaim_io_queues();
-        if self.used_io_queues.len() > 0 {
-            false
-        } else {
-            true
-        }
+        self.used_io_queues.is_empty()
     }
 
     /// tries to drop this instance.
@@ -1316,14 +1312,12 @@ pub fn experiment_nvme_device() {
 
     let nvme_device = pci
         .devices
-        .iter()
-        .filter(|dev| {
+        .iter().find(|dev| {
             matches!(
                 dev.class,
                 Class::Storage(StorageSubclass::NonVolatileMemory)
             )
         })
-        .nth(0)
         .cloned()
         .expect("Failed to find test nvme device");
 
@@ -1497,10 +1491,10 @@ impl From<u64> for QueueBaseAddress {
     }
 }
 
-impl Into<u64> for QueueBaseAddress {
-    fn into(self) -> u64 {
-        assert_eq!(self.paddr.as_u64() & !QUEUE_BASE_ADDR_MAKS, 0);
-        self.paddr.as_u64() & QUEUE_BASE_ADDR_MAKS | (self.reserved as u64)
+impl From<QueueBaseAddress> for u64 {
+    fn from(val: QueueBaseAddress) -> Self {
+        assert_eq!(val.paddr.as_u64() & !QUEUE_BASE_ADDR_MAKS, 0);
+        val.paddr.as_u64() & QUEUE_BASE_ADDR_MAKS | (val.reserved as u64)
     }
 }
 

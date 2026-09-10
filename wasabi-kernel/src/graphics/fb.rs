@@ -136,7 +136,7 @@ impl Canvas for Framebuffer {
             return Ok(());
         }
 
-        let lines_to_move = self.height() as usize - height.abs() as usize;
+        let lines_to_move = self.height() as usize - height.unsigned_abs() as usize;
 
         let bytes_per_line = self.info.stride * self.info.bytes_per_pixel;
         let (start, dest, clear_start): (usize, usize, u32) = if height.is_positive() {
@@ -146,14 +146,14 @@ impl Canvas for Framebuffer {
         } else {
             // move every line down by height pixels. therefor we copy starting
             // from the 0th line and copy into the nth line
-            (0, height.abs() as usize * bytes_per_line, 0)
+            (0, height.unsigned_abs() as usize * bytes_per_line, 0)
         };
-        let src = start as usize..(start + lines_to_move * bytes_per_line) as usize;
+        let src = start..(start + lines_to_move * bytes_per_line);
 
         self.buffer_mut().copy_within(src, dest);
 
         // clear the freed up lines
-        for line in 0..height.abs() as u32 {
+        for line in 0..height.unsigned_abs() {
             let y = clear_start + line;
             for x in 0..self.width() {
                 self.set_pixel(x, y, clear_color);

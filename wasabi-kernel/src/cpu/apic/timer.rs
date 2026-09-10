@@ -17,8 +17,10 @@ use core::ops::RangeInclusive;
 
 /// The different modes the apic timer can be in
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum TimerMode {
     /// the timer is not running
+    #[default]
     Stopped,
     /// the timer is running and trigger a single interrupt at the end
     ///
@@ -99,9 +101,9 @@ pub enum TimerDivider {
     DivBy128,
 }
 
-impl Into<u32> for TimerDivider {
-    fn into(self) -> u32 {
-        match self {
+impl From<TimerDivider> for u32 {
+    fn from(val: TimerDivider) -> Self {
+        match val {
             TimerDivider::DivBy1 => 0b1011,
             TimerDivider::DivBy2 => 0b0000,
             TimerDivider::DivBy4 => 0b0001,
@@ -114,11 +116,6 @@ impl Into<u32> for TimerDivider {
     }
 }
 
-impl Default for TimerMode {
-    fn default() -> Self {
-        TimerMode::Stopped
-    }
-}
 
 /// the current state of the timer
 #[derive(Debug, Clone, Default)]

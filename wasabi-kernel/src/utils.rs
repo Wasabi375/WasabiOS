@@ -46,7 +46,7 @@ pub fn log_hex_dump_buf<M: AsRef<str>, T>(
     let ptr = UntypedPtr::from(buffer);
     unsafe {
         // Safety: vaddr points to valid slice
-        log_hex_dump(message, level, target, ptr, buffer.len() * size_of::<T>());
+        log_hex_dump(message, level, target, ptr, core::mem::size_of_val(buffer));
     }
 }
 

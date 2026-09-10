@@ -152,8 +152,7 @@ impl Apic {
 
         let page = PageAllocator::get_for_kernel()
             .lock()
-            .allocate_page_4k()
-            .map_err(MemError::from)?;
+            .allocate_page_4k()?;
         unsafe {
             let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
             // Safety: new page with apic frame (only used here) and is therefor safe

@@ -69,7 +69,7 @@ pub unsafe fn init(frambuffer_logger: bool) {
         .into();
 
     unsafe {
-        HARDWARE_FRAMEBUFFER_START_INFO = Some((fb.buffer, fb.info.clone()));
+        HARDWARE_FRAMEBUFFER_START_INFO = Some((fb.buffer, fb.info));
     }
 
     *HARDWARE_FRAMEBUFFER.lock() = Some(fb);

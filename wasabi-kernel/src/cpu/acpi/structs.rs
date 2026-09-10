@@ -57,7 +57,7 @@ impl Header {
             return Err(AcpiError::InvalidChecksum(checksum_err_msg));
         }
 
-        return Ok(());
+        Ok(())
     }
 }
 
@@ -125,9 +125,7 @@ impl AcpiTable {
         let header: &Header = unsafe { ptr.as_ref() };
         header.verify("XSDT entry")?;
 
-        let this = match header.signature {
-            _ => AcpiTable::Unknown(header),
-        };
+        let this = AcpiTable::Unknown(header);
         Ok(this)
     }
 }

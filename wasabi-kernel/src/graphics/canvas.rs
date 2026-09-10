@@ -188,11 +188,13 @@ impl core::fmt::Display for CanvasWriterBuilderError {
 
 /// The Scroll behaviour of a [CanvasWriter]
 #[derive(Debug, Copy, Clone)]
+#[derive(Default)]
 pub enum CanvasWriterScrollBehaviour {
     /// The canvas scrolls, when the end of the area is reached.
     ///
     /// When a new line is written and the canvas is "full" the canvas
     /// scrolls down by 1 line.
+    #[default]
     Scroll,
     /// The canvas is cleared, when the end of the area is reached.
     ///
@@ -202,11 +204,6 @@ pub enum CanvasWriterScrollBehaviour {
     Clear,
 }
 
-impl Default for CanvasWriterScrollBehaviour {
-    fn default() -> Self {
-        CanvasWriterScrollBehaviour::Scroll
-    }
-}
 
 impl<C> CanvasWriterBuilder<C>
 where
@@ -225,7 +222,7 @@ where
     }
 
     fn validate(&self) -> Result<(), CanvasWriterBuilderError> {
-        match self.scroll_behaviour.unwrap_or(Default::default()) {
+        match self.scroll_behaviour.unwrap_or_default() {
             CanvasWriterScrollBehaviour::Scroll => {
                 if C::supports_scrolling() {
                     Ok(())
@@ -339,7 +336,7 @@ impl<C: Canvas> CanvasWriter<C> {
         chars: &mut impl Iterator<Item = char>,
     ) -> Result<(), CanvasWriterError> {
         let sgr = AnsiSGR::parse_from_chars(chars, true)
-            .map_err(|e| Into::<CanvasWriterError>::into(e))?;
+            .map_err(Into::<CanvasWriterError>::into)?;
         if self.ignore_ansi {
             return Ok(());
         }

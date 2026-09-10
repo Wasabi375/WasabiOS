@@ -226,9 +226,9 @@ impl From<NonNull<u8>> for UntypedPtr {
     }
 }
 
-impl Into<VirtAddr> for UntypedPtr {
-    fn into(self) -> VirtAddr {
-        VirtAddr::from_ptr(self.as_ptr::<u8>())
+impl From<UntypedPtr> for VirtAddr {
+    fn from(val: UntypedPtr) -> Self {
+        VirtAddr::from_ptr(val.as_ptr::<u8>())
     }
 }
 

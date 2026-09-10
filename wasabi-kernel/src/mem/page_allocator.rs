@@ -58,7 +58,7 @@ pub fn init(page_table: &mut RecursivePageTable) {
                 continue;
             }
 
-            let mut level_indices = level_indices.clone();
+            let mut level_indices = level_indices;
             level_indices.rotate_left(1);
             level_indices[3] = PageTableIndex::new(i as u16);
 
@@ -130,7 +130,7 @@ pub fn init(page_table: &mut RecursivePageTable) {
                 // safety: entry_table_vaddr is a valid pointer to the next level page table
                 // in a recursive page table
                 let entry_table: &PageTable = unsafe { &*(entry_table_vaddr as *const PageTable) };
-                recurse_page_tables_remove_mapped(level - 1, &entry_table, level_indices, vaddrs);
+                recurse_page_tables_remove_mapped(level - 1, entry_table, level_indices, vaddrs);
             }
         }
     }
@@ -344,7 +344,7 @@ impl PageAllocator {
         };
 
         let first_page = Page::from_start_address(start).expect("first_page should be aligned");
-        start += S::SIZE * count as u64;
+        start += S::SIZE * count;
         let pages = Pages { first_page, count };
 
         let tail_guard = if tail_guard {

@@ -30,7 +30,7 @@ impl StackHistory {
     pub fn iter(&self) -> impl Iterator<Item = (Pages<Size4KiB>, &str)> {
         self.history
             .iter()
-            .map(|(page, name)| (page.clone(), name.as_ref()))
+            .map(|(page, name)| (*page, name.as_ref()))
     }
 
     pub fn find(&self, vaddr: VirtAddr) -> Option<(Pages<Size4KiB>, &str)> {

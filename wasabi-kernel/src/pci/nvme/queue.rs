@@ -37,7 +37,7 @@ impl QueueIdentifier {
     }
 
     pub fn checked_add(self, rhs: u16) -> Option<Self> {
-        self.0.checked_add(rhs).map(|v| Self(v))
+        self.0.checked_add(rhs).map(Self)
     }
 }
 
@@ -586,7 +586,7 @@ impl CommandQueue {
                         .expect("index should be valid, we just checked for it"),
                 );
             }
-            return None;
+            None
         };
         if let Some(entry) = get_if_exists(&mut self.completions) {
             return Ok(entry);

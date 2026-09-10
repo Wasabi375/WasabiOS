@@ -38,7 +38,7 @@ impl KernelInfo {
 
         // Safety: Kernel ensures that [Self::init] is the first function
         // ever called.
-        unsafe { (&mut *addr_of_mut!(KERNEL_INFO)).assume_init_ref() }
+        unsafe { (&*addr_of_mut!(KERNEL_INFO)).assume_init_ref() }
     }
 
     /// Get write access to the [KernelInfo].

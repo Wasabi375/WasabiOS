@@ -42,7 +42,7 @@ impl<S: PageSize> Pages<S> {
 
     /// the end addr (inclusive) of the last page
     pub fn end_addr(&self) -> VirtAddr {
-        (self.first_page + self.count as u64 - 1).start_address() + (S::SIZE - 1)
+        (self.first_page + self.count - 1).start_address() + (S::SIZE - 1)
     }
 
     /// iterates over all consecutive pages
@@ -230,7 +230,7 @@ impl<S: PageSize> Iterator for PagesIter<S> {
         if self.index >= self.count {
             None
         } else {
-            let res = self.first_page + self.index as u64;
+            let res = self.first_page + self.index;
             self.index += 1;
             Some(res)
         }

@@ -107,7 +107,7 @@ impl PCIAccess {
         if max == 0 {
             panic!("No supported functions found!");
         }
-        return max + 1;
+        max + 1
     }
 
     fn find_devices_on_bus(&mut self, bus: u8) {
@@ -121,7 +121,7 @@ impl PCIAccess {
     }
 
     pub fn find_all_devices(&mut self) {
-        if self.devices.len() > 0 {
+        if !self.devices.is_empty() {
             warn!("device list is already filled. Clearing existing list");
             self.devices.clear();
         }

@@ -237,7 +237,6 @@ impl PageTableKernelFlags for PageTableFlags {
             .iter_names()
             .find(|(_, f)| f == self)
             .map(|(n, _)| n)
-            .take()
             .unwrap_or("unknown");
         if name.starts_with("BIT_") {
             return match *self {
@@ -245,7 +244,7 @@ impl PageTableKernelFlags for PageTableFlags {
                 _ => name,
             };
         }
-        return name;
+        name
     }
 }
 

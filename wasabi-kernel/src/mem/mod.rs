@@ -241,7 +241,7 @@ pub unsafe fn init() {
 #[macro_export]
 macro_rules! pages_required_for {
     ($size:ident, $bytes:expr) => {
-        crate::pages_required_for!(size: <$size as x86_64::structures::paging::PageSize>::SIZE, $bytes)
+        $crate::pages_required_for!(size: <$size as x86_64::structures::paging::PageSize>::SIZE, $bytes)
     };
     (size: $size:expr, $bytes:expr) => {
         shared::counts_required_for!($size, $bytes)
@@ -266,10 +266,10 @@ macro_rules! pages_required_for {
 #[macro_export]
 macro_rules! frames_required_for {
     ($size:ident, $bytes:expr) => {
-        crate::pages_required_for!($size, $bytes)
+        $crate::pages_required_for!($size, $bytes)
     };
     (size: $size:literal, $bytes:expr) => {
-        crate::pages_required_for!($size, $bytes)
+        $crate::pages_required_for!($size, $bytes)
     };
 }
 

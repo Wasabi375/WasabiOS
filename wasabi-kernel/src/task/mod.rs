@@ -135,7 +135,7 @@ pub struct TaskDefinition<F> {
 ///
 /// This is the task that is started directly by the bootloader/ap_startup which
 /// is responsible for initializing the cpu and starting the task system
-pub const CPU_CORE_TASK_NAME: &'static str = "cpu-core";
+pub const CPU_CORE_TASK_NAME: &str = "cpu-core";
 
 impl<F> TaskDefinition<F> {
     /// Create a new [TaskDefinition]
@@ -362,8 +362,8 @@ impl TaskSystem {
 
         self.running.store(true, Ordering::Release);
 
-        let res = self.start_timer(self.data.lock().as_ref());
-        res
+        
+        self.start_timer(self.data.lock().as_ref())
     }
 
     /// Pauses the task system.
@@ -441,7 +441,7 @@ impl TaskSystem {
         task_definition: TaskDefinition<F>,
     ) -> Result<TaskHandle, MemError>
     where
-        F: FnOnce() -> () + 'static,
+        F: FnOnce() + 'static,
         F: Sized,
     {
         let stack = PageAllocator::get_for_kernel()
@@ -529,14 +529,13 @@ impl TaskSystem {
 
         data.interrupted.push_back(new_handle);
 
-        if self.is_running() && !self.timer_running.load(Ordering::Acquire) {
-            if let Some(old_vec) = self
+        if self.is_running() && !self.timer_running.load(Ordering::Acquire)
+            && let Some(old_vec) = self
                 .start_timer(&data)
                 .expect("Restarting timer should work.")
             {
                 warn!("TaskSystem is overwriting timer interrupt vector. Old vector: {old_vec}");
             }
-        }
 
         Ok(new_handle)
     }
@@ -1062,7 +1061,7 @@ fn setup_xsave() {
     info!("xsave area size: {0}|{0:#x} bytes", xsave_area_size);
 }
 
-type DynTask = dyn FnOnce() -> ();
+type DynTask = dyn FnOnce();
 
 // unsafe fn task_entry(task: Box<dyn FnOnce() -> ()>) -> ! {
 unsafe fn task_entry(task_ptr: *mut (), task_dyn: DynMetadata<DynTask>) -> ! {

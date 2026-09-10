@@ -66,12 +66,12 @@ pub(super) unsafe fn alloc(layout: Layout) -> *mut u8 {
     EARLY_HEAP_ALLOCATED.fetch_add(layout.size(), Ordering::AcqRel);
 
     let base_ptr = addr_of_mut!(EARLY_HEAP) as *mut u8;
-    let next_ptr = unsafe {
+    
+
+    unsafe {
         // Safety: The ptr is within the ealry heap
         base_ptr.add(aligned_offset)
-    };
-
-    next_ptr
+    }
 }
 
 /// Frees memory in the early boot heap

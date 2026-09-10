@@ -299,7 +299,7 @@ impl<'a> PageTableDebugExt for RecursivePageTable<'a> {
                     entry.flags()
                 };
 
-                let mut level_indices = level_indices.clone();
+                let mut level_indices = level_indices;
                 level_indices.rotate_left(1);
                 level_indices[3] = PageTableIndex::new(i as u16);
 
@@ -385,7 +385,7 @@ impl<'a> PageTableDebugExt for RecursivePageTable<'a> {
                         unsafe { &*(entry_table_vaddr as *const PageTable) };
                     internal(
                         level - 1,
-                        &entry_table,
+                        entry_table,
                         level_indices,
                         last_region,
                         ignore_cpu_flags,
