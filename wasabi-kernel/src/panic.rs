@@ -49,7 +49,7 @@ static IN_PANIC: AtomicBool = AtomicBool::new(false);
 // This is used to shut down other cores during a panic
 exception_fn!(pub nmi_panic_handler, _stack_frame, {
     let payload = unsafe {
-        // Saftey: payload must be statically valid once panic is invoked
+        // Safety: payload must be statically valid once panic is invoked
         &*NMI_PAYLOAD.load(Ordering::Acquire)
     };
     handle_other_core_panic(payload);

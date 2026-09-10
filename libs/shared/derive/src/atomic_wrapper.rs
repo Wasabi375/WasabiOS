@@ -201,6 +201,7 @@ pub fn derive_atomic_wrapper(input: proc_macro::TokenStream) -> proc_macro::Toke
     .into()
 }
 
+#[allow(clippy::type_complexity)]
 fn extract_wrapper_info(
     input: &DeriveInput,
 ) -> (

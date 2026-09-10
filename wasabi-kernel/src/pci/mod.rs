@@ -47,6 +47,7 @@ impl PCIAccess {
         ))
     }
 
+    // read 32bit value from pci device
     pub fn read32(&mut self, register: RegisterAddress) -> Option<u32> {
         let value = unsafe {
             // Safety: writes to config are safe
@@ -57,6 +58,7 @@ impl PCIAccess {
         if value == !0 { None } else { Some(value) }
     }
 
+    // read 16bit value from pci device
     pub fn read16(&mut self, register: RegisterAddress) -> Option<u16> {
         let value = unsafe {
             // Safety: writes to config are safe
@@ -67,6 +69,7 @@ impl PCIAccess {
         if value == !0 { None } else { Some(value) }
     }
 
+    // read 8bit value from pci device
     pub fn read8(&mut self, register: RegisterAddress) -> Option<u8> {
         let value = unsafe {
             // Safety: writes to config are safe
@@ -207,8 +210,8 @@ impl Device {
         // 256 bytes buffer to hold configuration space data
         let mut buffer = [0u32; 64];
 
-        for offset in 0..64 {
-            buffer[offset] = pci
+        for (offset, entry) in buffer.iter_mut().enumerate() {
+            *entry = pci
                 .read32(RegisterAddress::from_addr(
                     self.address,
                     function,

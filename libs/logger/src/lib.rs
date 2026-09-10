@@ -157,16 +157,16 @@ fn write_target<W: Write, CI>(
     };
     let mut target_renamed = false;
     for (old_name, new_name) in opts.module_rename_mapping {
-        if target.starts_with(old_name) {
+        if let Some(rest) = target.strip_prefix(old_name) {
             target_renamed = true;
-            let rest = &target[old_name.len()..];
             writer.write_fmt(format_args!(" [{}{}]", new_name, rest))?;
             break;
         }
     }
-    Ok(if !target_renamed {
+    if !target_renamed {
         writer.write_fmt(format_args!("[{target}]"))?;
-    })
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "no-color"))]

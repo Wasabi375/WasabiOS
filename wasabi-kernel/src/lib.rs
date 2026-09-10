@@ -140,7 +140,7 @@ pub fn kernel_bsp_entry(
     let kernel_stack_bottom = boot_info.kernel_stack_bottom;
     let kernel_stack_len = boot_info.kernel_stack_len;
     unsafe {
-        // Saftey: This is the first function ever called
+        // Safety: This is the first function ever called
         KernelInfo::init(boot_info);
 
         // Safety: only written once here, and bsp_entry is only executed once
@@ -171,8 +171,12 @@ pub fn kernel_bsp_entry(
     }
 }
 
-/// Safety: should only be called once, right at the start
-/// of the start of the processor
+/// Initializes the processor
+///
+/// # Safety
+///
+/// should only be called once, right at the start
+/// of the start of the processor. Once on bsp and each ap
 pub unsafe fn processor_init(stack: Pages<Size4KiB>) {
     let core_id: CoreId;
     unsafe {
@@ -213,7 +217,7 @@ pub unsafe fn processor_init(stack: Pages<Size4KiB>) {
         // only called here for bsp and we have just init core_locals and logging and mem
         locals!().gdt.init_and_load();
 
-        // Saftey: during bsp init
+        // Safety: during bsp init
         interrupts::init();
     }
 

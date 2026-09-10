@@ -168,7 +168,8 @@ where
 
     /// unmaps `self` and deallocates the corresponding [PhysFrame]s
     ///
-    /// Safety:
+    /// # Safety
+    ///
     /// The caller must ensure that the pages are no longer used
     pub unsafe fn unmap(self) -> Result<GuardedPages<S>, PageTableMapError> {
         let mut frame_allocator = FrameAllocator::get_for_kernel().lock();

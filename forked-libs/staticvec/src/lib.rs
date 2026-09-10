@@ -2416,7 +2416,6 @@ where
     ///   [1, 2, 3, 4],
     /// );
     /// ```
-  #[allow(clippy::from_iter_instead_of_collect)]
   #[inline]
   #[rustfmt::skip]
     pub fn union<const N2: usize>(&self, other: &StaticVec<T, N2, L>) -> StaticVec<T, { N + N2 }, L>

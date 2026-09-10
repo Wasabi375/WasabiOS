@@ -73,7 +73,7 @@ impl PrpList {
     /// Only the first entry in `entries` can have an offset other than `0`. This
     /// will panic otherwise.
     ///
-    /// # Safety:
+    /// # Safety
     ///
     /// alloc_mapping must return a [Page], [PhysFrame] pair, where the page is mapped
     /// to write to the memory backed by the frame, without any existing references into the page
@@ -98,7 +98,7 @@ impl PrpList {
         let prp_list_frame = PrpEntry::new(frame);
 
         let mut prp_page: &mut [PrpEntry; PAGE_ENTRY_COUNT] = unsafe {
-            // Saftey: page is properly mapped
+            // Safety: page is properly mapped
             &mut *page.start_address().as_mut_ptr()
         };
         let entry_count = entries.len();
@@ -121,7 +121,7 @@ impl PrpList {
 
                 let last_page = prp_page;
                 prp_page = unsafe {
-                    // Saftey: page is properly mapped
+                    // Safety: page is properly mapped
                     &mut *page.start_address().as_mut_ptr()
                 };
 
@@ -156,7 +156,7 @@ impl PrpList {
 /// A Prp Entry
 ///
 /// See: NVM Express Base Specification: 4.1.1
-#[repr(C)]
+#[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PrpEntry(u64);
 

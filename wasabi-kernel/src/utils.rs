@@ -76,7 +76,7 @@ pub unsafe fn serial_hex_dump<M: AsRef<str>>(start: UntypedPtr, length: usize) {
     }
 }
 
-/// Safety:
+/// # Safety
 ///
 /// `start` must be a valid ptr for the next `length` bytes
 unsafe fn hex_dump_iter(

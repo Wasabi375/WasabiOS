@@ -32,7 +32,7 @@ fn build_assembly() {
     }
 }
 
-fn build_assembly_file(file: &Path, base_dir: &PathBuf, out_dir: &PathBuf) {
+fn build_assembly_file(file: &Path, base_dir: &Path, out_dir: &Path) {
     println!("Processing source file {}", file.to_str().unwrap());
     let relative = file
         .strip_prefix(base_dir)
@@ -49,9 +49,10 @@ fn build_assembly_file(file: &Path, base_dir: &PathBuf, out_dir: &PathBuf) {
     let output_file = PathBuf::from(&output_file);
 
     if let Some(parent) = output_file.parent()
-        && fs::create_dir_all(parent).is_err() {
-            panic!("Failed to crate parent dir for {:?}", output_file);
-        }
+        && fs::create_dir_all(parent).is_err()
+    {
+        panic!("Failed to crate parent dir for {:?}", output_file);
+    }
 
     let status = Command::new("nasm")
         .arg("-f")
@@ -76,8 +77,5 @@ fn is_asm_file(file: &DirEntry) -> bool {
         return false;
     };
 
-    match ext {
-        "asm" | "nasm" => true,
-        _ => false,
-    }
+    matches!(ext, "asm" | "nasm")
 }

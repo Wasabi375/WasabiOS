@@ -18,7 +18,7 @@ use x86_64::{
 use log::{debug, error, info, trace, warn};
 
 use crate::{
-    cpu::acpi::structs::{Header, RsdpV1, XSDT},
+    cpu::acpi::structs::{Header, RsdpV1, Xsdt},
     mem::{
         MemError, frame_allocator::FrameAllocator, page_allocator::PageAllocator,
         page_table::PageTable, ptr::UntypedPtr,
@@ -101,7 +101,7 @@ impl ACPI {
         let xsdt_ptr = this.phys_to_vptr(PhysAddr::new(rsdp.xsdt_addr))?;
         let xsdt = unsafe {
             // Safety: pyhs_to_virt ensures that vaddr is mapped
-            XSDT::from_ptr(xsdt_ptr)?
+            Xsdt::from_ptr(xsdt_ptr)?
         };
 
         info!("XSDT: entries {}", xsdt.entry_count);
@@ -143,7 +143,7 @@ impl ACPI {
 
     fn iter_xsdt<'a>(
         &'a mut self,
-        xsdt: &'a XSDT,
+        xsdt: &'a Xsdt,
     ) -> impl Iterator<Item = Result<AcpiTable, AcpiError>> + 'a {
         xsdt.entries()
             .map(|paddr| self.phys_to_vptr(paddr).expect("failed to map acpi table"))

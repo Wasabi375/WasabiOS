@@ -21,7 +21,7 @@ impl TryFrom<u64> for LBA {
     type Error = <NonMaxU64Le as TryFrom<u64>>::Error;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Ok(LBA(TryInto::<NonMaxU64Le>::try_into(value)?.into()))
+        Ok(LBA(TryInto::<NonMaxU64Le>::try_into(value)?))
     }
 }
 
@@ -103,7 +103,7 @@ impl Sub<u64> for LBA {
     type Output = LBA;
 
     fn sub(self, rhs: u64) -> Self::Output {
-        // Saftey: subtraction can never result in max
+        // Safety: subtraction can never result in max
         unsafe { LBA::new_unchecked(self.get() - rhs) }
     }
 }

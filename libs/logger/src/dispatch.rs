@@ -115,6 +115,12 @@ pub struct DispatchLogger<'a, I> {
 //      should error where the current log impl panics
 //      and just silently log other erros
 
+impl<I: InterruptState> Default for DispatchLogger<'_, I> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a, I: InterruptState> DispatchLogger<'a, I> {
     /// Creates a new dispatch logger
     pub fn new() -> Self {
@@ -141,7 +147,7 @@ impl<'a, I: InterruptState> DispatchLogger<'a, I> {
     pub fn remove_logger(&self, target_logger: &'a TargetLogger) {
         self.loggers
             .write()
-            .retain(|l| l as *const TargetLogger<'a> != target_logger as *const TargetLogger<'_>);
+            .retain(|l| !core::ptr::eq(l, target_logger));
     }
 
     /// 'Init' the actual logger, instantiate it and configure it,

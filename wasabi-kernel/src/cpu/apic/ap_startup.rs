@@ -394,7 +394,7 @@ unsafe extern "C" fn ap_entry(stack_end: u64) -> ! {
         bsp_ctrl_regs::set_regs();
 
         let stack = find_stack(VirtAddr::new(stack_end));
-        // Saftey: only called once for each ap, right here
+        // Safety: only called once for each ap, right here
         processor_init(stack);
 
         info!("Core {} online", locals!().core_id);
@@ -514,7 +514,7 @@ impl SipiPayload<Ready> {
 impl SipiPayload<Construction> {
     fn load_code(&mut self) {
         let dst: *mut u8 = self.virt.as_mut_ptr();
-        // Saftey:
+        // Safety:
         //  * `src` must be [valid] for reads of `count * size_of::<T>()` bytes.
         //      count is src.len()
         //  * `dst` must be [valid] for writes of `count * size_of::<T>()` bytes.

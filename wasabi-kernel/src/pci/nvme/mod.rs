@@ -138,12 +138,12 @@ impl NVMEController {
     /// Initializes a NVMe PCI controller
     ///
     /// See: NVM Express Base Specification: 3.5.1
-    ///         Memory-based Transport Controller Initialization
+    ///    Memory-based Transport Controller Initialization
     ///
     /// # Arguments:
     ///  * `io_queue_count_request`: The maximum number of queues to request. This does not create the
-    ///         queues, only allocates them on the controller.
-    ///         The controller can decide to allocate a different amount than requested.
+    ///    queues, only allocates them on the controller.
+    ///    The controller can decide to allocate a different amount than requested.
     ///
     /// # Safety
     ///
@@ -1199,6 +1199,8 @@ impl NVMEController {
     /// This will return `Err(self)` if it is not save to drop `self`.
     ///
     /// See [Self::is_safe_to_drop].
+    #[inline(always)]
+    #[allow(clippy::result_large_err)]
     pub fn try_drop(mut self) -> Result<(), Self> {
         if !self.is_safe_to_drop() {
             return Err(self);
@@ -1312,7 +1314,8 @@ pub fn experiment_nvme_device() {
 
     let nvme_device = pci
         .devices
-        .iter().find(|dev| {
+        .iter()
+        .find(|dev| {
             matches!(
                 dev.class,
                 Class::Storage(StorageSubclass::NonVolatileMemory)

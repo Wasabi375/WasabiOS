@@ -473,7 +473,7 @@ impl KernelHeap {
     ///
     /// Caller ensures that
     /// 1. [KernelHeap::init] is the first function called
-    ///     on this struct. In order to do that, the heap must be moved to static memory
+    ///    on this struct. In order to do that, the heap must be moved to static memory
     /// 2. `pages` is properly mapped for the kernel to read and write
     unsafe fn new<S: PageSize>(pages: Pages<S>) -> Self {
         trace!("KernelHeap::new()");

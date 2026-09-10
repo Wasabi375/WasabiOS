@@ -108,3 +108,7 @@ x86_64 = { version = "0.15.1", git = "https://github.com/Wasabi375/x86_64", bran
 uart_16550 = { version = "0.3.0", git = "https://github.com/Wasabi375/uart_16550" }
 
 [patch.crates-io]
+
+[workspace.lints.clippy]
+field_reassign_with_default = "allow"
+new_without_default = "allow"

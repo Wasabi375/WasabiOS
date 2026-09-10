@@ -150,12 +150,12 @@ impl CommandQueue {
     ///
     /// # Arguments:
     /// * `doorbell_base`: An [UntypedPtr] to the first doorbell. This should
-    ///         be in the properties at offset `0x1000`
+    ///   be in the properties at offset `0x1000`
     /// * `stride`: [Capabilites::doorbell_stride] for this controller
     /// * `queue_index`: The index of the queue, starting at 0 for the admin queu
-    ///         and iterating through the I/O queues
+    ///   and iterating through the I/O queues
     ///
-    /// # Saftey:
+    /// # Safety:
     /// `doorbell_base` must be valid to write to for all queue doorbells up to
     /// `queue_index`.
     /// Caller must also ensure that no alias exists for the returned unique references
@@ -190,15 +190,16 @@ impl CommandQueue {
     /// This queue is only useable after the nvme controller has also created
     /// the completion and submission queue on the nvme device.
     ///
-    /// # Saftey:
+    /// # Safety:
     /// * `doorbell_base` must be valid to write to for all queue doorbells up to `queue_id` while
-    ///     this is alive.
+    ///   this is alive.
     /// * Must not be called with the same `queue_id` as long as the resulting [CommandQueue] is
-    ///     alive.
+    ///   alive.
     /// * Caller ensures that all needed allocations on the [NVMEController] outlive this.
     /// * Caller must also ensure that the queue on the controller is disabled before dropping this.
     ///
     /// [NVMEController]: super::NVMEController
+    #[allow(clippy::too_many_arguments)]
     pub(super) unsafe fn allocate<PT>(
         queue_id: QueueIdentifier,
         submission_queue_size: u16,
@@ -409,13 +410,13 @@ impl CommandQueue {
     /// # Returns
     ///
     /// * Ok(true): if at least 1 entry was found and all entries were successfully
-    ///         added to the completions list.
+    ///   added to the completions list.
     /// * Ok(false): if no entries were found.
     /// * Err((true, CompletionPollError)):  at least 1 entry was found and successfully
-    ///         added to the completions list, but 1 additional entry was found,
-    ///         that could not be added to the completions list
+    ///   added to the completions list, but 1 additional entry was found,
+    ///   that could not be added to the completions list
     /// * Err((false, CompletionPollError)): No entires were found and added to the completions
-    ///         list
+    ///   list
     pub fn poll_completions(&mut self) -> PollCompletionsResult {
         let mut any_found = false;
         let mut error = None;

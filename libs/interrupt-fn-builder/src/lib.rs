@@ -17,6 +17,9 @@
 //! [panic_exception_with_error!],
 
 #![no_std]
+// TODO why is this a separate crate? We are using locals! which means that this should probably
+// be exported from somewhere with access to it
+#![allow(clippy::crate_in_macro_def)]
 
 use paste::paste;
 

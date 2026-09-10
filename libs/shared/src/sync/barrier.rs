@@ -115,6 +115,7 @@ impl Barrier {
     ///
     /// calling enter after a timeout might cause a deadlock on [Self::enter] and similar
     /// unless all other currently waiting processors also time out.
+    #[allow(clippy::collapsible_if)]
     pub fn enter_with_timeout(&self, timeout: TscDuration) -> Result<bool, TscDuration> {
         let mut start = TscTimestamp::new(0);
         let mut end = start;

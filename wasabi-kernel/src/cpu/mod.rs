@@ -61,13 +61,15 @@ mod instructions {
         interrupts::disable();
     }
 
-    /// # Safety caller must ensure that interrupts don't violate any safety guarantees
-    ///
     /// When possible `locals!().disbale_interrupts()` should be used instead.
     ///
     /// ## See:
     /// [crate::core_local::CoreLocals]  
     /// [crate::locals]
+    ///
+    /// # Safety
+    ///
+    /// caller must ensure that interrupts don't violate any safety guarantees
     #[inline(always)]
     pub unsafe fn enable_interrupts() {
         interrupts::enable();

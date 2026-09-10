@@ -150,9 +150,7 @@ impl Apic {
             | PageTableFlags::NO_EXECUTE
             | PageTableFlags::NO_CACHE;
 
-        let page = PageAllocator::get_for_kernel()
-            .lock()
-            .allocate_page_4k()?;
+        let page = PageAllocator::get_for_kernel().lock().allocate_page_4k()?;
         unsafe {
             let mut frame_alloc = FrameAllocator::get_for_kernel().lock();
             // Safety: new page with apic frame (only used here) and is therefor safe
@@ -164,7 +162,7 @@ impl Apic {
         };
 
         let base_ptr = unsafe {
-            // Saftey: we just mapped this page
+            // Safety: we just mapped this page
             UntypedPtr::new(page.start_address())
         }
         .expect("Page start_addr should never be 0");
@@ -210,7 +208,7 @@ impl Apic {
         VolatilePtr<'a, u32, ReadOnly>,
     ) {
         unsafe {
-            // Saftey: offsets within allocaton
+            // Safety: offsets within allocaton
             let vaddr_low = self.base.offset(offset as isize);
             let vaddr_high = vaddr_low.offset(0x10);
 
@@ -238,7 +236,7 @@ impl Apic {
         VolatilePtr<'a, u32, ReadWrite>,
     ) {
         unsafe {
-            // Saftey: offsets within allocaton
+            // Safety: offsets within allocaton
             let vaddr_low = self.base.offset(offset as isize);
             let vaddr_high = vaddr_low.offset(0x10);
 

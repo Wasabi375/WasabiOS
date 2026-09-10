@@ -76,7 +76,7 @@ impl InterruptHandlerState {
     }
 
     fn idt(&self) -> &InterruptDescriptorTable {
-        // Saftey: the only time this is accessed as mutable is during `interrupts::init`
+        // Safety: the only time this is accessed as mutable is during `interrupts::init`
         // which does not alias this
         unsafe { &*self.idt.get() }
     }
@@ -87,7 +87,7 @@ impl InterruptHandlerState {
     ///
     /// `&self` must be fullfill all guarantees of `&mut self`
     unsafe fn init(&self) {
-        // Saftey: see [Self::init]
+        // Safety: see [Self::init]
         let idt = unsafe { &mut *self.idt.get() };
 
         // init_all_default must be called first or otherwise, this will

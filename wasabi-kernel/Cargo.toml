@@ -16,7 +16,6 @@ no-unicode-log = ["shared/no-unicode-log"]
 task-stack-history = []
 test = ["dep:testing"]
 
-
 [dependencies]
 histogram = { workspace = true, optional = true }
 interrupt-fn-builder.workspace = true
@@ -50,3 +49,6 @@ derive-where.workspace = true
 
 [build-dependencies]
 walkdir.workspace = true
+
+[lints]
+workspace = true

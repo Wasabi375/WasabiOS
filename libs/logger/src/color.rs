@@ -24,7 +24,7 @@ pub enum Color {
     TrueColor { r: u8, g: u8, b: u8 },
 }
 
-pub const ANSI_RESET: &'static str = "\x1b[0m";
+pub const ANSI_RESET: &str = "\x1b[0m";
 
 pub(super) fn write_ansi_fg_color<W: Write>(writer: &mut W, color: Color) -> core::fmt::Result {
     match color {

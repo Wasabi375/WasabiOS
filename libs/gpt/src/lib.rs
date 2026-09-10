@@ -147,7 +147,7 @@ impl Header {
             return Err(InvalidHeader::InvalidMyLBA(self.my_lba, header_lba));
         }
 
-        if self.size_of_partition_entry % 128 != 0 {
+        if !self.size_of_partition_entry.is_multiple_of(128) {
             return Err(InvalidHeader::InvalidPartitionEntrySize(
                 self.size_of_partition_entry,
             ));
@@ -253,6 +253,7 @@ impl<BDError: Error + Send + Sync + 'static> From<core::alloc::AllocError>
 }
 
 pub fn read_gpt<B: BlockDevice>(device: &B) -> Result<GPT, GPTReadError<B::BlockDeviceError>> {
+    #[allow(clippy::type_complexity)]
     fn read<B: BlockDevice>(
         device: &B,
         header_lba: LBA,

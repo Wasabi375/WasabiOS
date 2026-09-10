@@ -123,7 +123,7 @@ pub enum PrpOrSgl {
     SglIncludingMeta = 0b10,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DataPtr {
     pub(super) prp_entry_1: PrpEntry,

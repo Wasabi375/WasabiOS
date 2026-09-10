@@ -132,7 +132,6 @@ fn find_primes() {
                 info!("{i} is prime");
             }
             last_prime = i;
-        } else {
         }
     }
 }

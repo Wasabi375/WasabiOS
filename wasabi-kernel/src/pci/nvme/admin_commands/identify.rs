@@ -295,7 +295,7 @@ pub struct IdentifyNamespaceData {
 
 #[allow(missing_docs)]
 impl IdentifyNamespaceData {
-    /// # Saftey:
+    /// # Safety
     ///
     /// The virtual address is the vaddr used for a namespace identify command
     /// that finished successfully

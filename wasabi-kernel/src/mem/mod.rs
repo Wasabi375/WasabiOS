@@ -16,17 +16,17 @@
 //! ## Pointer Types
 //!
 //! * **Memory Mapped Pointers**:
-//!     In places where it is necessary to store memory mapped pointers,
-//!     when possible [NonNull] should be prefered to [VirtAddr].
-//!     Optional/Nullable pointers should be of type `Option<NonNull<T>>`.
+//!   In places where it is necessary to store memory mapped pointers,
+//!   when possible [NonNull] should be prefered to [VirtAddr].
+//!   Optional/Nullable pointers should be of type `Option<NonNull<T>>`.
 //! * **Untyped Mapped Pointers**
-//!     For untyped ptrs, e.g. stack or heap pointers, [UntypedPtr] should
-//!     be used. Again Optional/Nullable pointers should be of type `Option<UntypedPtr>`
+//!   For untyped ptrs, e.g. stack or heap pointers, [UntypedPtr] should
+//!   be used. Again Optional/Nullable pointers should be of type `Option<UntypedPtr>`
 //! * **Unmapped Memory**:
-//!     When dealing with fixed static addresses that may not be mapped to physical
-//!     memory [VirtAddr] should be used.
+//!   When dealing with fixed static addresses that may not be mapped to physical
+//!   memory [VirtAddr] should be used.
 //! * **Physical Memory**:
-//!     [PhysAddr] is used to refer to physicall addresses.
+//!   [PhysAddr] is used to refer to physicall addresses.
 //!
 //! ## Data Structures
 //!

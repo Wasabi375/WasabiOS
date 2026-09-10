@@ -111,9 +111,7 @@ impl<const BLOCK_SIZE: usize> NvmeBlockDevice<BLOCK_SIZE> {
         assert!(controller_cap.lba_block_size <= block_size);
 
         assert_ne!(
-            block_count
-                .checked_add(first_lba.get())
-                .and_then(LBA::new),
+            block_count.checked_add(first_lba.get()).and_then(LBA::new),
             None,
             "Block count overflows LBA range from start"
         );
@@ -535,7 +533,7 @@ impl MappingsAllocator {
 
     /// Free a mapping created using [Self::allocate]
     ///
-    /// Safety:
+    /// # Safety
     ///
     /// Follows [Self::free_mapping]
     unsafe fn free(
@@ -562,7 +560,7 @@ impl MappingsAllocator {
     ///
     /// panics if page is not mapped to frame.
     ///
-    /// Safety:
+    /// # Safety
     ///
     /// * `page` must be mapped to write to the memory backed by `frame`.
     /// * There must not be any pointers into page or any other mappaing to `frame`

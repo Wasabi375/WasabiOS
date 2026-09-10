@@ -29,7 +29,7 @@ unsafe fn wrapping_sum<T: ?Sized>(start: &T, length: usize) -> u8 {
 }
 
 /// ACPI table header
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Header {
     pub signature: [u8; 4],
     /// length in bytes of the entire table
@@ -62,7 +62,7 @@ impl Header {
 }
 
 /// Extended System Descriptor Table
-pub struct XSDT {
+pub struct Xsdt {
     // signature must be "XSDT"
     // revision must be 1
     pub header: &'static Header,
@@ -72,7 +72,7 @@ pub struct XSDT {
     pub first_entry: *const PhysAddr,
 }
 
-impl XSDT {
+impl Xsdt {
     /// converts vaddr to [XSDT] and checks that it is valid
     ///
     /// # Safety vaddr must point to valid XSDT struct
@@ -132,7 +132,7 @@ impl AcpiTable {
 
 /// Root System Descriptor Pointer
 #[derive(Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct RsdpV1 {
     pub signature: [u8; 8],
     pub checksum: u8,
@@ -165,7 +165,7 @@ impl RsdpV1 {
 }
 
 #[derive(Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct RsdpV2 {
     pub signature: [u8; 8],
     pub checksum: u8,

@@ -329,11 +329,7 @@ impl TaskSystem {
     /// Get some basic information about a [Task]
     pub fn get_task_info(&self, handle: TaskHandle) -> Option<TaskInfo> {
         let data = self.data.lock();
-        let Some(task) = data.tasks.get(&handle) else {
-            return None;
-        };
-
-        Some(TaskInfo {
+        data.tasks.get(&handle).map(|task| TaskInfo {
             handle,
             name: task.name.clone(),
         })
@@ -362,7 +358,6 @@ impl TaskSystem {
 
         self.running.store(true, Ordering::Release);
 
-        
         self.start_timer(self.data.lock().as_ref())
     }
 
@@ -486,7 +481,8 @@ impl TaskSystem {
         registers.rdi = task_thin as u64;
         // rsi contains second argument
         // Safety: DynMetadata is a NonNull wrapper and therefor can be transmuted into a u64
-        registers.rsi = unsafe { core::mem::transmute(task_meta) };
+        registers.rsi =
+            unsafe { core::mem::transmute::<core::ptr::DynMetadata<_>, u64>(task_meta) };
 
         // TODO locals is wrong here. I need the gdt for the cpu core that the task is launched on
         let segments = locals!().gdt.kernel_segments();
@@ -529,13 +525,14 @@ impl TaskSystem {
 
         data.interrupted.push_back(new_handle);
 
-        if self.is_running() && !self.timer_running.load(Ordering::Acquire)
+        if self.is_running()
+            && !self.timer_running.load(Ordering::Acquire)
             && let Some(old_vec) = self
                 .start_timer(&data)
                 .expect("Restarting timer should work.")
-            {
-                warn!("TaskSystem is overwriting timer interrupt vector. Old vector: {old_vec}");
-            }
+        {
+            warn!("TaskSystem is overwriting timer interrupt vector. Old vector: {old_vec}");
+        }
 
         Ok(new_handle)
     }
@@ -745,7 +742,7 @@ impl TaskInterrupt {
         assert!(xsave_area.is_aligned_to(64));
 
         unsafe {
-            // Saftey: this has to be done in assembly
+            // Safety: this has to be done in assembly
             asm!(
                 // push fields for iretq
                 "push {stack_segment:r}",
@@ -848,7 +845,7 @@ struct InternalGuard {
 impl InternalGuard {
     /// Interrupt leading to context switch entered TaskSystem
     ///
-    /// Safety:
+    /// # Safety
     ///
     /// must be called once in interrupts in code paths that lead to [TaskInterrupt::resume]
     /// before [SystemData] lock is taken to ensure context-switch is not preemted
@@ -868,7 +865,7 @@ impl InternalGuard {
 
     /// Enter a context switch without an existing interrupt
     ///
-    /// Safety:
+    /// # Safety
     ///
     /// must be called once  in *non* interrupts in code paths that lead to [TaskInterrupt::resume]
     /// before [SystemData] lock is taken to ensure context-switch is not preemted

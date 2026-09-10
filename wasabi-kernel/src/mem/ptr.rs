@@ -2,10 +2,8 @@
 
 use core::{
     fmt::{Debug, Pointer},
-    isize,
     ops::Add,
     ptr::NonNull,
-    usize,
 };
 
 #[allow(unused_imports)]
@@ -91,6 +89,7 @@ impl UntypedPtr {
     /// The safety requirements to create/deref a UntypedPtr requires
     /// the ptr to be mapped, thereby guaranteeing that the offset is
     /// part of the same [allocated object](https://doc.rust-lang.org/core/ptr/index.html#allocated-object)
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, bytes: usize) -> UntypedPtr {
         unsafe { UntypedPtr(self.0.add(bytes)) }
     }
@@ -134,28 +133,36 @@ impl UntypedPtr {
 
     /// returns a [VolatilePtr] that provides access to this ptr
     ///
-    /// Safety: Pointer must be a valid *mut* reference
+    /// # Safety
+    ///
+    /// Pointer must be a valid *mut* reference
     pub unsafe fn as_volatile_ptr<'a, T>(self) -> VolatilePtr<'a, T, ReadOnly> {
         unsafe { VolatilePtr::new_read_only(self.cast()) }
     }
 
     /// returns a [VolatilePtr] that provides access to this ptr
     ///
-    /// Safety: Pointer must be a valid *mut* reference
+    /// # Safety
+    ///
+    /// Pointer must be a valid *mut* reference
     pub unsafe fn as_volatile_ptr_mut<'a, T>(self) -> VolatilePtr<'a, T> {
         unsafe { VolatilePtr::new(self.cast()) }
     }
 
     /// returns a [VolatileRef] that provides access to this ptr
     ///
-    /// Safety: Pointer must be a valid *mut* reference
+    /// # Safety
+    ///
+    /// Pointer must be a valid *mut* reference
     pub unsafe fn as_volatile_ref<'a, T>(self) -> VolatileRef<'a, T, ReadOnly> {
         unsafe { VolatileRef::new_read_only(self.cast()) }
     }
 
     /// returns a [VolatilePtr] that provides access to this ptr
     ///
-    /// Safety: Pointer must be a valid *mut* reference
+    /// # Safety
+    ///
+    /// Pointer must be a valid *mut* reference
     pub unsafe fn as_volatile_ref_mut<'a, T>(self) -> VolatileRef<'a, T> {
         unsafe { VolatileRef::new(self.cast()) }
     }
@@ -164,7 +171,7 @@ impl UntypedPtr {
     ///
     /// See [NonNull::write_bytes].
     ///
-    /// # Saftey
+    /// # Safety
     ///
     /// The caller must guarantee the following:
     ///  1. This points to a valid memory for the next `count` bytes.
