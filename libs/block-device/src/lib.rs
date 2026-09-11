@@ -4,8 +4,7 @@
 //! to in blocks of a fixed size.
 
 #![no_std]
-#![allow(incomplete_features)] // for generic_const_exprs
-#![feature(arbitrary_self_types, generic_const_exprs)]
+#![feature(arbitrary_self_types)]
 #![warn(missing_docs)]
 
 extern crate alloc;
@@ -57,85 +56,77 @@ macro_rules! block_size_types {
         #[derive(Debug, Clone, PartialEq, Eq)]
         #[repr(C, align($size))]
         #[allow(unused)]
-        pub struct $block<T>
-        where
-            [u8; $size - core::mem::size_of::<T>()]: Sized,
-        {
+        pub struct $block<T> {
             /// The data stored within the block
-            pub data: T,
-            _pad: [u8; $size - core::mem::size_of::<T>()],
+            data: [u8; $size],
+            typ: core::marker::PhantomData<T>,
         }
-        static_assertions::const_assert_eq!(core::mem::size_of::<$block<[u8; $size]>>(), $size);
 
-        impl<T> $block<T>
-        where
-            [u8; $size - core::mem::size_of::<T>()]: Sized,
-        {
+        impl<T> $block<T> {
             /// Create a new block aligned `T`
             #[allow(unused)]
             pub const fn new(data: T) -> Self {
-                Self {
-                    data: data,
-                    _pad: [0; { $size - core::mem::size_of::<T>() }],
+                assert!(core::mem::size_of::<T>() <= $size);
+                assert!(($size as usize).is_multiple_of(core::mem::align_of::<T>()));
+
+                let mut this = Self {
+                    data: [0; $size],
+                    typ: core::marker::PhantomData,
+                };
+
+                let ptr = &mut this.data as *mut u8 as *mut T;
+
+                unsafe {
+                    // Safety:
+                    //  * it's save to write to ptr (which points to this.data)
+                    //  * ptr is aligned to 4096, which is a valid alignment for T
+                    core::ptr::write(ptr, data);
                 }
+
+                this
             }
 
             /// Extract the inner value
             #[allow(unused)]
             pub fn into_inner(self) -> T {
-                self.data
+                let ptr = &self.data as *const u8 as *const T;
+                unsafe {
+                    // Safety:
+                    //  * ptr is save to read and aligned (see [Self::new])
+                    core::ptr::read(ptr)
+                }
             }
 
             /// Extract into byte array
             #[allow(unused)]
             pub fn into_block_array(self) -> [u8; $size] {
-                assert!(core::mem::size_of::<Self>() == $size);
-                // Safety:
-                //  &self is valid for $size bytes and u8 has can have any aligment
-                unsafe { *(&self as *const _ as *const u8 as *const [u8; $size]) }
+                self.data
             }
 
             /// Returns a u8 slice that covers the entire block.
             ///
             /// This will include the value at offset 0 followed by
             /// some padding.
-            /// The bytes stored in the padding are undefined, however
-            /// the [Self::new] will create a block with the padding set to `0x0`.
+            /// The bytes stored in the padding are unused by Block but persit
+            /// if changed. [Self::new] will initialize the padding with zeros.
             #[allow(unused)]
             pub fn block_data(&self) -> &[u8] {
-                assert!(core::mem::size_of::<Self>() == $size);
-
-                let ptr = self as *const _ as *const u8;
-
-                unsafe {
-                    // Safety:
-                    // self owns exactly $size bytes of data
-                    core::slice::from_raw_parts(ptr, $size)
-                }
+                &self.data
             }
         }
         impl<T> $block<T>
         where
             T: $crate::BlockConstructable,
-            [u8; $size - core::mem::size_of::<T>()]: Sized,
         {
             /// Returns a u8 slice that covers the entire block.
             ///
             /// This will include the value at offset 0 followed by
             /// some padding.
-            /// The bytes stored in the padding are undefined, however
-            /// the [Self::new] will create a block with the padding set to `0x0`.
+            /// The bytes stored in the padding are unused by Block but persit
+            /// if changed. [Self::new] will initialize the padding with zeros.
             #[allow(unused)]
             pub fn block_data_mut(&mut self) -> &mut [u8] {
-                assert!(core::mem::size_of::<Self>() == $size);
-
-                let ptr = self as *mut _ as *mut u8;
-
-                unsafe {
-                    // Safety:
-                    // self owns exactly $size bytes of data
-                    core::slice::from_raw_parts_mut(ptr, $size)
-                }
+                &mut self.data
             }
         }
 
@@ -145,55 +136,64 @@ macro_rules! block_size_types {
             pub const ZERO: $slice = $block::new([0u8; $size]);
         }
 
-        impl<T> $block<core::mem::MaybeUninit<T>>
-        where
-            [u8; $size - core::mem::size_of::<T>()]: Sized,
-            [u8; $size - core::mem::size_of::<core::mem::MaybeUninit<T>>()]: Sized,
-        {
-            /// Cerate a zerored uninit block
+        impl<T> $block<core::mem::MaybeUninit<T>> {
+            /// Cerates a uninit block
             #[allow(unused)]
             pub fn uninit() -> Self {
+                Self::new(core::mem::MaybeUninit::uninit())
+            }
+
+            /// Cerates a zeroed block
+            #[allow(unused)]
+            pub fn zeroed() -> Self {
                 Self::new(core::mem::MaybeUninit::zeroed())
             }
 
             /// Converts block into an initialized block
             ///
-            /// #Safety
+            /// # Safety
             ///
-            /// value must be initialized, see [core::mem::MaybeUninit::assume_init]
+            /// value must be initialized
+            ///
+            /// see [core::mem::MaybeUninit::assume_init], [core::ops::DerefMut]
             #[allow(unused)]
-            pub unsafe fn assume_init(self) -> $block<T> {
+            pub unsafe fn assume_init(mut self) -> $block<T> {
+                unsafe {
+                    // Safety:
+                    //  guranteed by function Safety
+                    core::ops::DerefMut::deref_mut(&mut self).assume_init_mut();
+                }
                 $block {
-                    // Safety: by function definition
-                    data: unsafe { self.data.assume_init() },
-                    // Safety: self._pad and result._pad have the same size and aligment,
-                    // based on the fact that `MaybeUnit<T>` and `T` have the exact same memory
-                    // layout. Therefor the layout of `block` is the same, meaning the padding
-                    // also shares the exact same memory layout
-                    _pad: unsafe {
-                        *(&self._pad as *const u8 as *const [u8; $size - core::mem::size_of::<T>()])
-                    },
+                    data: self.data,
+                    typ: core::marker::PhantomData,
                 }
             }
         }
 
-        impl<T> core::ops::Deref for $block<T>
-        where
-            [u8; $size - core::mem::size_of::<T>()]: Sized,
-        {
+        impl<T> core::ops::Deref for $block<T> {
             type Target = T;
 
             fn deref(&self) -> &Self::Target {
-                &self.data
+                let ptr = &self.data as *const u8 as *const T;
+                unsafe {
+                    // Safety:
+                    //  data is save to read and $size aligned, which is
+                    //  a valid alignment for T
+                    &*ptr
+                }
             }
         }
 
-        impl<T> core::ops::DerefMut for $block<T>
-        where
-            [u8; $size - core::mem::size_of::<T>()]: Sized,
-        {
+        impl<T> core::ops::DerefMut for $block<T> {
             fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.data
+                let ptr = &mut self.data as *mut u8 as *mut T;
+                unsafe {
+                    // Safety:
+                    //  * data is save to read and $size aligned, which is
+                    //    a valid alignment for T
+                    //  * we have mut access to self and therefor to self.data
+                    &mut *ptr
+                }
             }
         }
     };

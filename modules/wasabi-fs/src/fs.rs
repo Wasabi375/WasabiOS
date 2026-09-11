@@ -961,7 +961,7 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             let part_data = bytes
                 .split_off(..min(BLOCK_STRING_PART_DATA_LENGTH, bytes.len()))
                 .expect("we take at max the remaining length");
-            string_part.data.data[..part_data.len()].copy_from_slice(part_data);
+            string_part.data[..part_data.len()].copy_from_slice(part_data);
             self.device
                 .write_block(part_lba, string_part.block_data())
                 .map_err(map_device_error)?;

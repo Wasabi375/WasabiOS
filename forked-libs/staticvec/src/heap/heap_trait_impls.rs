@@ -66,7 +66,7 @@ impl<T: Ord, I: IntoIterator<Item = T>, const N: usize> ExtendEx<T, I> for Stati
 
     #[inline(always)]
     default fn from_iter_ex(iter: I) -> Self {
-        StaticHeap::from(StaticVec::from_iter(iter))
+        StaticHeap::from(StaticVec::<T, N>::from_iter(iter))
     }
 }
 
@@ -81,7 +81,7 @@ impl<'a, T: 'a + Copy + Ord, I: IntoIterator<Item = &'a T>, const N: usize> Exte
 
     #[inline(always)]
     default fn from_iter_ex(iter: I) -> Self {
-        StaticHeap::from(StaticVec::from_iter(iter))
+        StaticHeap::from(StaticVec::<T, N>::from_iter(iter))
     }
 }
 
@@ -207,7 +207,7 @@ impl<T, const N: usize> IntoIterator for StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let heap = StaticHeap::from([1, 2, 3, 4]);
+    /// let heap = StaticHeap::<_, 4>::from([1, 2, 3, 4]);
     /// // Print 1, 2, 3, 4 in arbitrary order
     /// for x in heap.into_iter() {
     ///   // x has type i32, not &i32

@@ -76,7 +76,7 @@ mod heap_trait_impls;
 /// use core::cmp::Reverse;
 ///
 /// // Wrap the values in `Reverse`.
-/// let mut heap = StaticHeap::from([Reverse(1), Reverse(5), Reverse(2)]);
+/// let mut heap = StaticHeap::<_, 3>::from([Reverse(1), Reverse(5), Reverse(2)]);
 ///
 /// // If we pop these scores now, they should come back in the reverse order.
 /// assert_eq!(heap.pop(), Some(Reverse(1)));
@@ -173,7 +173,7 @@ impl<T: Ord, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let mut heap = StaticHeap::from([1, 3]);
+    /// let mut heap = StaticHeap::<_, 2>::from([1, 3]);
     /// unsafe {
     ///   assert_eq!(heap.pop_unchecked(), 3);
     ///   assert_eq!(heap.pop_unchecked(), 1);
@@ -201,7 +201,7 @@ impl<T: Ord, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let mut heap = StaticHeap::from([1, 3]);
+    /// let mut heap = StaticHeap::<_, 2>::from([1, 3]);
     /// assert_eq!(heap.pop(), Some(3));
     /// assert_eq!(heap.pop(), Some(1));
     /// assert_eq!(heap.pop(), None);
@@ -449,7 +449,7 @@ impl<T: Ord, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let mut heap = StaticHeap::from([1, 2, 3, 4, 5]);
+    /// let mut heap = StaticHeap::<_, 5>::from([1, 2, 3, 4, 5]);
     /// assert_eq!(heap.len(), 5);
     /// drop(heap.drain_sorted()); // removes all elements in heap order
     /// assert_eq!(heap.len(), 0);
@@ -469,7 +469,7 @@ impl<T, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let heap = StaticHeap::from(staticvec![1, 2, 3, 4]);
+    /// let heap = StaticHeap::<_, 4>::from(staticvec![1, 2, 3, 4]);
     /// // Print 1, 2, 3, 4 in arbitrary order
     /// for x in heap.iter() {
     ///   println!("{}", x);
@@ -490,7 +490,7 @@ impl<T, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let mut heap = StaticHeap::from([1, 2, 3, 4]);
+    /// let mut heap = StaticHeap::<_, 4>::from([1, 2, 3, 4]);
     /// for i in heap.iter_mut() {
     ///   *i *= 2;
     /// }
@@ -510,7 +510,7 @@ impl<T, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let heap = StaticHeap::from([1, 2, 3, 4, 5]);
+    /// let heap = StaticHeap::<_, 5>::from([1, 2, 3, 4, 5]);
     /// assert_eq!(
     ///   heap.into_iter_sorted().take(2).collect::<StaticVec<_, 3>>(), staticvec![5, 4]
     /// );
@@ -608,7 +608,7 @@ impl<T, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let heap = StaticHeap::from(staticvec![1, 2, 3, 4, 5, 6, 7]);
+    /// let heap = StaticHeap::<_, 7>::from(staticvec![1, 2, 3, 4, 5, 6, 7]);
     /// let vec = heap.into_staticvec();
     /// // Will print in some order
     /// for x in &vec {
@@ -627,7 +627,7 @@ impl<T, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let heap = StaticHeap::from(staticvec![1, 3]);
+    /// let heap = StaticHeap::<_, 2>::from(staticvec![1, 3]);
     /// assert_eq!(heap.len(), 2);
     /// ```
     #[inline(always)]
@@ -716,7 +716,7 @@ impl<T, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let mut heap = StaticHeap::from(staticvec![1, 3]);
+    /// let mut heap = StaticHeap::<_, 2>::from(staticvec![1, 3]);
     /// assert!(heap.is_not_empty());
     /// for x in heap.drain() {
     ///   println!("{}", x);
@@ -735,7 +735,7 @@ impl<T, const N: usize> StaticHeap<T, N> {
     /// Basic usage:
     /// ```
     /// # use staticvec::*;
-    /// let mut heap = StaticHeap::from(staticvec![1, 3]);
+    /// let mut heap = StaticHeap::<_, 2>::from(staticvec![1, 3]);
     /// assert!(heap.is_not_empty());
     /// heap.clear();
     /// assert!(heap.is_empty());

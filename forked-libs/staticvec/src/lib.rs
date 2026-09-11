@@ -28,9 +28,9 @@
     core_intrinsics,
     doc_cfg,
     exact_size_is_empty,
-    generic_const_exprs,
     maybe_uninit_array_assume_init,
     maybe_uninit_uninit_array_transpose,
+    min_generic_const_args,
     pattern,
     slice_partition_dedup,
     specialization,
@@ -50,8 +50,8 @@ use core::mem::{self, size_of, MaybeUninit};
 use core::ops::{
     Add, Bound::Excluded, Bound::Included, Bound::Unbounded, Div, Mul, RangeBounds, Sub,
 };
+use core::ptr;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
-use core::{ptr, usize};
 
 use shared::math::Number;
 
@@ -190,12 +190,7 @@ where
     /// Note that StaticVec also implements [`From`](core::convert::From) for both slices and
     /// fixed-size arrays (as well as several other types), which may prove more ergonomic in some
     /// cases as it allows for a greater degree of type inference:
-    /// ```
-    /// # use staticvec::StaticVec;
-    /// // The StaticVec on the next line is inferred to be of type `StaticVec<&'static str, 4>`.
-    /// let v = StaticVec::from(["A", "B", "C", "D"]);
-    /// assert_eq!(v, ["A", "B", "C", "D"]);
-    /// ```
+    ///
     /// You can essentially use [`From`](core::convert::From) in the vast majority of scenarios
     /// where *either* [`new_from_slice`](crate::StaticVec::new_from_slice) or
     /// [`new_from_array`](crate::StaticVec::new_from_array) would be accepted by the compiler,
@@ -1610,236 +1605,6 @@ where
         }
     }
 
-    /// Returns a new StaticVec consisting of the elements of `self` and `other` concatenated in
-    /// linear fashion such that the first element of `other` comes immediately after the last
-    /// element of `self`.
-    ///
-    /// The `N2` parameter does not need to be provided explicitly, and can be inferred directly from
-    /// the constant `N2` constraint of `other` (which may or may not be the same as the `N`
-    /// constraint of `self`.)
-    ///
-    /// Locally requires that `T` implements [`Copy`](core::marker::Copy) to
-    /// avoid soundness issues and also allow for a more efficient implementation than would otherwise
-    /// be possible.
-    ///
-    /// # Example usage:
-    /// ```
-    /// #![feature(generic_const_exprs)]
-    /// # use staticvec::staticvec;
-    /// assert!(staticvec!['a', 'b'].concat(&staticvec!['c', 'd']) == ['a', 'b', 'c', 'd']);
-    /// ```
-    #[inline]
-    pub fn concat<const N2: usize>(
-        &self,
-        other: &StaticVec<T, N2, L>,
-    ) -> StaticVec<T, { N + N2 }, L>
-    where
-        T: Copy,
-    {
-        let length: usize = self.length.try_into().unwrap();
-        let other_length: usize = other.length.try_into().unwrap();
-        let mut res = MaybeUninit::uninit();
-        let res_ptr = res.as_mut_ptr() as *mut T;
-        unsafe {
-            // Copy over all of `self`.
-            self.as_ptr().copy_to_nonoverlapping(res_ptr, length);
-            // Copy over all of `other` starting at the position immediately following
-            // the last occupied position of the copy we just did from `self`.
-            other
-                .as_ptr()
-                .copy_to_nonoverlapping(res_ptr.add(length), other_length);
-        }
-        StaticVec {
-            data: res,
-            length: (length + other_length).try_into().unwrap(),
-        }
-    }
-
-    /// A version of [`concat`](crate::StaticVec::concat) for scenarios where `T` does not
-    /// derive [`Copy`](core::marker::Copy) but does implement [`Clone`](core::clone::Clone).
-    ///
-    /// Due to needing to call `clone()` through each individual element of `self` and `other`, this
-    /// function is less efficient than [`concat`](crate::StaticVec::concat), so
-    /// [`concat`](crate::StaticVec::concat) should be preferred whenever possible.
-    ///
-    /// # Example usage:
-    /// ```
-    /// #![feature(generic_const_exprs)]
-    /// # use staticvec::staticvec;
-    /// assert!(staticvec!["a", "b"].concat_clone(&staticvec!["c", "d"]) == ["a", "b", "c", "d"]);
-    /// ```
-    #[inline]
-    pub fn concat_clone<const N2: usize>(
-        &self,
-        other: &StaticVec<T, N2, L>,
-    ) -> StaticVec<T, { N + N2 }, L>
-    where
-        T: Clone,
-    {
-        let mut res = StaticVec::new();
-        for item in self {
-            unsafe { res.push_unchecked(item.clone()) };
-        }
-        for item in other {
-            unsafe { res.push_unchecked(item.clone()) };
-        }
-        res
-    }
-
-    /// Returns a new StaticVec consisting of the elements of `self` in linear order, interspersed
-    /// with a copy of `separator` between each one.
-    ///
-    /// Locally requires that `T` implements [`Copy`](core::marker::Copy) to
-    /// avoid soundness issues and also allow for a more efficient implementation than would otherwise
-    /// be possible.
-    ///
-    /// # Example usage:
-    /// ```
-    /// # use staticvec::staticvec;
-    /// assert_eq!(
-    ///  staticvec!["A", "B", "C", "D"].intersperse("Z"),
-    ///  ["A", "Z", "B", "Z", "C", "Z", "D"]
-    /// );
-    /// ```
-    #[inline]
-    pub fn intersperse(&self, separator: T) -> StaticVec<T, { N * 2 }, L>
-    where
-        T: Copy,
-    {
-        if self.is_empty() {
-            return StaticVec::new();
-        }
-        let mut res = StaticVec::new_data_uninit();
-        // The `as *mut T` cast below is necessary to make the type inference work properly (at the
-        // moment at least). `rustc` still gets a bit confused by math operations done on const generic
-        // values in return types it seems.
-        // Note that the `StaticVec::new()` calls above *have* to be written without any constraints,
-        // as otherwise we'll hit a particular bug where `rustc` says:
-        // "expected struct `StaticVec<_, { N * 2 }>`, found struct `StaticVec<_, { N * 2 }>`".
-        let mut res_ptr = StaticVec::first_ptr_mut(&mut res) as *mut T;
-        let mut i = L::ZERO;
-        let length = self.length;
-        while i < length - L::ONE {
-            unsafe {
-                res_ptr.write(self.ptr_at_unchecked(i).read());
-                res_ptr.offset(1).write(separator);
-                res_ptr = res_ptr.offset(2);
-            }
-            i += L::ONE;
-        }
-        unsafe {
-            res_ptr.write(self.ptr_at_unchecked(i).read());
-        }
-        StaticVec {
-            data: res,
-            length: ((length.try_into().unwrap() * 2) - 1).try_into().unwrap(),
-        }
-    }
-
-    /// A version of [`intersperse`](crate::StaticVec::intersperse) for scenarios where `T` does not
-    /// derive [`Copy`](core::marker::Copy) but does implement [`Clone`](core::clone::Clone).
-    ///
-    /// Due to needing to call `clone()` through each individual element of `self` and also on
-    /// `separator`, this function is less efficient than
-    /// [`intersperse`](crate::StaticVec::intersperse), so
-    /// [`intersperse`](crate::StaticVec::intersperse) should be preferred whenever possible.
-    ///
-    /// # Example usage:
-    /// ```
-    /// # use staticvec::staticvec;
-    /// assert_eq!(
-    ///  staticvec!["A", "B", "C", "D"].intersperse_clone("Z"),
-    ///  ["A", "Z", "B", "Z", "C", "Z", "D"]
-    /// );
-    /// ```
-    #[inline]
-    pub fn intersperse_clone(&self, separator: T) -> StaticVec<T, { N * 2 }, L>
-    where
-        T: Clone,
-    {
-        if self.is_empty() {
-            return StaticVec::new();
-        }
-        let mut res = StaticVec::new();
-        let length = self.length;
-        unsafe {
-            for i in 0..length.try_into().unwrap() - 1 {
-                res.push_unchecked(self.get_unchecked(i.try_into().unwrap()).clone());
-                res.push_unchecked(separator.clone());
-            }
-            res.push_unchecked(self.get_unchecked(length - L::ONE).clone());
-        }
-        res
-    }
-
-    /// Returns a StaticVec containing the contents of a [`Vec`](alloc::vec::Vec) instance.
-    /// If the [`Vec`](alloc::vec::Vec) has a length greater than the declared capacity of the
-    /// resulting StaticVec, any contents after that point are ignored. Note that using this function
-    /// consumes the source [`Vec`](alloc::vec::Vec).
-    ///
-    /// # Example usage:
-    /// ```
-    /// # use staticvec::*;
-    /// let mut v = vec![1, 2, 3];
-    /// let sv: StaticVec<i32, 3> = StaticVec::from_vec(v);
-    /// assert_eq!(sv, [1, 2, 3]);
-    /// ```
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline]
-    pub fn from_vec(mut vec: Vec<T>) -> Self {
-        let vec_len: usize = vec.len();
-        let item_count = vec_len.min(N);
-        Self {
-            data: {
-                // Set the length of `vec` to 0 to prevent double-drops.
-                unsafe { vec.set_len(0) };
-                let mut data = StaticVec::new_data_uninit();
-                unsafe {
-                    vec.as_ptr()
-                        .copy_to_nonoverlapping(StaticVec::first_ptr_mut(&mut data), item_count);
-                    // Manually drop any excess values in the source vec to avoid undesirable memory leaks.
-                    if vec_len > item_count {
-                        ptr::drop_in_place(from_raw_parts_mut(
-                            vec.as_mut_ptr().add(item_count),
-                            vec_len - item_count,
-                        ));
-                    }
-                    data
-                }
-            },
-            length: item_count.try_into().unwrap(),
-        }
-    }
-
-    /// Returns a [`Vec`](alloc::vec::Vec) containing the contents of the StaticVec instance.
-    /// The returned [`Vec`](alloc::vec::Vec) will initially have the same value for
-    /// [`len`](alloc::vec::Vec::len) and [`capacity`](alloc::vec::Vec::capacity) as the source
-    /// StaticVec. Note that using this function consumes the source StaticVec.
-    ///
-    /// # Example usage:
-    /// ```
-    /// # use staticvec::*;
-    /// let mut sv = staticvec![1, 2, 3];
-    /// let v = sv.into_vec();
-    /// assert_eq!(v, [1, 2, 3]);
-    /// ```
-    #[cfg(feature = "alloc")]
-    #[doc(cfg(feature = "alloc"))]
-    #[inline(always)]
-    pub fn into_vec(mut self) -> Vec<T> {
-        let mut res = Vec::with_capacity(N);
-        let length = self.length.try_into().unwrap();
-        unsafe {
-            self.as_ptr()
-                .copy_to_nonoverlapping(res.as_mut_ptr(), length);
-            res.set_len(length);
-            // Set the length of `self` to 0 to prevent double-drops.
-            self.set_len(L::ZERO);
-            res
-        }
-    }
-
     /// Inspired by the function of the same name from `ArrayVec`, this function directly returns
     /// the StaticVec's backing array (as a "normal" array not wrapped in an instance of
     /// `MaybeUninit`) in `Ok` if and only if the StaticVec is at maximum capacity. Otherwise, the
@@ -2153,59 +1918,6 @@ where
         }
     }
 
-    /// Splits one StaticVec into two new ones at index `M` and returns them in a tuple, while
-    /// consuming the original. The first new one will contain all elements within the exclusive range
-    /// `0..M`, and the second new one will contain all elements within the exclusive range
-    /// `M..self.len()`. This function will panic if `M` is greater than `self.len()`.
-    ///
-    /// # Example usage:
-    /// ```
-    /// #![feature(generic_const_exprs)]
-    /// # use staticvec::*;
-    /// let v1 = staticvec![Box::new(1), Box::new(2), Box::new(3), Box::new(4), Box::new(5), Box::new(6)];
-    /// let t1 = v1.split_at::<0>();
-    /// assert_eq!(t1.0, []);
-    /// assert_eq!(t1.1, [Box::new(1), Box::new(2), Box::new(3), Box::new(4), Box::new(5), Box::new(6)]);
-    /// let v2 = staticvec![Box::new(1), Box::new(2), Box::new(3), Box::new(4), Box::new(5), Box::new(6)];
-    /// let t2 = v2.split_at::<2>();
-    /// assert_eq!(t2.0, [Box::new(1), Box::new(2)]);
-    /// assert_eq!(t2.1, [Box::new(3), Box::new(4), Box::new(5), Box::new(6)]);
-    /// let v3 = staticvec![Box::new(1), Box::new(2), Box::new(3), Box::new(4), Box::new(5), Box::new(6)];
-    /// let t3 = v3.split_at::<6>();
-    /// assert_eq!(t3.0, [Box::new(1), Box::new(2), Box::new(3), Box::new(4), Box::new(5), Box::new(6)]);
-    /// assert_eq!(t3.1, []);
-    #[inline]
-    pub fn split_at<const M: usize>(self) -> (StaticVec<T, M, L>, StaticVec<T, { N - M }, L>) {
-        let old_length = self.length;
-        assert!(
-            M <= old_length.try_into().unwrap(),
-            "Bounds check failure in `StaticVec::split_at'!"
-        );
-        let mut left = MaybeUninit::<[T; M]>::uninit();
-        let mut right = MaybeUninit::<[T; N - M]>::uninit();
-        let self_ptr = self.as_ptr();
-        let left_ptr = StaticVec::first_ptr_mut(&mut left);
-        let right_ptr = StaticVec::first_ptr_mut(&mut right);
-        let right_length = old_length.try_into().unwrap() - M;
-        unsafe {
-            self_ptr.copy_to_nonoverlapping(left_ptr, M);
-            self_ptr
-                .add(M)
-                .copy_to_nonoverlapping(right_ptr, right_length);
-            mem::forget(self);
-            (
-                StaticVec {
-                    data: left,
-                    length: M.try_into().unwrap(),
-                },
-                StaticVec {
-                    data: right,
-                    length: right_length.try_into().unwrap(),
-                },
-            )
-        }
-    }
-
     /// Removes all but the first of consecutive elements in the StaticVec satisfying a given equality
     /// relation.
     ///
@@ -2303,61 +2015,6 @@ where
         res
     }
 
-    /// Returns a new StaticVec representing the symmetric difference of `self` and `other` (that is,
-    /// all items present in at least one of `self` or `other`, but *not* present in both.)
-    ///
-    /// The `N2` parameter does not need to be provided explicitly, and can be inferred from `other`
-    /// itself.
-    ///
-    /// Locally requires that `T` implements [`Clone`](core::clone::Clone) to avoid soundness issues
-    /// while accommodating for more types than [`Copy`](core::marker::Copy) would appropriately for
-    /// this function, and [`PartialEq`](core::cmp::PartialEq) to make the item comparisons possible.
-    ///
-    /// # Example usage:
-    /// ```
-    /// #![feature(generic_const_exprs)]
-    /// # use staticvec::staticvec;
-    /// assert_eq!(
-    ///   staticvec![1, 2, 3].symmetric_difference(&staticvec![3, 4, 5]),
-    ///   [1, 2, 4, 5]
-    /// );
-    /// ```
-    #[inline]
-    pub fn symmetric_difference<const N2: usize>(
-        &self,
-        other: &StaticVec<T, N2, L>,
-    ) -> StaticVec<T, { N + N2 }, L>
-    where
-        T: Clone + PartialEq,
-    {
-        let mut res = StaticVec::new();
-        for left in self {
-            let mut found = false;
-            for right in other {
-                if left == right {
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                unsafe { res.push_unchecked(left.clone()) }
-            }
-        }
-        for right in other {
-            let mut found = false;
-            for left in self {
-                if right == left {
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                unsafe { res.push_unchecked(right.clone()) }
-            }
-        }
-        res
-    }
-
     /// Returns a new StaticVec representing the intersection of `self` and `other` (that is,
     /// all items present in both `self` and `other`.)
     ///
@@ -2396,40 +2053,6 @@ where
         }
         res
     }
-
-    /// Returns a new StaticVec representing the union of `self` and `other` (that is, the full
-    /// contents of both `self` and `other`, minus any duplicates.)
-    ///
-    /// The `N2` parameter does not need to be provided explicitly, and can be inferred from `other`
-    /// itself.
-    ///
-    /// Locally requires that `T` implements [`Clone`](core::clone::Clone) to avoid soundness issues
-    /// while accommodating for more types than [`Copy`](core::marker::Copy) would appropriately for
-    /// this function, and [`PartialEq`](core::cmp::PartialEq) to make the item comparisons possible.
-    ///
-    /// # Example usage:
-    /// ```
-    /// #![feature(generic_const_exprs)]
-    /// # use staticvec::staticvec;
-    /// assert_eq!(
-    ///   staticvec![1, 2, 3].union(&staticvec![4, 2, 3, 4]),
-    ///   [1, 2, 3, 4],
-    /// );
-    /// ```
-  #[inline]
-  #[rustfmt::skip]
-    pub fn union<const N2: usize>(&self, other: &StaticVec<T, N2, L>) -> StaticVec<T, { N + N2 }, L>
-  where T: Clone + PartialEq {
-    if self.length <= other.length {
-      let mut res = StaticVec::from_iter(self.iter().chain(other.difference(self).iter()).cloned());
-      res.dedup();
-      res
-    } else {
-      let mut res = StaticVec::from_iter(other.iter().chain(self.difference(other).iter()).cloned());
-      res.dedup();
-      res
-    }
-  }
 
     /// A concept borrowed from the widely-used `SmallVec` crate, this function
     /// returns a tuple consisting of a constant pointer to the first element of the StaticVec,
