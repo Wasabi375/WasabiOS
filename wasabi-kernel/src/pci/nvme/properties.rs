@@ -3,8 +3,7 @@
 //! The specification documents can be found at <https://nvmexpress.org/specifications/>
 //! specifically: NVM Express Base Specification
 
-// TODO temp
-#![allow(missing_docs)]
+#![allow(missing_docs)] // TODO temp
 
 use bit_field::BitField;
 use shared::primitive_enum::InvalidValue;

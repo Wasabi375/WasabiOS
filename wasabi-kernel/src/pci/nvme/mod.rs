@@ -1312,6 +1312,9 @@ pub fn experiment_nvme_device() {
 
     let mut pci = PCI_ACCESS.lock();
 
+    // TODO I don't like how I get the pci-device. `pci.devices` is private
+    // and I really need a way to get exclusive access to a device.
+    // Right now I require a lock on PCI_ACCESS which blocks every pci-device
     let nvme_device = pci
         .devices
         .iter()

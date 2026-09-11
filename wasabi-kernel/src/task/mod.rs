@@ -400,8 +400,7 @@ impl TaskSystem {
         }
 
         let timer_cycles = u32::try_from(timer.rate_mhz() * 1_000_000 / 1_000)
-            .expect("timer duration should really fit into a u32")
-            * 100; // TODO temp 
+            .expect("timer duration should really fit into a u32");
 
         let config = TimerConfig {
             divider: TimerDivider::DivBy1,

@@ -80,6 +80,7 @@ impl PCIAccess {
         if value == !0 { None } else { Some(value) }
     }
 
+    /// Query pci device for the maximum number of supported functions
     fn find_device_function_count(&mut self, addr: Address) -> u8 {
         let header = self
             .read8(RegisterAddress::from_addr(
@@ -113,17 +114,18 @@ impl PCIAccess {
         max + 1
     }
 
-    fn find_devices_on_bus(&mut self, bus: u8) {
-        trace!("check pci bus {bus}");
-        for device in 0..32 {
-            if let Some(device) = Device::from_pci(self, Address { bus, device }) {
-                debug!("Device found: {device:#x?}");
-                self.devices.push(device);
+    /// Find all pci devices and populate [Self::devices]
+    fn find_all_devices(&mut self) {
+        fn find_devices_on_bus(access: &mut PCIAccess, bus: u8) {
+            trace!("check pci bus {bus}");
+            for device in 0..32 {
+                if let Some(device) = Device::from_pci(access, Address { bus, device }) {
+                    debug!("Device found: {device:#x?}");
+                    access.devices.push(device);
+                }
             }
         }
-    }
 
-    pub fn find_all_devices(&mut self) {
         if !self.devices.is_empty() {
             warn!("device list is already filled. Clearing existing list");
             self.devices.clear();
@@ -153,10 +155,10 @@ impl PCIAccess {
                 {
                     break;
                 }
-                self.find_devices_on_bus(function);
+                find_devices_on_bus(self, function);
             }
         } else {
-            self.find_devices_on_bus(0);
+            find_devices_on_bus(self, 0);
         }
     }
 }
