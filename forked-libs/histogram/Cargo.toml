@@ -5,7 +5,6 @@ edition = "2021"
 authors = ["Brian Martin <brian@pelikan.io>"]
 license = "MIT OR Apache-2.0"
 description = "A collection of histogram data structures"
-homepage = "https://github.com/pelikan-io/rustcommon"
 repository = "https://github.com/pelikan-io/rustcommon"
 
 [dependencies]
@@ -25,3 +24,6 @@ serde = ["dep:serde"]
 [[bench]]
 name = "histogram"
 harness = false
+
+[lints]
+workspace = true

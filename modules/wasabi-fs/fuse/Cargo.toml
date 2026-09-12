@@ -19,3 +19,6 @@ uuid = { workspace = true, features = ["v4"] }
 log.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
+
+[lints]
+workspace = true

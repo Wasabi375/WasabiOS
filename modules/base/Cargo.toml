@@ -6,3 +6,5 @@ edition.workspace = true
 [dependencies]
 stabby.workspace = true
 
+[lints]
+workspace = true

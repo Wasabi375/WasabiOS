@@ -17,15 +17,21 @@ congen.workspace = true
 fatfs = "0.3.6"
 gpt_builder = { version = "4.1.0", package = "gpt" }
 log.workspace = true
-lzma-rs = "0.3.0"
-nix = { version = "0.30", features = [ "term" ] }
+nix = { version = "0.31", features = [ "term" ] }
 reqwest = { version = "0.13.4" }
 ron = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std", "rc" ] }
 sha2 = "0.10.8"
 simple_logger.workspace = true 
-tempfile = "3.12.0"
 thiserror.workspace = true
 tokio = { version = "1.32.0", features = ["full"] }
 uuid.workspace = true
 parse-size = "1.1.0"
+
+[dev-dependencies]
+# included here so cargo does not warn about an unused dependency. 
+# The builder will manually build this crate and pull the version from Cargo.toml
+bootloader.workspace = true
+
+[lints]
+workspace = true

@@ -1,10 +1,8 @@
 #![cfg_attr(not(test), no_std)]
-#![allow(incomplete_features)] // for generic_const_exprs
 #![feature(
     allocator_api,
     arbitrary_self_types,
     debug_closure_helpers,
-    generic_const_exprs,
     negative_impls,
     try_reserve_kind,
     try_with_capacity,

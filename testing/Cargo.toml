@@ -15,3 +15,5 @@ log.workspace = true
 linkme.workspace = true
 thiserror.workspace = true
 
+[lints]
+workspace = true

@@ -27,3 +27,5 @@ linkme.workspace = true
 itertools.workspace = true
 uart_16550.workspace = true
 
+[lints]
+workspace = true

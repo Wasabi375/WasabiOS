@@ -7,8 +7,10 @@ edition = "2021"
 default = []
 no-color = []
 
-
 [dependencies]
 log.workspace = true
 shared.workspace = true
 staticvec.workspace = true
+
+[lints]
+workspace = true

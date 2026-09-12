@@ -10,3 +10,6 @@ host-shared.workspace = true
 block-device.workspace = true
 log.workspace = true
 thiserror.workspace = true
+
+[lints]
+workspace = true

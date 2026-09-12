@@ -342,7 +342,7 @@ impl<const N: usize> RangeSet<N> {
 
             // Validate that this allocation is addressable in the current
             // processor state.
-            if base > core::usize::MAX as u64 || end > core::usize::MAX as u64 {
+            if base > usize::MAX as u64 || end > usize::MAX as u64 {
                 continue;
             }
 
@@ -375,8 +375,8 @@ impl<const N: usize> RangeSet<N> {
 
                             // Make sure the allocation fits in the current
                             // addressable address space
-                            if align_overlap > core::usize::MAX as u64
-                                || overlap_alc_end > core::usize::MAX as u64
+                            if align_overlap > usize::MAX as u64
+                                || overlap_alc_end > usize::MAX as u64
                             {
                                 continue 'allocation_search;
                             }

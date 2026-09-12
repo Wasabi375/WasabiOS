@@ -17,3 +17,6 @@ log.workspace = true
 
 [dev-dependencies]
 host-shared = { workspace = true, features = [ "test" ] }
+
+[lints]
+workspace = true

@@ -33,3 +33,6 @@ uuid.workspace = true
 testing = { workspace = true, optional = false }
 host-shared = { workspace = true, features = [ "test" ] }
 block-device = { workspace = true, features = [ "test" ] }
+
+[lints]
+workspace = true

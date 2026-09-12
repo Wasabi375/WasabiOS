@@ -14,3 +14,6 @@ paste.workspace = true
 
 [lib]
 proc-macro = true
+ 
+[lints]
+workspace = true

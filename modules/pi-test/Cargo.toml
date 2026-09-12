@@ -9,3 +9,6 @@ stabby.workspace = true
 
 [lib]
 crate-type = [ "dylib" ]
+
+[lints]
+workspace = true

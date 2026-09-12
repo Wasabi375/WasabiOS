@@ -13,3 +13,5 @@ alloc = []
 shared.workspace = true
 serde = { version = "1.0.215", features = [ "derive" ], optional = true }
 
+[lints]
+workspace = true

@@ -13,3 +13,5 @@ log.workspace = true
 num_cpus = "1.16"
 env_logger = { version = "0.11.8", optional = true  }
 
+[lints]
+workspace = true
