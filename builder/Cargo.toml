@@ -31,7 +31,7 @@ parse-size = "1.1.0"
 [dev-dependencies]
 # included here so cargo does not warn about an unused dependency. 
 # The builder will manually build this crate and pull the version from Cargo.toml
-bootloader.workspace = true
+bootloader-x86_64-uefi.workspace = true
 
 [lints]
 workspace = true

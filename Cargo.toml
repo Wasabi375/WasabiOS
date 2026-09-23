@@ -64,7 +64,7 @@ staticvec = { path = "forked-libs/staticvec" }
 anyhow =  "1.0.94"
 bit_field = "0.10.2"
 bitflags = "2.6.0"
-bootloader = { version = "0.11.17" }
+bootloader-x86_64-uefi = { version = "0.11.17" }
 bootloader_api = { version = "0.11.17" }
 congen = "0.2.1"
 crc32fast = { version = "1.5.0", default-features = false }

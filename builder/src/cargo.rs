@@ -4,9 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use cargo_toml::Manifest;
-use tokio::sync::RwLock;
+use tokio::{process::Command, sync::RwLock};
 
 static MANIFEST_CACHE: RwLock<BTreeMap<String, Arc<Manifest>>> = RwLock::const_new(BTreeMap::new());
 
@@ -38,4 +38,16 @@ async fn load_manifest(crate_path: &str) -> Result<Manifest> {
     let toml_path = absolute(toml_path)?;
 
     Ok(Manifest::from_path(dbg!(toml_path))?)
+}
+
+pub async fn cargo_version() -> Result<String> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("--version");
+    cmd.kill_on_drop(true);
+
+    let version = cmd.output().await.context("getting cargo version")?;
+
+    ensure!(version.status.success());
+
+    String::from_utf8(version.stdout).context("cargo version should respond with valid utf8")
 }

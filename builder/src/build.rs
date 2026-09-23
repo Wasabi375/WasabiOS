@@ -15,7 +15,7 @@ use tokio::{
 
 use crate::{
     args::{BuildArgs, CheckArgs, CleanArgs},
-    cargo::get_workspace_manifest,
+    cargo::{cargo_version, get_workspace_manifest},
     config::{
         VerifiedConfig,
         build::{BuildArtifact, BuildConfig, BuildTarget, GeneralBuild, KernelBuild, ModuleBuild},
@@ -407,18 +407,20 @@ struct BootloaderInfo {
     rev: Option<String>,
     no_default_features: bool,
     features: Vec<String>,
+    cargo_version: String,
 }
 
 pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
     let out_dir = bootloader_out_dir(&config.config.out_dir, &BuildTarget::BOOTLOADER_X86.into());
 
-    let manifest = get_workspace_manifest().await?;
+    let (cargo_version, manifest) = tokio::try_join!(cargo_version(), get_workspace_manifest())?;
+
     let bootloader = manifest
         .workspace
         .as_ref()
         .context("get workspace manifest")?
         .dependencies
-        .get("bootloader")
+        .get("bootloader-x86_64-uefi")
         .context("get bootloader dependency")?;
 
     let info = match bootloader {
@@ -430,6 +432,7 @@ pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
             rev: None,
             no_default_features: false,
             features: Vec::new(),
+            cargo_version,
         },
         cargo_toml::Dependency::Inherited(_inherited_dependency_detail) => bail!(
             "bootloader dependency is inherited. That should not be possible for a workspace dep"
@@ -456,10 +459,11 @@ pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
                 rev: dep.rev.clone(),
                 no_default_features: !dep.default_features,
                 features: dep.features.clone(),
+                cargo_version,
             }
         }
     };
-    if !should_download_bootloader(config, &info).await {
+    if !should_reinstall_bootloadert(config, &info).await {
         info!("reusing existing bootloader");
         return Ok(());
     }
@@ -519,7 +523,7 @@ pub async fn build_bootloader(config: &VerifiedConfig) -> Result<()> {
     Ok(())
 }
 
-async fn should_download_bootloader(
+async fn should_reinstall_bootloadert(
     config: &VerifiedConfig,
     requirements: &BootloaderInfo,
 ) -> bool {
