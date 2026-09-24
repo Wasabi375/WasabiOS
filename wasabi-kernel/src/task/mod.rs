@@ -301,10 +301,17 @@ impl TaskSystem {
         }
         let mut apic = locals!().apic.lock();
         let mut timer = apic.timer();
-        timer.stop();
+        if timer.is_running() {
+            timer.stop();
+        }
 
         self.running.store(false, Ordering::SeqCst);
         self.timer_running.store(false, Ordering::SeqCst);
+
+        locals!()
+            .task_system
+            .log_task_locked_data
+            .store(false, Ordering::SeqCst);
 
         unsafe {
             // Safety: try to prevent deadlocks during panic shutdown
