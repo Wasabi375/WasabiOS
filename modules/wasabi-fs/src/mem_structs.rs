@@ -18,6 +18,8 @@ use shared::sync::InterruptState;
 use shared::sync::lockcell::{RWLockCell, ReadWriteCell};
 use staticvec::StaticVec;
 
+use testing_derive::multitest;
+
 use super::fs::FileSystem;
 
 #[derive(Debug)]
@@ -240,18 +242,22 @@ impl BlockList {
     /// Iterate over [PartialBlockGroup]s
     ///
     /// This skips over `byte_offset` bytes. If `byte_offset` is not a multiple
-    /// of [BLOCK_SIZE] te first block will contain the remaining offset.
+    /// of [BLOCK_SIZE] the first block will contain the remaining offset.
     /// Iterates over `bytes` worth of [Block]s with the last [PartialBlockGroup]
     /// reproting how many remaining bytes are requested.
+    ///
+    /// Only the first and last block returned by this iterator may be partial.
+    /// All "inner" blocks are full blocks. The first and last block is partial
+    /// depending on the `byte_offset` and `total_bytes`
     pub fn iter_partial(
         &self,
         byte_offset: u64,
-        bytes: u64,
+        total_bytes: u64,
     ) -> BlockListPartialIter<impl Iterator<Item = BlockGroup> + Clone> {
         BlockListPartialIter {
             group_iter: self.iter(),
             skip_bytes: byte_offset,
-            remaining_bytes: bytes,
+            remaining_bytes: total_bytes,
         }
     }
 
@@ -439,6 +445,9 @@ where
     type Item = PartialBlockGroup;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining_bytes == 0 {
+            return None;
+        }
         while let Some(mut current_group) = self.group_iter.next() {
             if self.skip_bytes >= current_group.bytes(BLOCK_SIZE) {
                 self.skip_bytes -= current_group.bytes(BLOCK_SIZE);
@@ -465,10 +474,9 @@ where
                     .expect("blocks_required_for should never be 0");
                 self.remaining_bytes
             } else {
-                current_group.bytes(BLOCK_SIZE)
+                assert!(current_group.bytes(BLOCK_SIZE) > offset);
+                current_group.bytes(BLOCK_SIZE) - offset
             };
-            assert!(len > offset);
-            let len = len - offset;
 
             assert!(self.remaining_bytes >= len);
             self.remaining_bytes -= len;
@@ -630,5 +638,323 @@ impl<I> From<FsFileNode> for FileNode<I> {
             block_data: ReadWriteCell::new(BlockListAccess::OnDevice(device_node.block_data)),
             block_count: device_node.block_count,
         }
+    }
+}
+
+#[multitest(cfg: feature = "test")]
+mod test_block_list_partial {
+    use core::num::NonZeroU64;
+
+    use block_device::{BlockGroup, LBA};
+    use testing::{
+        KernelTestError, TestUnwrapExt, kernel_test, t_assert, t_assert_eq, t_assert_matches, tfail,
+    };
+
+    use crate::{BLOCK_SIZE, mem_structs::BlockListPartialIter};
+
+    fn new_block_group(start: u64, count: u64) -> BlockGroup {
+        BlockGroup::with_count(LBA::new(start).unwrap(), NonZeroU64::new(count).unwrap())
+    }
+
+    #[kernel_test]
+    fn iter_full() -> Result<(), KernelTestError> {
+        let groups = [
+            new_block_group(0, 5),
+            BlockGroup::single(LBA::new(6).unwrap()),
+        ]
+        .into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: 0,
+            remaining_bytes: BLOCK_SIZE as u64 * 6,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 0);
+        t_assert_eq!(first.group.count.to_native().get(), 5);
+        t_assert_eq!(first.offset, 0);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 5);
+
+        let Some(second) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(second.group.start.get(), 6);
+        t_assert_eq!(second.group.count.to_native().get(), 1);
+        t_assert_eq!(second.offset, 0);
+        t_assert_eq!(second.len, BLOCK_SIZE as u64);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn skip_fist_block() -> Result<(), KernelTestError> {
+        let groups = [
+            new_block_group(0, 5),
+            BlockGroup::single(LBA::new(6).unwrap()),
+        ]
+        .into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: BLOCK_SIZE as u64,
+            remaining_bytes: BLOCK_SIZE as u64 * 6,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 1);
+        t_assert_eq!(first.group.count.to_native().get(), 4);
+        t_assert_eq!(first.offset, 0);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 4);
+
+        let Some(second) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(second.group.start.get(), 6);
+        t_assert_eq!(second.group.count.to_native().get(), 1);
+        t_assert_eq!(second.offset, 0);
+        t_assert_eq!(second.len, BLOCK_SIZE as u64);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn skip_partial_block() -> Result<(), KernelTestError> {
+        let groups = [
+            new_block_group(0, 5),
+            BlockGroup::single(LBA::new(6).unwrap()),
+        ]
+        .into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: 512,
+            remaining_bytes: BLOCK_SIZE as u64 * 6,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 0);
+        t_assert_eq!(first.group.count.to_native().get(), 5);
+        t_assert_eq!(first.offset, 512);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 5 - 512);
+
+        let Some(second) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(second.group.start.get(), 6);
+        t_assert_eq!(second.group.count.to_native().get(), 1);
+        t_assert_eq!(second.offset, 0);
+        t_assert_eq!(second.len, BLOCK_SIZE as u64);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn skip_partial_blocks() -> Result<(), KernelTestError> {
+        let groups = [
+            new_block_group(0, 5),
+            BlockGroup::single(LBA::new(6).unwrap()),
+        ]
+        .into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: BLOCK_SIZE as u64 + 512,
+            remaining_bytes: BLOCK_SIZE as u64 * 6,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 1);
+        t_assert_eq!(first.group.count.to_native().get(), 4);
+        t_assert_eq!(first.offset, 512);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 4 - 512);
+
+        let Some(second) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(second.group.start.get(), 6);
+        t_assert_eq!(second.group.count.to_native().get(), 1);
+        t_assert_eq!(second.offset, 0);
+        t_assert_eq!(second.len, BLOCK_SIZE as u64);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn partial_block_end() -> Result<(), KernelTestError> {
+        let groups = [
+            new_block_group(0, 5),
+            BlockGroup::single(LBA::new(6).unwrap()),
+        ]
+        .into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: 0,
+            remaining_bytes: BLOCK_SIZE as u64 * 6 - 512,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 0);
+        t_assert_eq!(first.group.count.to_native().get(), 5);
+        t_assert_eq!(first.offset, 0);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 5);
+
+        let Some(second) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(second.group.start.get(), 6);
+        t_assert_eq!(second.group.count.to_native().get(), 1);
+        t_assert_eq!(second.offset, 0);
+        t_assert_eq!(second.len, BLOCK_SIZE as u64 - 512);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn removed_block_end() -> Result<(), KernelTestError> {
+        let groups = [
+            new_block_group(0, 5),
+            BlockGroup::single(LBA::new(6).unwrap()),
+        ]
+        .into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: 0,
+            remaining_bytes: BLOCK_SIZE as u64 * 5,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 0);
+        t_assert_eq!(first.group.count.to_native().get(), 5);
+        t_assert_eq!(first.offset, 0);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 5);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn removed_partial_plus_block_end() -> Result<(), KernelTestError> {
+        let groups = [
+            new_block_group(0, 5),
+            BlockGroup::single(LBA::new(6).unwrap()),
+        ]
+        .into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: 0,
+            remaining_bytes: BLOCK_SIZE as u64 * 5 - 512,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 0);
+        t_assert_eq!(first.group.count.to_native().get(), 5);
+        t_assert_eq!(first.offset, 0);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 5 - 512);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn offset_and_removed_end() -> Result<(), KernelTestError> {
+        let groups = [
+            new_block_group(0, 5),
+            BlockGroup::single(LBA::new(6).unwrap()),
+        ]
+        .into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: 512,
+            remaining_bytes: BLOCK_SIZE as u64 * 6 - 1024,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 0);
+        t_assert_eq!(first.group.count.to_native().get(), 5);
+        t_assert_eq!(first.offset, 512);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 5 - 512);
+
+        let Some(second) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(second.group.start.get(), 6);
+        t_assert_eq!(second.group.count.to_native().get(), 1);
+        t_assert_eq!(second.offset, 0);
+        t_assert_eq!(second.len, BLOCK_SIZE as u64 - 512);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
+    }
+
+    #[kernel_test]
+    fn single_group_offset_and_removed_end() -> Result<(), KernelTestError> {
+        let groups = [new_block_group(0, 5)].into_iter();
+
+        let mut partial_iter = BlockListPartialIter {
+            group_iter: groups,
+            skip_bytes: 512,
+            remaining_bytes: BLOCK_SIZE as u64 * 5 - 1024,
+        };
+
+        let Some(first) = partial_iter.next() else {
+            tfail!("expected to find first block group")
+        };
+
+        t_assert_eq!(first.group.start.get(), 0);
+        t_assert_eq!(first.group.count.to_native().get(), 5);
+        t_assert_eq!(first.offset, 512);
+        t_assert_eq!(first.len, BLOCK_SIZE as u64 * 5 - 1024);
+
+        t_assert!(partial_iter.next().is_none());
+
+        Ok(())
     }
 }

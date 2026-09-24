@@ -1269,10 +1269,11 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             },
         );
 
-        let mut full_blocks_offset = 0;
+        let mut full_blocks_data_offset = 0;
         let mut full_block_data_end = data.len();
 
         if let Some(first_block_group) = partial_first_block {
+            debug!("partial fisrt block: {first_block_group:?}");
             // if the first block is also the last block, then group.len is the correct length
             // otherwise we take n bytes, where n is the remaining bytes within a block after the
             // offset
@@ -1288,9 +1289,10 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
                 )
                 .map_err(map_device_error)?;
 
-            full_blocks_offset = partial_block_length;
+            full_blocks_data_offset = partial_block_length;
         }
         if let Some(last_block_group) = partial_last_block {
+            debug!("partial last block: {last_block_group:?}");
             let length_plus_offset = (last_block_group.len + last_block_group.offset) as usize;
             let last_block_data_len =
                 length_plus_offset - (BLOCK_SIZE * (last_block_group.group.count() as usize - 1));
@@ -1305,7 +1307,17 @@ impl<D: BlockDevice, S: FsWrite, I: InterruptState> FileSystem<D, S, I> {
             full_block_data_end -= last_block_data_len;
         }
 
-        let full_block_data = &data[full_blocks_offset..full_block_data_end];
+        debug!(
+            "data len: {}, offset: {}:{}",
+            data.len(),
+            offset,
+            offset % BLOCK_SIZE as u64
+        );
+        debug!("LBAs: {:?}", full_block_groups.clone().collect::<Vec<_>>());
+        debug!("full_block range: {full_blocks_data_offset}..{full_block_data_end}");
+
+        let full_block_data = &data[full_blocks_data_offset..full_block_data_end];
+        assert!(full_block_data.len().is_multiple_of(BLOCK_SIZE));
         self.device
             .write_blocks(full_block_groups, full_block_data)
             .map_err(map_device_error)?;

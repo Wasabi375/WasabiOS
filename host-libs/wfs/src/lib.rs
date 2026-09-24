@@ -249,6 +249,9 @@ impl BlockDevice for FileDevice {
         Ok(())
     }
 
+    /// write `data` to `blocks`
+    ///
+    /// This assumes that `data` is a multiple of `BLOCK_SIZE` and will panic if not
     fn write_blocks<I>(
         &mut self,
         blocks: I,
@@ -257,7 +260,7 @@ impl BlockDevice for FileDevice {
     where
         I: Iterator<Item = BlockGroup>,
     {
-        assert_eq!(data.len() % BLOCK_SIZE, 0);
+        assert!(data.len().is_multiple_of(BLOCK_SIZE));
 
         for group in blocks {
             let to_write = data
