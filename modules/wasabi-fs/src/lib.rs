@@ -9,7 +9,6 @@
     vec_push_within_capacity
 )]
 
-use block_device::block_size_types;
 use shared::KiB;
 
 extern crate alloc;
@@ -23,10 +22,8 @@ pub mod mem_tree;
 
 /// The size of any block used to store data on the disc
 ///
-/// See [BlockAligned], [Block], [BlockSlice], [blocks_required_for]
-// NOTE: when changed, also change alignment of BlockAligned and Block.
+/// [blocks_required_for]
 pub const BLOCK_SIZE: usize = KiB!(4);
-block_size_types!(4096: Block, BlockArray);
 
 /// Calculate the number of BLOCKs required for `bytes` memory.
 ///

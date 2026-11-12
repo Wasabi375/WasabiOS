@@ -410,7 +410,7 @@ impl<const BLOCK_SIZE: usize> BlockDevice for NvmeBlockDevice<BLOCK_SIZE> {
         lba: LBA,
         data: &[u8],
     ) -> Result<(), WriteBlockDeviceError<Self::BlockDeviceError>> {
-        assert_eq!(data.len(), Self::BLOCK_SIZE);
+        debug_assert_eq!(data.len(), Self::BLOCK_SIZE);
         self.write_blocks_contig(lba, data)
     }
 

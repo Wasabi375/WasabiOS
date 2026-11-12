@@ -7,7 +7,6 @@ use shared::{counts_required_for, todo_warn};
 use staticvec::StaticVec;
 
 use crate::{
-    Block,
     fs::FsError,
     fs_structs::{BLOCK_RANGES_COUNT_PER_BLOCK, FreeBlockGroups},
 };
