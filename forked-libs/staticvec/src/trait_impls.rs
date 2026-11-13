@@ -146,7 +146,9 @@ where
                         res
                     }
                 },
+                __pad_1: [0; _],
                 length: length.try_into().unwrap(),
+                __pad_2: [0; _],
             },
         }
     }
@@ -286,7 +288,9 @@ where
         }
         Self {
             data: res,
+            __pad_1: [0; _],
             length: i.try_into().unwrap(),
+            __pad_2: [0; _],
         }
     }
 }
@@ -339,7 +343,9 @@ where
         }
         Self {
             data: res,
+            __pad_1: [0; _],
             length: i.try_into().unwrap(),
+            __pad_2: [0; _],
         }
     }
 }
@@ -405,7 +411,9 @@ where
                     data
                 }
             },
+            __pad_1: [0; _],
             length: N1.min(N2).try_into().unwrap(),
+            __pad_2: [0; _],
         }
     }
 }

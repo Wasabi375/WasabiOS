@@ -25,15 +25,21 @@
 )]
 #![feature(
     const_eval_select,
+    const_trait_impl,
     core_intrinsics,
     doc_cfg,
     exact_size_is_empty,
-    maybe_uninit_array_assume_init,
-    maybe_uninit_uninit_array_transpose,
+    freeze,
+    gca_const_items,
     gca_min_const_items,
+    inherent_associated_types,
+    maybe_uninit_array_assume_init,
+    maybe_uninit_as_bytes,
+    maybe_uninit_uninit_array_transpose,
     pattern,
     slice_partition_dedup,
     specialization,
+    trivial_bounds,
     trusted_len,
     trusted_random_access
 )]
@@ -42,8 +48,10 @@
 extern crate alloc;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
+use zerocopy::{Immutable, KnownLayout};
 
 use core::fmt::Debug;
+use core::gca;
 use core::intrinsics::assume;
 use core::marker::PhantomData;
 use core::mem::{self, size_of, MaybeUninit};
@@ -87,22 +95,169 @@ pub mod utils;
 /// whether a given trait has been implemented as `const` in conjunction with the `const_trait_impl`
 /// feature.
 #[repr(C)]
+#[derive(KnownLayout, Immutable)]
 pub struct StaticVec<T, const N: usize, L = usize>
 where
     L: Number + TryFrom<usize> + TryInto<usize>,
     <L as TryFrom<usize>>::Error: Debug,
     <L as TryInto<usize>>::Error: Debug,
 {
-    // We create this field in an uninitialized state, and write to it element-wise as needed via
-    // pointer methods. At no time should the regular `assume_init` function *ever* be called through
-    // it unless an abundantly obviously-not-UB reason is present or a clear explanation is provided
-    // in comments. At this time, we only use `assume_init_read` and `assume_init_mut` (soundly, and
-    // for good reasons) in about two places total.
+    /// We create this field in an uninitialized state, and write to it element-wise as needed via
+    /// pointer methods. At no time should the regular `assume_init` function *ever* be called through
+    /// it unless an abundantly obviously-not-UB reason is present or a clear explanation is provided
+    /// in comments. At this time, we only use `assume_init_read` and `assume_init_mut` (soundly, and
+    /// for good reasons) in about two places total.
     data: MaybeUninit<[T; N]>,
-    // The constant `N` parameter (and thus the total span of `data`) represent capacity for us,
-    // while the field below represents, as its name suggests, the current length of a StaticVec
-    // (that is, the current number of "live" elements) just as is the case for a regular `Vec`.
+
+    /// manually add padding between fields to ensure rust does not use it. This allows any
+    /// reference of `Self` to be cast to `[u8; size_of::<Self>()]`.
+    /// Padding is initialized with `0` but there is no guarantee that this will always hold true.
+    __pad_1: [u8; gca!(<Self as gca::StaticVecGCA>::PAD1_LEN)],
+
+    /// The constant `N` parameter (and thus the total span of `data`) represent capacity for us,
+    /// while the field below represents, as its name suggests, the current length of a StaticVec
+    /// (that is, the current number of "live" elements) just as is the case for a regular `Vec`.
     length: L,
+
+    /// manually add padding between fields to ensure rust does not use it. This allows any
+    /// reference of `Self` to be cast to `[u8; size_of::<Self>()]`.
+    /// Padding is initialized with `0` but there is no guarantee that this will always hold true.
+    __pad_2: [u8; gca!(<Self as gca::StaticVecGCA>::PAD2_LEN)],
+}
+
+mod zerocopy_impl {
+    use core::{fmt::Debug, gca, marker::Freeze, mem::MaybeUninit};
+
+    use shared::math::Number;
+    use zerocopy::{Immutable, IntoBytes, KnownLayout, ReadOnly, TryFromBytes};
+
+    use super::{gca::StaticVecGCA, StaticVec};
+
+    #[repr(C)]
+    #[derive(TryFromBytes)]
+    struct StaticVecTransumte<T, const N: usize, L>
+    where
+        T: Immutable + KnownLayout + TryFromBytes + Freeze,
+        L: Number + TryFrom<usize> + TryInto<usize>,
+        <L as TryFrom<usize>>::Error: Debug,
+        <L as TryInto<usize>>::Error: Debug,
+    {
+        data: [MaybeUninit<T>; N],
+        __pad_1: [u8; gca!(<StaticVec<T, N, L> as StaticVecGCA>::PAD1_LEN)],
+        #[zerocopy(invariant({
+        let length = ReadOnly::into_inner(length.read());
+        let length: usize = length.try_into().unwrap();
+        if length > N {
+            return false;
+        }
+        let data_ptr: *mut ReadOnly<[MaybeUninit<T>; N]> = data.as_inner().as_ptr();
+        let data: &[MaybeUninit<T>; N] = unsafe {
+            // Safety: data is aligned and exists and we don't modify it
+            &*data_ptr
+        }.as_ref();
+
+        for maybe in data.iter().take(length) {
+            let bytes = MaybeUninit::as_bytes(maybe);
+            let bytes = unsafe {
+                // Safety: is valid is called from TryFromBytes and therefor all bytes must be init
+                bytes.assume_init_ref()
+            };
+            if <T as TryFromBytes>::try_ref_from_bytes(bytes).is_err() {
+                return false;
+            }
+        }
+
+        true
+    }))]
+        length: L,
+        __pad_2: [u8; gca!(<StaticVec<T, N, L> as StaticVecGCA>::PAD2_LEN)],
+    }
+
+    unsafe impl<T, const N: usize, L> TryFromBytes for StaticVec<T, N, L>
+    where
+        T: Immutable + KnownLayout + TryFromBytes + Freeze,
+        L: Number + TryFrom<usize> + TryInto<usize> + TryFromBytes,
+        <L as TryFrom<usize>>::Error: Debug,
+        <L as TryInto<usize>>::Error: Debug,
+    {
+        fn only_derive_is_allowed_to_implement_this_trait()
+        where
+            Self: Sized,
+        {
+        }
+
+        fn is_safe<A>(candidate: zerocopy::pointer::Maybe<'_, Self, A>) -> bool
+        where
+            A: zerocopy::pointer::invariant::Alignment,
+        {
+            let candidate: zerocopy::pointer::Maybe<'_, StaticVecTransumte<T, N, L>, A> = unsafe {
+                // Safety: yeah this is a hack, but it should be safe as Maybe is just `NonNull` and
+                // StaticVec and StaticVecTransmute are transparently equal
+                core::mem::transmute(candidate)
+            };
+            StaticVecTransumte::<T, N, L>::is_safe(candidate)
+        }
+    }
+
+    unsafe impl<T, const N: usize> IntoBytes for StaticVec<T, N> {
+        fn only_derive_is_allowed_to_implement_this_trait()
+        where
+            Self: Sized,
+        {
+            // Safety: I manually checked this but zerocopy does not know how to handle gca
+            // and therefor cannot gurantee that all fields are properly aligned and that
+            // there is no extra padding inserted by rust other than the padding manually added to the
+            // struct
+        }
+    }
+}
+
+mod gca {
+    use super::StaticVec;
+
+    use core::{
+        fmt::Debug,
+        gca,
+        mem::{offset_of, MaybeUninit},
+    };
+
+    use shared::math::Number;
+
+    #[repr(C)]
+    struct StaticVecNoPad<T, const N: usize, L> {
+        data: MaybeUninit<[T; N]>,
+        length: L,
+    }
+
+    #[allow(dead_code)]
+    pub trait StaticVecGCA {
+        #[rustc_always_gca]
+        const PAD1_LEN: usize;
+        #[rustc_always_gca]
+        const PAD2_LEN: usize;
+    }
+
+    #[allow(dead_code)]
+    impl<T, const N: usize, L> StaticVecNoPad<T, N, L> {
+        const DATA_OFFSET: usize = offset_of!(Self, data);
+        const DATA_LEN: usize = size_of::<MaybeUninit<[T; N]>>();
+
+        const LEN_OFFSET: usize = offset_of!(Self, length);
+        const LEN_LEN: usize = size_of::<L>();
+
+        const PAD1_LEN_INT: usize = Self::LEN_OFFSET - Self::DATA_OFFSET - Self::DATA_LEN;
+        const PAD2_LEN_INT: usize = size_of::<Self>() - Self::LEN_OFFSET - Self::LEN_LEN;
+    }
+
+    impl<T, const N: usize, L> StaticVecGCA for StaticVec<T, N, L>
+    where
+        L: Number + TryFrom<usize> + TryInto<usize>,
+        <L as TryFrom<usize>>::Error: Debug,
+        <L as TryInto<usize>>::Error: Debug,
+    {
+        const PAD1_LEN: usize = gca!(StaticVecNoPad::<T, N, L>::PAD1_LEN_INT);
+        const PAD2_LEN: usize = gca!(StaticVecNoPad::<T, N, L>::PAD2_LEN_INT);
+    }
 }
 
 impl<T, L, const N: usize> StaticVec<T, N, L>
@@ -129,7 +284,9 @@ where
     pub const fn new() -> Self {
         Self {
             data: StaticVec::new_data_uninit(),
+            __pad_1: [0; _],
             length: <L as Number>::ZERO,
+            __pad_2: [0; _],
         }
     }
 
@@ -161,7 +318,9 @@ where
                     data
                 }
             },
+            __pad_1: [0; _],
             length: length.try_into().unwrap(),
+            __pad_2: [0; _],
         }
     }
 
@@ -227,7 +386,9 @@ where
                         data
                     }
                 },
+                __pad_1: [0; _],
                 length: N2.min(N).try_into().unwrap(),
+                __pad_2: [0; _],
             }
         }
     }
@@ -1376,7 +1537,9 @@ where
         quicksort_internal(res_ptr, 0, (length - 1) as isize);
         Self {
             data: res,
+            __pad_1: [0; _],
             length: length.try_into().unwrap(),
+            __pad_2: [0; _],
         }
     }
 
@@ -1429,7 +1592,9 @@ where
     {
         Self {
             data: reverse_copy(self.length.try_into().unwrap(), &self.data),
+            __pad_1: [0; _],
             length: self.length,
+            __pad_2: [0; _],
         }
     }
 
@@ -1689,7 +1854,9 @@ where
                     res
                 }
             },
+            __pad_1: [0; _],
             length: res_length.try_into().unwrap(),
+            __pad_2: [0; _],
         }
     }
 
@@ -1914,7 +2081,9 @@ where
                 );
                 split
             },
+            __pad_1: [0; _],
             length: split_length,
+            __pad_2: [0; _],
         }
     }
 
@@ -2301,7 +2470,9 @@ impl<T, const N: usize> StaticVec<T, N, usize> {
     pub const fn new_from_const_array(values: [T; N]) -> Self {
         Self {
             data: MaybeUninit::new(values),
+            __pad_1: [0; _],
             length: N,
+            __pad_2: [0; _],
         }
     }
 }
@@ -2374,7 +2545,12 @@ where
             mem::forget(self);
         }
 
-        Ok(StaticVec { data, length })
+        Ok(StaticVec {
+            data,
+            __pad_1: [0; _],
+            length,
+            __pad_2: [0; _],
+        })
     }
 }
 
@@ -2421,7 +2597,9 @@ where
 
         Ok(StaticVec {
             data: data.transpose(),
+            __pad_1: [0; _],
             length,
+            __pad_2: [0; _],
         })
     }
 }
@@ -2433,7 +2611,12 @@ impl<const N: usize> StaticVec<u8, N, usize> {
     #[doc(hidden)]
     #[inline(always)]
     pub(crate) const fn new_from_str_data(data: MaybeUninit<[u8; N]>, length: usize) -> Self {
-        Self { data, length }
+        Self {
+            data,
+            __pad_1: [0; _],
+            length,
+            __pad_2: [0; _],
+        }
     }
 
     /// Called solely in `__new_from_const_str`, where `values` is guaranteed to be the slice

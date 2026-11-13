@@ -77,6 +77,7 @@ linkme = "0.3.31"
 log = "0.4.22"
 nonmaxunsigned = { version = "2.0.0", features = [ "endian-conversion" ] }
 noto-sans-mono-bitmap = { version = "0.3.0", features = ["unicode-latin-1-supplement", "unicode-specials"]}
+padding-struct = "0.2.0"
 paste = "1.0.12"
 proc-macro2 = "1.0.92"
 quote = "1.0.37"
@@ -90,6 +91,7 @@ thiserror = { version = "2.0.4",  default-features = false }
 uuid = { version = "1.11.0", default-features = false, features = ["serde"] }
 volatile = "0.6"
 walkdir = "2.5"
+zerocopy = { version = "0.8.63", features = ["alloc", "derive"] }
 
 # TODO use upstream once new version is released
 

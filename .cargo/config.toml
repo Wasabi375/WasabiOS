@@ -3,8 +3,14 @@
 # https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#artifact-dependencies
 bindeps = true
 
+[build]
+rustflags = [
+    "--cfg", "zerocopy_unstable_ptr"
+]
+
 [target.x86_64-unknown-none]
 rustflags = [
     "-C", "link-arg=-z",
-    "-C", "link-arg=nostart-stop-gc"
+    "-C", "link-arg=nostart-stop-gc",
+    "--cfg", "zerocopy_unstable_ptr"
 ]

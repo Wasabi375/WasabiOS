@@ -107,7 +107,9 @@ where
                 data
             }
         },
+        __pad_1: [0; _],
         length: COUNT,
+        __pad_2: [0; _],
     }
 }
 
