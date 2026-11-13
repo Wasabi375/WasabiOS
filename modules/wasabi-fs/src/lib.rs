@@ -1,8 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 #![feature(
-    allocator_api,
+    allocator_ext,
     arbitrary_self_types,
-    debug_closure_helpers,
     negative_impls,
     try_reserve_kind,
     try_with_capacity,

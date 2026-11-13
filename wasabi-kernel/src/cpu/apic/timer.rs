@@ -16,8 +16,7 @@ use super::{Apic, Offset, cpuid};
 use core::ops::RangeInclusive;
 
 /// The different modes the apic timer can be in
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimerMode {
     /// the timer is not running
     #[default]
@@ -115,7 +114,6 @@ impl From<TimerDivider> for u32 {
         }
     }
 }
-
 
 /// the current state of the timer
 #[derive(Debug, Clone, Default)]
@@ -251,7 +249,7 @@ impl Timer<'_> {
         self.apic
             .offset_mut(Offset::TimerLocalVectorTableEntry)
             .update(|mut vte| {
-                vte.set_bit(Timer::MASK_BIT, false);
+                vte.set_bit_to(Timer::MASK_BIT, false);
                 vte.set_bits(Timer::VECTOR_BITS, vector as u8 as u32);
                 vte
             });
@@ -269,7 +267,7 @@ impl Timer<'_> {
         self.apic
             .offset_mut(Offset::TimerLocalVectorTableEntry)
             .update(|mut vte| {
-                vte.set_bit(Timer::MASK_BIT, true);
+                vte.set_bit_to(Timer::MASK_BIT, true);
                 vte.set_bits(Timer::VECTOR_BITS, 0);
                 vte
             });
@@ -304,7 +302,7 @@ impl Timer<'_> {
                     });
                 apic.offset_mut(Offset::TimerLocalVectorTableEntry)
                     .update(|mut tlvte| {
-                        tlvte.set_bit(Timer::MASK_BIT, false);
+                        tlvte.set_bit_to(Timer::MASK_BIT, false);
                         tlvte.set_bits(Timer::MODE_BITS, mode.vector_table_entry_bits());
                         tlvte
                     });

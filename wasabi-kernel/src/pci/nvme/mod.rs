@@ -100,9 +100,7 @@ impl From<PageTableMapError> for NVMEControllerError {
 /// Provides communication with an NVME Storage Controller
 #[derive_where(Debug)]
 pub struct NVMEController {
-    #[expect(dead_code)]
     pci_dev: Device,
-    #[expect(dead_code)]
     controller_base_paddr: PhysAddr,
     controller_page: Page<Size4KiB>,
     controller_base_ptr: UntypedPtr,

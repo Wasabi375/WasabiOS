@@ -30,7 +30,7 @@
     exact_size_is_empty,
     maybe_uninit_array_assume_init,
     maybe_uninit_uninit_array_transpose,
-    min_generic_const_args,
+    gca_min_const_items,
     pattern,
     slice_partition_dedup,
     specialization,

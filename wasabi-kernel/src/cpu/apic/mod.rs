@@ -180,7 +180,7 @@ impl Apic {
 
         apic.offset_mut(Offset::SpuriousInterruptVector)
             .update(|mut siv| {
-                siv.set_bit(8, true);
+                siv.set_bit_to(8, true);
                 siv.set_bits(0..=7, InterruptVector::Spurious as u8 as u32);
                 siv
             });

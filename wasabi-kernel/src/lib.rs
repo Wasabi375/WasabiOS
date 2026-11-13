@@ -4,10 +4,11 @@
 #![no_main]
 #![feature(
     abi_x86_interrupt,
-    allocator_api,
+    allocator_ext,
     ascii_char,
     const_convert,
     const_trait_impl,
+    get_set_bit,
     maybe_uninit_array_assume_init,
     pointer_is_aligned_to,
     ptr_metadata,

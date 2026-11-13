@@ -646,9 +646,7 @@ mod test_block_list_partial {
     use core::num::NonZeroU64;
 
     use block_device::{BlockGroup, LBA};
-    use testing::{
-        KernelTestError, TestUnwrapExt, kernel_test, t_assert, t_assert_eq, t_assert_matches, tfail,
-    };
+    use testing::{KernelTestError, kernel_test, t_assert, t_assert_eq, tfail};
 
     use crate::{BLOCK_SIZE, mem_structs::BlockListPartialIter};
 

@@ -42,11 +42,10 @@ pub fn create_io_completion_queue(
     dword10.set_bits(16..=31, queue_size as u32);
     command.dword10 = dword10;
 
-    let mut dword11: u32 = 0;
     // TODO queue interrupt vector bits 16..=31
-    dword11.set_bit(1, false); // disable interrupts
-    dword11.set_bit(0, true); // memory is phys contiguous
-    command.dword11 = dword11;
+    command.dword11 = 0u32
+        .set_bit(1, false) // disable interrupts
+        .set_bit(0, true); // memory is phys contiguous
 
     command
 }
@@ -84,7 +83,7 @@ pub fn create_io_submission_queue(
     let mut dword11: u32 = 0;
     dword11.set_bits(16..=31, queue_ident.0 as u32); // completion queue, we use a 1:1 mapping
     dword11.set_bits(1..=2, 0b10); // queue priority, ignored, but we set a default of medium anyways
-    dword11.set_bit(0, true); // memory is phys contiguous
+    dword11.set_bit_to(0, true); // memory is phys contiguous
     command.dword11 = dword11;
 
     command

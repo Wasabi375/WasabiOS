@@ -62,7 +62,7 @@ staticvec = { path = "forked-libs/staticvec" }
 
 # external deps
 anyhow =  "1.0.94"
-bit_field = "0.10.2"
+bit_field = "0.10"
 bitflags = "2.6.0"
 bootloader-x86_64-uefi = { version = "0.11.17" }
 bootloader_api = { version = "0.11.17" }

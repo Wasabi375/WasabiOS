@@ -1,11 +1,10 @@
 //! Implementation shared by all kernel packages
 #![no_std]
 #![feature(
-    allocator_api,
+    allocator_ext,
     box_into_inner,
     const_ops,
     const_trait_impl,
-    debug_closure_helpers,
     negative_impls,
     trusted_len
 )]
