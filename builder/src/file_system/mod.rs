@@ -10,16 +10,17 @@ use crate::{
         Config, VerifiedConfig,
         file_system::{FileSystem, FsType},
     },
-    file_system::{fat::build_fat_fs, wfs::build_wfs_fs},
+    file_system::fat::build_fat_fs,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use tokio::{
     fs::{self, ReadDir},
     spawn,
 };
 
 mod fat;
+#[cfg(feature = "wfs")]
 mod wfs;
 
 pub async fn build_from_args(args: FsArgs, config: VerifiedConfig) -> Result<()> {
@@ -46,12 +47,19 @@ pub async fn build_fs(fs: Arc<FileSystem>, config: Arc<VerifiedConfig>) -> Resul
 
     match fs.fs_type {
         FsType::WFS => {
-            build_wfs_fs(fs, &config.config, tree_walk, async move {
-                dependencies
-                    .await
-                    .context("tokio join build dependencies")?
-            })
-            .await
+            #[cfg(feature = "wfs")]
+            {
+                wfs::build_wfs_fs(fs, &config.config, tree_walk, async move {
+                    dependencies
+                        .await
+                        .context("tokio join build dependencies")?
+                })
+                .await
+            }
+            #[cfg(not(feature = "wfs"))]
+            {
+                bail!("WFS disabled in this build")
+            }
         }
         FsType::FAT => {
             build_fat_fs(fs, config, tree_walk, async move {
@@ -66,7 +74,10 @@ pub async fn build_fs(fs: Arc<FileSystem>, config: Arc<VerifiedConfig>) -> Resul
 
 pub fn out_path(fs: &FileSystem, config: &Config) -> PathBuf {
     match fs.fs_type {
+        #[cfg(feature = "wfs")]
         FsType::WFS => wfs::out_path(fs, config),
+        #[cfg(not(feature = "wfs"))]
+        FsType::WFS => panic!("WFS disabled in this build"),
         FsType::FAT => fat::out_path(fs, config),
     }
 }
@@ -108,6 +119,7 @@ async fn build_dependencies(
 }
 
 pub async fn clean(clean: &CleanArgs, config: &Config) -> Result<()> {
+    #[cfg(feature = "wfs")]
     wfs::clean(clean, config).await.context("clean wfs")?;
     fat::clean(clean, config).await.context("clean fat")?;
     Ok(())

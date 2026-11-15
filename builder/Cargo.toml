@@ -3,12 +3,17 @@ name = "builder"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["wfs"]
+wfs = ["dep:wfs", "dep:host-wfs", "dep:host-shared" ]
+
 [dependencies]
-host-shared.workspace = true
-host-wfs.workspace = true
 shared.workspace = true
-wfs.workspace = true
 gpt.workspace = true
+
+host-shared = { workspace = true, optional = true }
+host-wfs = { workspace = true, optional = true }
+wfs = { workspace = true, optional = true }
 
 anyhow.workspace = true
 cargo_toml = "0.22"
