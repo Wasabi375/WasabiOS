@@ -38,6 +38,18 @@
     modules: [
         (
             id: (
+                inner: "wfs",
+            ),
+            crate_path: "wfs",
+            package_name: "wfs",
+            features: [],
+            no_default_feature: false,
+            all_features: false,
+            profile: "dev",
+            output_asm: false,
+        ),
+        (
+            id: (
                 inner: "pi-test",
             ),
             crate_path: "pi-test",
