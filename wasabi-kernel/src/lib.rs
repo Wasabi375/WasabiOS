@@ -6,6 +6,7 @@
     abi_x86_interrupt,
     allocator_ext,
     ascii_char,
+    atomic_ptr_null,
     const_convert,
     const_trait_impl,
     get_set_bit,

@@ -122,7 +122,7 @@ impl CoreInfo for CoreInterruptState {
     ) -> Result<(), core::fmt::Error> {
         let handle = locals!().task_system.current_task(Ordering::Relaxed);
 
-        writer.write_fmt(format_args!("({}", handle.to_u64()))?;
+        writer.write_fmt(format_args!("({}", handle.0.to_u64()))?;
 
         #[cfg(feature = "log-task-name")]
         if locals!()

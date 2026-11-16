@@ -2,14 +2,21 @@
 //!
 //! TODO implement task stealing between cores
 
+mod api;
+mod parking;
+
+pub use api::*;
+pub use parking::Signal;
+
 #[cfg(feature = "task-stack-history")]
 mod stack_history;
 
 use core::{
     arch::{asm, naked_asm},
+    cell::UnsafeCell,
     ops::Add,
     ptr::DynMetadata,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
 use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec};
@@ -41,7 +48,7 @@ use crate::{
         self,
         apic::{
             Apic,
-            timer::{TimerConfig, TimerDivider, TimerError, TimerMode},
+            timer::{TimerConfig, TimerDivider, TimerMode},
         },
         cpuid::{CPUCapabilities, cpuid},
         interrupts::InterruptVector,
@@ -71,6 +78,9 @@ struct Task {
     /// This is used to resume the task at a later point.
     /// This is `None` while the task is executed
     last_interrupt: Option<TaskInterrupt>,
+
+    /// if set [park] will immediately [unpark] and behave like [yield_now] instead.
+    unpark_immediate: bool,
 }
 
 impl Drop for Task {
@@ -155,22 +165,23 @@ impl<F> TaskDefinition<F> {
 
 /// A unique Handle for a [Task]
 ///
-/// Handles are unique across cores.
+/// Handles are unique across cores and task systems.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AtomicWrapper)]
+#[repr(transparent)]
 pub struct TaskHandle(u64);
 
-impl Add<TaskHandle> for TaskHandle {
-    type Output = TaskHandle;
-
-    fn add(self, rhs: TaskHandle) -> Self::Output {
-        TaskHandle(self.0 + rhs.0)
-    }
-}
-
 /// the next unused [TaskHandle].
-static NEXT_FREE_HANDLE: AtomicTaskHandle = AtomicTaskHandle::new(TaskHandle(0));
+static NEXT_FREE_HANDLE: AtomicTaskHandle = AtomicTaskHandle::new(TaskHandle(1));
 
 impl TaskHandle {
+    /// A task handle used for when there is no current task.
+    pub const NULL_TASK: TaskHandle = TaskHandle(0);
+
+    /// `true` for the empty task handle that represents no task
+    fn is_null_task(&self) -> bool {
+        self.0 == 0
+    }
+
     /// Returns an unused [TaskHandle]
     ///
     /// this function only produces the same value once.
@@ -182,6 +193,79 @@ impl TaskHandle {
     /// Returns the inner value
     pub fn to_u64(&self) -> u64 {
         self.0
+    }
+
+    /// annotates the [TaskHandle] with the corresponding [TaskSystem]
+    fn with_system(self, system: &'static TaskSystem) -> TaskHandleWithSystem {
+        TaskHandleWithSystem(self, system)
+    }
+
+    /// Find the [TaskSystem] responsible for the [TaskHandle]
+    ///
+    /// Returns 'Err(handle)` if no [TaskSystem] controlls the handle.
+    /// This can happen if the task is already terminated
+    pub fn find_system(self) -> Result<TaskHandleWithSystem, TaskHandle> {
+        for system in TaskSystem::iter() {
+            if system.inner.lock().tasks.contains_key(&self) {
+                return Ok(TaskHandleWithSystem(self, system));
+            }
+        }
+        Err(self)
+    }
+}
+
+impl Add<TaskHandle> for TaskHandle {
+    type Output = TaskHandle;
+
+    fn add(self, rhs: TaskHandle) -> Self::Output {
+        TaskHandle(self.0 + rhs.0)
+    }
+}
+impl From<TaskHandleWithSystem> for TaskHandle {
+    fn from(value: TaskHandleWithSystem) -> Self {
+        value.0
+    }
+}
+
+/// A unique Handle for a [Task] and the [TaskSystem] that controlls the task.
+///
+/// Handles are unique across cores and task systems.
+#[derive(Clone, Copy)]
+pub struct TaskHandleWithSystem(pub TaskHandle, pub &'static TaskSystem);
+
+impl core::fmt::Debug for TaskHandleWithSystem {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("TaskHandleWithSystem")
+            .field(&self.0.0)
+            .finish_non_exhaustive()
+    }
+}
+impl core::cmp::PartialEq for TaskHandleWithSystem {
+    fn eq(&self, other: &Self) -> bool {
+        if self.0 == other.0 {
+            assert_eq!(&raw const self.1, &raw const other.1);
+            true
+        } else {
+            false
+        }
+    }
+}
+impl core::cmp::Eq for TaskHandleWithSystem {}
+impl core::hash::Hash for TaskHandleWithSystem {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+        // TaskSystem is not required in the hash as the id is unique accross all systems
+    }
+}
+
+impl core::cmp::PartialEq<TaskHandle> for TaskHandleWithSystem {
+    fn eq(&self, other: &TaskHandle) -> bool {
+        self.0 == *other
+    }
+}
+impl core::cmp::PartialEq<TaskHandleWithSystem> for TaskHandle {
+    fn eq(&self, other: &TaskHandleWithSystem) -> bool {
+        *other == *self
     }
 }
 
@@ -196,11 +280,6 @@ pub struct TaskSystem {
     /// the executing task at any time in order to switch to another system.
     running: AtomicBool,
 
-    /// Whether the interrupt timer is running.
-    /// The timer might be disabled if there are currently no tasks interrupted tasks available.
-    /// However the timer can be restarted any time as long as [Self::running] is `true`.
-    timer_running: AtomicBool,
-
     /// Used to decide whether to logger can access the data lock.
     pub log_task_locked_data: AtomicBool,
 
@@ -210,16 +289,50 @@ pub struct TaskSystem {
     pub is_init: AtomicBool,
 
     /// system data that needs locked access
-    data: UnwrapTicketLock<SystemData>,
+    inner: UnwrapTicketLock<InnerTaskSystem>,
+
+    /// a static pointer to self
+    ///
+    /// # Safety:
+    ///
+    /// only written during init
+    static_self: UnsafeCell<Option<&'static Self>>,
+
+    /// the [Apic] associated with the [TaskSystem]
+    ///
+    /// This is used to access the timer and send ipis.
+    /// The apic can't be accessed through `locals!()`, because it might be necessary
+    /// to [`start`](Self::start) or [`pause`](Self::pause) a [TaskSystem] from a different
+    /// core.
+    ///
+    /// # Safety:
+    ///
+    /// only written during init
+    apic: UnsafeCell<Option<&'static UnwrapTicketLock<Apic>>>,
+
+    /// next ptr in the task system linked list
+    ///
+    /// see [TASK_SYSTEMS_HEAD]
+    task_system_list_next: AtomicPtr<Self>,
 }
 
+/// head ptr for the task system linked list
+///
+/// see [TaskSystem::task_system_list_next]
+static TASK_SYSTEMS_HEAD: AtomicPtr<TaskSystem> = AtomicPtr::null();
+
+unsafe impl Sync for TaskSystem {}
+
 /// Data used by the [TaskSystem] that is accessed via a lock
-struct SystemData {
+struct InnerTaskSystem {
     /// A list of all running tasks
     tasks: HashMap<TaskHandle, Task>,
 
     /// a list of tasks that are currentyl interrupted and can be resumed at a future time
     interrupted: VecDeque<TaskHandle>,
+
+    /// a list of tasks taht are currently interrupted and are waiting to resume until notified
+    parked: Vec<TaskHandle>,
 
     /// Terminated but not yet dropped tasks.
     ///
@@ -242,10 +355,12 @@ impl TaskSystem {
         TaskSystem {
             current_task: AtomicTaskHandle::new(TaskHandle(0)),
             running: AtomicBool::new(false),
-            timer_running: AtomicBool::new(false),
             is_init: AtomicBool::new(false),
             log_task_locked_data: AtomicBool::new(true),
-            data: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
+            inner: unsafe { UnwrapTicketLock::new_non_preemtable_uninit() },
+            static_self: UnsafeCell::new(None),
+            apic: UnsafeCell::new(None),
+            task_system_list_next: AtomicPtr::null(),
         }
     }
 
@@ -256,9 +371,22 @@ impl TaskSystem {
     /// # Safety
     ///
     /// This needs to be called during process initialization, once per core
-    /// and relies on a working apic
-    pub unsafe fn init(&self) {
+    /// and relies on a working apic.
+    /// No other reference to `self` may be live during this function call.
+    pub unsafe fn init(&'static self) {
         setup_xsave();
+
+        unsafe {
+            // Safety: we hold the only active reference to `self`
+            *self.static_self.as_mut_unchecked() = Some(self);
+        }
+        // this is fine in terms of races. There shouldn't be any iterators while this is
+        // initialized. And this causes no races for adding to the linked list
+        // Safety-NOTE: during `init` of any `TaskSystem` it is not save to call `eq` on them
+        self.task_system_list_next.store(
+            TASK_SYSTEMS_HEAD.swap(self as *const _ as *mut _, Ordering::AcqRel),
+            Ordering::Release,
+        );
 
         let mut tasks = HashMap::new();
         let current_task = TaskHandle::take_next();
@@ -268,22 +396,24 @@ impl TaskSystem {
                 name: CPU_CORE_TASK_NAME.into(),
                 last_interrupt: None,
                 stack: None,
+                unpark_immediate: false,
             },
         );
 
-        let mut system_data = SystemData {
+        let mut inner = InnerTaskSystem {
             tasks,
             interrupted: VecDeque::new(),
+            parked: Vec::new(),
             terminated: Vec::new(),
             #[cfg(feature = "task-stack-history")]
             stack_history: stack_history::StackHistory::new(),
         };
         #[cfg(feature = "task-stack-history")]
-        system_data
+        inner
             .stack_history
             .register_task(locals!().stack, CPU_CORE_TASK_NAME.into());
 
-        self.data.lock_uninit().write(system_data);
+        self.inner.lock_uninit().write(inner);
         self.current_task.store(current_task, Ordering::Release);
 
         self.is_init.store(true, Ordering::Release);
@@ -295,18 +425,18 @@ impl TaskSystem {
     ///
     /// This should only be called on panic
     pub unsafe fn panic_stop(&self) {
+        let apic = self.get_apic();
         // Safety: we are panicing
         unsafe {
-            LockCellInternal::<Apic>::shatter_permanent(&locals!().apic);
+            LockCellInternal::<Apic>::shatter_permanent(apic);
         }
-        let mut apic = locals!().apic.lock();
+        let mut apic = apic.lock();
         let mut timer = apic.timer();
         if timer.is_running() {
             timer.stop();
         }
 
         self.running.store(false, Ordering::SeqCst);
-        self.timer_running.store(false, Ordering::SeqCst);
 
         locals!()
             .task_system
@@ -315,7 +445,7 @@ impl TaskSystem {
 
         unsafe {
             // Safety: try to prevent deadlocks during panic shutdown
-            LockCellInternal::<SystemData>::shatter_permanent(&self.data);
+            LockCellInternal::<InnerTaskSystem>::shatter_permanent(&self.inner);
         }
     }
 
@@ -329,77 +459,72 @@ impl TaskSystem {
     }
 
     /// Returns the [TaskHandle] of the [Task] currently executing on the [TaskSystem]
-    pub fn current_task(&self, order: Ordering) -> TaskHandle {
-        self.current_task.load(order)
+    pub fn current_task(&self, order: Ordering) -> TaskHandleWithSystem {
+        self.current_task.load(order).with_system(self.as_static())
     }
 
     /// Get some basic information about a [Task]
-    pub fn get_task_info(&self, handle: TaskHandle) -> Option<TaskInfo> {
-        let data = self.data.lock();
-        data.tasks.get(&handle).map(|task| TaskInfo {
-            handle,
+    pub fn get_task_info(&self, handle: impl Into<TaskHandle>) -> Option<TaskInfo> {
+        let handle = handle.into();
+        let inner = self.inner.lock();
+        inner.tasks.get(&handle).map(|task| TaskInfo {
+            handle: handle,
             name: task.name.clone(),
         })
     }
 
     /// Get the number of tasks in the system
     pub fn get_task_count(&self) -> usize {
-        let data = self.data.lock();
-        data.tasks.len()
+        let inner = self.inner.lock();
+        inner.tasks.len()
     }
 
     /// Enable the task system and starts the timer
     ///
     /// While running the task system can interrupt
-    /// the executing task at any time in order to switch to another system.
+    /// the executing task at any time in order to switch to another task.
     ///
-    /// returns the interrupt vector that was previously used by the timer
-    pub fn start(&self) -> Result<Option<InterruptVector>, TimerError> {
-        if self.is_running() {
-            warn!("already running");
-            return Ok(None);
-        }
-        info!("Starting task system");
-
+    /// returns the interrupt vector that was previously used by the timer.
+    ///
+    /// This is a public API. Internal methods can use [Self::start_timer] which requires the
+    /// internal lock
+    pub fn start(&self) -> Option<InterruptVector> {
+        self.running.store(true, Ordering::Release);
         let _guard = unsafe { InternalGuard::non_interrupt_enter() };
 
-        self.running.store(true, Ordering::Release);
-
-        self.start_timer(self.data.lock().as_ref())
+        info!("Starting task system");
+        self.start_timer(self.inner.lock().as_ref())
     }
 
     /// Pauses the task system.
     ///
-    /// use [Self::start] to restart it
+    /// use [Self::start] to restart it.
+    ///
+    /// This is a public API. Internal methods can use [Self::stop_timer] which requires the
+    /// internal lock
     pub fn pause(&self) {
-        if !self.is_running() {
-            warn!("not running. pause is noop");
-            return;
-        }
-
-        debug!("stopping timer");
         let _guard = unsafe { InternalGuard::non_interrupt_enter() };
 
-        self.running.store(false, Ordering::Release);
-        self.stop_timer(self.data.lock().as_ref());
+        debug!("stopping timer");
+        self.stop_timer(self.inner.lock().as_ref());
     }
 
     /// Start/restart the APIC timer to switch between tasks
     ///
     /// returns the interrupt vector that was previously used by the timer
-    fn start_timer(&self, _data_guard: &SystemData) -> Result<Option<InterruptVector>, TimerError> {
-        let mut apic = locals!().apic.lock();
+    fn start_timer(&self, _inner_guard: &InnerTaskSystem) -> Option<InterruptVector> {
+        let mut apic = self.get_apic().lock();
         let mut timer = apic.timer();
 
         if timer.is_running() {
-            assert!(self.timer_running.load(Ordering::Acquire));
             error!("Can't start TaskSystem timer if timer is already running");
-            return Err(TimerError::TimerRunning);
+            return None;
         }
-        assert!(!self.timer_running.load(Ordering::Acquire));
         // no need to set a handler since, ContextSwitch uses a special case handler that
         // can't be changed
-        let mut old_vec = timer.enable_interrupt_hander(InterruptVector::ContextSwitch)?;
+        let mut old_vec = timer
+            .enable_interrupt_hander(InterruptVector::ContextSwitch)
+            .expect("Timer is not running");
         if let Some(int_vec) = old_vec
             && int_vec == InterruptVector::ContextSwitch
         {
@@ -414,19 +539,19 @@ impl TaskSystem {
             duration: timer_cycles, // TODO what is a good interval
         };
 
-        self.timer_running.store(true, Ordering::Release);
-        timer.start(TimerMode::Periodic(config))?;
+        timer
+            .start(TimerMode::Periodic(config))
+            .expect("timer properly setup");
         debug!("timer started");
 
-        Ok(old_vec)
+        old_vec
     }
 
     /// Stop/pause the APIC timer
-    fn stop_timer(&self, _data_guard: &SystemData) {
-        let mut apic = locals!().apic.lock();
+    fn stop_timer(&self, _inner_guard: &InnerTaskSystem) {
+        let mut apic = self.get_apic().lock();
         let mut timer = apic.timer();
         assert_eq!(timer.vector(), Some(InterruptVector::ContextSwitch));
-        self.timer_running.store(false, Ordering::Release);
 
         timer.stop();
         debug!("timer stopped");
@@ -440,7 +565,7 @@ impl TaskSystem {
     pub unsafe fn launch_task<F>(
         &self,
         task_definition: TaskDefinition<F>,
-    ) -> Result<TaskHandle, MemError>
+    ) -> Result<TaskHandleWithSystem, MemError>
     where
         F: FnOnce() + 'static,
         F: Sized,
@@ -509,17 +634,19 @@ impl TaskSystem {
             name: task_definition.name,
             stack: Some(stack),
             last_interrupt: Some(launch_interrupt_fake),
+            unpark_immediate: false,
         };
 
-        let mut data = self.data.lock();
+        let mut inner = self.inner.lock();
         let _guard = unsafe { InternalGuard::non_interrupt_enter() };
 
         #[cfg(feature = "task-stack-history")]
-        data.stack_history
+        inner
+            .stack_history
             .register_task(stack.pages, task.name.clone());
 
         let new_handle = TaskHandle::take_next();
-        let old_task_value = data.tasks.insert(new_handle, task);
+        let old_task_value = inner.tasks.insert(new_handle, task);
         assert!(old_task_value.is_none());
 
         debug!(
@@ -529,18 +656,15 @@ impl TaskSystem {
             stack_end_minus_task
         );
 
-        data.interrupted.push_back(new_handle);
+        inner.interrupted.push_back(new_handle);
 
         if self.is_running()
-            && !self.timer_running.load(Ordering::Acquire)
-            && let Some(old_vec) = self
-                .start_timer(&data)
-                .expect("Restarting timer should work.")
+            && let Some(old_vec) = self.start_timer(&inner)
         {
             warn!("TaskSystem is overwriting timer interrupt vector. Old vector: {old_vec}");
         }
 
-        Ok(new_handle)
+        Ok(new_handle.with_system(self.as_static()))
     }
 
     /// Terminates the current task
@@ -560,10 +684,11 @@ impl TaskSystem {
 
         // task needs to terminate on the system it is running on. Therefor this is not using self
         let this = &locals!().task_system;
-        let mut data = this.data.lock();
+        let mut inner = this.inner.lock();
 
         let current_handle = this.current_task.load(Ordering::Acquire);
-        let current_task = data
+        assert!(!current_handle.is_null_task());
+        let current_task = inner
             .tasks
             .remove(&current_handle)
             .expect("Current task should always exist");
@@ -574,17 +699,61 @@ impl TaskSystem {
         // NOTE can't drop current_task right now, this function uses the stack
         // owned by it. Dropping it now would also unmap the stack. Instead we
         // keep track of terminated tasks and drop them later.
-        data.terminated.push(current_task);
+        inner.terminated.push(current_task);
 
-        if let Some(next_task_handle) = data.interrupted.pop_front() {
-            debug!("next task: {next_task_handle:?}");
-            this.resume_task(data, next_task_handle, int_guard);
+        this.resume_next_task(inner, int_guard);
+    }
+
+    /// Called by the park context-switch interrupt handler
+    fn task_parked(interrupt: TaskInterrupt, int_guard: InternalGuard) -> ! {
+        // Called from interrupt. This needs to be the TaskSystem for the current cpu
+        let this = &locals!().task_system;
+
+        let mut inner = this.inner.lock();
+
+        let current_handle = this.current_task.load(Ordering::Acquire);
+        assert!(!current_handle.is_null_task());
+
+        debug_assert!(verify_interrupt_frame(
+            interrupt.stack_frame,
+            &inner.tasks[&current_handle],
+            &inner
+        ));
+
+        let current_task = inner
+            .tasks
+            .get_mut(&current_handle)
+            .expect("Current task should always exist");
+
+        assert!(current_task.last_interrupt.is_none());
+        current_task.last_interrupt = Some(interrupt);
+
+        if current_task.unpark_immediate {
+            current_task.unpark_immediate = false;
+            inner.interrupted.push_back(current_handle);
         } else {
-            info!("No tasks ready to resume. Halting");
-            if this.timer_running.load(Ordering::Acquire) {
-                this.stop_timer(&data);
-            }
-            drop(data);
+            inner.parked.push(current_handle);
+        }
+
+        this.resume_next_task(inner, int_guard);
+    }
+
+    /// resumes the next task
+    fn resume_next_task<L: LockCell<InnerTaskSystem>>(
+        &self,
+        mut inner: LockCellGuard<'_, InnerTaskSystem, L>,
+        int_guard: InternalGuard,
+    ) -> ! {
+        if let Some(next_task_handle) = inner.interrupted.pop_front() {
+            self.resume_task(inner, next_task_handle, int_guard);
+        } else {
+            debug!("No tasks ready to resume. Halting");
+            // pause the system
+            self.stop_timer(inner.as_ref());
+            self.current_task
+                .store(TaskHandle::NULL_TASK, Ordering::Release);
+            drop(inner);
+
             // reenable interrupts befor halt
             drop(int_guard);
             cpu::halt();
@@ -596,48 +765,52 @@ impl TaskSystem {
         // Called from interrupt. This needs to be the TaskSystem for the current cpu
         let this = &locals!().task_system;
 
-        let mut data = this.data.lock();
+        let mut inner = this.inner.lock();
 
         // TODO this is not the best time to drop terminated tasks. Instead I want
         // to have some kind of cleanup task. But this works for now
         // TODO I should be able to change PageTable/PageAlloc/PhysAlloc locks to be preemtable
         // once this is no longer in the context-switch path
-        // data.terminated.clear();
+        // inner.terminated.clear();
 
         let current_handle = this.current_task.load(Ordering::Acquire);
 
-        debug_assert!(verify_interrupt_frame(
-            interrupt.stack_frame,
-            &data.tasks[&current_handle],
-            &data
-        ));
+        // The "null task" can be "interrupted" after the timer is stopped,
+        // if park/terminate stops the last active task. Then a different task
+        // is unparked and this produces the null-task here on the next timer tick.
+        if !current_handle.is_null_task() {
+            debug_assert!(verify_interrupt_frame(
+                interrupt.stack_frame,
+                &inner.tasks[&current_handle],
+                &inner
+            ));
 
-        let current_task = data
-            .tasks
-            .get_mut(&current_handle)
-            .expect("Current task should always exist");
+            let current_task = inner
+                .tasks
+                .get_mut(&current_handle)
+                .expect("Current task should always exist");
 
-        assert!(current_task.last_interrupt.is_none());
-        current_task.last_interrupt = Some(interrupt);
+            assert!(current_task.last_interrupt.is_none());
+            current_task.last_interrupt = Some(interrupt);
 
-        data.interrupted.push_back(current_handle);
+            inner.interrupted.push_back(current_handle);
+        }
 
-        let next_task_handle = data
+        let next_task_handle = inner
             .interrupted
             .pop_front()
             .expect("This should always at least contain the currently interrupted task");
-
-        this.resume_task(data, next_task_handle, int_guard);
+        this.resume_task(inner, next_task_handle, int_guard);
     }
 
     /// resumes a [Task]
-    fn resume_task<L: LockCell<SystemData>>(
+    fn resume_task<L: LockCell<InnerTaskSystem>>(
         &self,
-        mut data: LockCellGuard<'_, SystemData, L>,
+        mut inner: LockCellGuard<'_, InnerTaskSystem, L>,
         next_task_handle: TaskHandle,
         int_guard: InternalGuard,
     ) -> ! {
-        let next_task = data
+        let next_task = inner
             .tasks
             .get_mut(&next_task_handle)
             .expect("Task should always exist if we find the handle");
@@ -647,16 +820,90 @@ impl TaskSystem {
         };
         self.current_task.store(next_task_handle, Ordering::Release);
 
-        drop(data);
+        drop(inner);
 
         next_task_interrupt.resume(int_guard)
     }
+
+    /// returns a `'static` reference to self
+    ///
+    /// this is possible because `TaskSystem` can only be created in static memory.
+    #[inline(always)]
+    pub fn as_static<'a>(&'a self) -> &'static Self {
+        unsafe {
+            // Safety: `init` was called an therefor this is a valid reference.
+            // see [Self::new] and [Self::init]
+            self.static_self
+                .as_ref_unchecked()
+                .expect("get_static_self must not be called before init")
+        }
+    }
+
+    /// Get access to the apic of this [TaskSystem].
+    #[inline(always)]
+    fn get_apic(&self) -> &UnwrapTicketLock<Apic> {
+        unsafe {
+            // Safety: `init` was called an therefor this is a valid reference.
+            // see [Self::new] and [Self::init]
+            self.apic
+                .as_ref_unchecked()
+                .expect("get_apic must not be called before init")
+        }
+    }
+
+    /// Iterate over all [TaskSystem]
+    pub fn iter() -> impl Iterator<Item = &'static TaskSystem> {
+        let next_ptr = TASK_SYSTEMS_HEAD.load(Ordering::Acquire);
+        if next_ptr.is_null() {
+            TaskSystemIter(None)
+        } else {
+            TaskSystemIter(unsafe {
+                // Safety: next_ptr is initialized to a valid static during `init`.
+                // Therefor this is either null (checked above) or valid.
+                Some(&*next_ptr)
+            })
+        }
+    }
 }
 
-fn verify_interrupt_frame<L: LockCell<SystemData>>(
+impl PartialEq for TaskSystem {
+    fn eq(&self, other: &Self) -> bool {
+        // Task systems are only created in static memory and contain a static reference to self.
+        // Therefor it is enough to check that the `static_self` reference of both sides are equal
+
+        self.as_static() as *const _ == other.as_static() as *const _
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TaskSystemIter(Option<&'static TaskSystem>);
+
+impl Iterator for TaskSystemIter {
+    type Item = &'static TaskSystem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let Some(current) = self.0 else {
+            return None;
+        };
+
+        let next_ptr = current.task_system_list_next.load(Ordering::Acquire);
+        self.0 = if next_ptr.is_null() {
+            None
+        } else {
+            unsafe {
+                // Safety: next_ptr is initialized to a valid static during `init`.
+                // Therefor this is either null (checked above) or valid.
+                Some(&*next_ptr)
+            }
+        };
+        return Some(current);
+    }
+}
+
+fn verify_interrupt_frame<L: LockCell<InnerTaskSystem>>(
     stack_frame: InterruptStackFrameValue,
     task: &Task,
-    system_data: &LockCellGuard<'_, SystemData, L>,
+    inner: &LockCellGuard<'_, InnerTaskSystem, L>,
 ) -> bool {
     let Some(stack) = task.stack else { return true };
 
@@ -679,7 +926,7 @@ fn verify_interrupt_frame<L: LockCell<SystemData>>(
     );
 
     #[cfg(feature = "task-stack-history")]
-    if let Some((stack, owner)) = system_data.stack_history.find(stack_ptr) {
+    if let Some((stack, owner)) = inner.stack_history.find(stack_ptr) {
         error!(
             "It looks like the stack pointer, points into the stack of another task
             interrupted task: {}
@@ -925,15 +1172,98 @@ impl Drop for InternalGuard {
 /// Do I need this stack? I am not really sure
 pub const CONTEXT_SWITCH_STACK_PAGE_COUNT: u64 = 8;
 
-/// The context-switch interrupt handler used by the [TaskSystem]
-/// [Timer](crate::cpu::apic::timer::Timer).
-#[unsafe(naked)]
-pub extern "x86-interrupt" fn context_switch_handler(_int_stack_frame: InterruptStackFrame) {
-    #[inline]
-    extern "C" fn rust_handler(
+/// Naked assembly for a context-switch interrupt handler that calls `$rust_handler`
+///
+/// ```
+/// #[inline]
+/// extern "C" fn rust_handler(
+///     stack_frame: &InterruptStackFrame,
+///     registers: &InterruptRegisterState,
+///     xsave_area: *mut u8,
+/// ) -> !
+/// ```
+macro_rules! context_switch_interrupt_handler {
+    ($(#[$meta:meta])* $vis:vis fn $interrupt_handler_name:ident($stack_frame:ident: &InterruptStackFrame, $registers:ident: &InterruptRegisterState, $xsave_area:ident: *mut u8) -> ! $block:block) => {
+        $(#[$meta])*
+        #[unsafe(naked)]
+        $vis extern "x86-interrupt" fn $interrupt_handler_name(_int_stack_frame: InterruptStackFrame) {
+            #[inline]
+            extern "C" fn __rust_handler(
+                $stack_frame: &InterruptStackFrame,
+                $registers: &InterruptRegisterState,
+                $xsave_area: *mut u8,
+            ) -> ! {
+                $block
+            }
+
+            #[inline]
+            extern "C" fn __alloc_xsave_area() -> *const u8 {
+                let xsave_area_size = cpuid(0xd, None).ebx as usize;
+
+                // TODO is there a way I can deterministically alloc the xsave area?
+                // I don't really want the interrupt here have to allocate every time
+                let xsave_area =
+                    alloc_buffer_aligned(xsave_area_size, 64).expect("Failed to allocate xsave area");
+                Box::leak(xsave_area).as_ptr()
+            }
+
+            naked_asm!(
+                "cld", // clear direction flag used by string operations
+                // store registers, except rsp(stack) which is part of the InterruptStackFrame
+                "
+                push r15
+                push r14
+                push r13
+                push r12
+                push r11
+                push r10
+                push r9
+                push r8
+                push rbp
+                push rdi
+                push rsi
+                push rdx
+                push rcx
+                push rbx
+                push rax
+                ",
+                // allocate xsave area
+                "call {alloc_xsave}",
+                "mov r12, rax",
+
+                // set xsave requested-feature bitmap to all 1 (use all features)
+                "mov eax, -1",
+                "mov edx, -1",
+                // save feature states to xsave area
+                "xsave64 [r12]",
+
+                // call rust handler
+                "lea rdi, [rsp + {stack_frame_offset}]", // load stack-frame addr into rdi (first arg)
+                "lea rsi, [rsp + {registers_offset}]", // load register-state addr into rsi (second arg)
+                "mov rdx, r12",         // move xsave area into rdx (third arg).
+                "call {rust_handler}",
+                // somethings gone wrong if this is executed
+                "
+                int3
+                int3
+                int3
+                hlt
+                ",
+                alloc_xsave = sym __alloc_xsave_area,
+                rust_handler = sym __rust_handler,
+                stack_frame_offset = const size_of::<$crate::task::InterruptRegisterState>(),
+                registers_offset = const 0x0,
+            );
+        }
+    };
+}
+
+context_switch_interrupt_handler! {
+    /// The context-switch interrupt handler used by the [TaskSystem] timer
+    pub fn context_switch_handler(
         stack_frame: &InterruptStackFrame,
         registers: &InterruptRegisterState,
-        xsave_area: *mut u8,
+        xsave_area: *mut u8
     ) -> ! {
         // Safety: start of context_switch_handler
         let int_guard = unsafe { InternalGuard::interrupt_enter() };
@@ -956,65 +1286,37 @@ pub extern "x86-interrupt" fn context_switch_handler(_int_stack_frame: Interrupt
         };
         TaskSystem::task_interrupted(interrupt, int_guard);
     }
+}
 
-    #[inline]
-    extern "C" fn alloc_xsave_area() -> *const u8 {
+context_switch_interrupt_handler! {
+    /// The context-switch interrupt handler used by the [park] for the [TaskSystem]
+    pub fn park_task_handler(
+        stack_frame: &InterruptStackFrame,
+        registers: &InterruptRegisterState,
+        xsave_area: *mut u8
+    ) -> ! {
+        // Safety: start of context_switch_handler
+        let int_guard = unsafe { InternalGuard::interrupt_enter() };
+
         let xsave_area_size = cpuid(0xd, None).ebx as usize;
+        let xsave_area = unsafe {
+            // Safety: alloc_xsave_area allocated this ptr as a box
+            Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                xsave_area,
+                xsave_area_size,
+            ))
+        };
 
-        // TODO is there a way I can deterministically alloc the xsave area?
-        // I don't really want the interrupt here have to allocate every time
-        let xsave_area =
-            alloc_buffer_aligned(xsave_area_size, 64).expect("Failed to allocate xsave area");
-        Box::leak(xsave_area).as_ptr()
+        assert!(stack_frame.cpu_flags.contains(RFlags::INTERRUPT_FLAG));
+
+        let interrupt = TaskInterrupt {
+            stack_frame: **stack_frame,
+            registers: registers.clone(),
+            xsave_area: Some(xsave_area),
+        };
+
+        TaskSystem::task_parked(interrupt, int_guard)
     }
-
-    naked_asm!(
-        "cld", // clear direction flag used by string operations
-        // store registers, except rsp(stack) which is part of the InterruptStackFrame
-        "
-        push r15
-        push r14
-        push r13
-        push r12
-        push r11
-        push r10
-        push r9
-        push r8
-        push rbp
-        push rdi
-        push rsi
-        push rdx
-        push rcx
-        push rbx
-        push rax
-        ",
-        // allocate xsave area
-        "call {alloc_xsave}",
-        "mov r12, rax",
-
-        // set xsave requested-feature bitmap to all 1 (use all features)
-        "mov eax, -1",
-        "mov edx, -1",
-        // save feature states to xsave area
-        "xsave64 [r12]",
-
-        // call rust handler
-        "lea rdi, [rsp + {stack_frame_offset}]", // load stack-frame addr into rdi (first arg)
-        "lea rsi, [rsp + {registers_offset}]", // load register-state addr into rsi (second arg)
-        "mov rdx, r12",         // move xsave area into rdx (third arg).
-        "call {rust_handler}",
-        // somethings gone wrong if this is executed
-        "
-        int3
-        int3
-        int3
-        hlt
-        ",
-        alloc_xsave = sym alloc_xsave_area,
-        rust_handler = sym rust_handler,
-        stack_frame_offset = const size_of::<InterruptRegisterState>(),
-        registers_offset = const 0x0,
-    );
 }
 
 /// State of all basic registers

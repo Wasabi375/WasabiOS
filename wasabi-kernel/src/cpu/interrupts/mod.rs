@@ -18,7 +18,6 @@ use crate::{
     locals,
     mem::page_table::PageTable,
     prelude::ReadWriteCell,
-    task::context_switch_handler,
 };
 use interrupt_fn_builder::{exception_fn, exception_page_fault_fn};
 use shared::sync::lockcell::{LockCell, RWLockCell};
@@ -110,7 +109,7 @@ impl InterruptHandlerState {
                 .set_stack_index(PAGE_FAULT_IST_INDEX);
 
             idt[InterruptVector::ContextSwitch as u8]
-                .set_handler_fn(context_switch_handler)
+                .set_handler_fn(crate::task::context_switch_handler)
                 .set_stack_index(CONTEXT_SWITCH_IST_INDEX);
         }
 
@@ -153,6 +152,10 @@ pub unsafe fn init() {
 pub enum InterruptVector {
     /// Interrupt used by the task system to switch between tasks
     ContextSwitch = 32,
+
+    /// Task parks and yields it's remaining time
+    ParkTask = 33,
+
     /// Spurious APIC interrupt
     // for some older processors the lower 4 bits must be 1 on spurious interrupts,
     // 63 is the lowest number >=32 matching this condition
@@ -165,12 +168,11 @@ pub enum InterruptVector {
 
     /// Interrupt used for tests
     Test = 255,
-    // TODO add Other variant
 }
 
 impl fmt::Display for InterruptVector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("{:?}({})", self, *self as u8))
+        f.write_fmt(format_args!("{0:?}({1}/{1:#x})", self, *self as u8))
     }
 }
 
